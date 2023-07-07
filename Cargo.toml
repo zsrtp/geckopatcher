@@ -1,0 +1,9 @@
+[workspace]
+members = ["geckolib", "patcher", "gui/common", "gui/web", "gui/native"]
+
+[profile.release]
+panic = "abort"
+lto = true
+
+[profile.dev.package.backtrace]
+opt-level = 3

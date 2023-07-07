@@ -1,0 +1,33 @@
+[package]
+name = "patcher"
+description = "A multi-platform patcher for gamecube and wii games"
+authors = ["kipcode66 <kipcode66@gmail.com>"]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.69"
+repository = "https://github.com/kipcode66/geckopatcher"
+license-file = "LICENSE"
+keywords = ["romhack", "GameCube", "Wii"]
+publish = false
+
+[[bin]]
+name = "patcher"
+path = "src/main.rs"
+
+[dependencies]
+geckolib = { path = "../geckolib" }
+color-eyre = "^0.6"
+async-std = "^1.12"
+env_logger = "^0.10"
+futures = "^0.3"
+
+[build-dependencies]
+
+[dev-dependencies]
+
+[features]
+default = ["log"]
+log = ["async-std/log", "async-std/kv-log-macro"]
+
+[[example]]
+name = "title"
