@@ -1,1 +1,57 @@
 pub mod disc;
+pub mod read;
+pub mod write;
+
+pub mod consts {
+    // DOL_ALIGNMENT and FST_ALIGNMENT are set to 1024 and 256 to match the
+    // original ISO. Due to poor documentation of how, and why, these values
+    // should or shouldn't be changed we opted to preserve their values since
+    // there was no observed benefit of setting them higher, however lower
+    // values were not tested.
+
+    pub const OFFSET_DOL_OFFSET: usize = 0x420;
+    pub const OFFSET_FST_OFFSET: usize = 0x424;
+    pub const OFFSET_FST_SIZE: usize = 0x428;
+    pub const OFFSET_GC_MAGIC: usize = 0x01C;
+    pub const OFFSET_WII_MAGIC: usize = 0x018;
+    pub const HEADER_LENGTH: usize = 0x2440;
+    pub const DOL_ALIGNMENT: usize = 1024;
+    pub const FST_ALIGNMENT: usize = 256;
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+pub(crate) enum FstNodeType {
+    File = 0,
+    Directory = 1,
+}
+
+impl Default for FstNodeType {
+    fn default() -> Self {
+        FstNodeType::File
+    }
+}
+
+impl TryFrom<u8> for FstNodeType {
+    type Error = eyre::ErrReport;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(FstNodeType::File),
+            1 => Ok(FstNodeType::Directory),
+            n => Err(eyre::eyre!("Out of range value for FstNodeType [value = {}]", n)),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct FstEntry {
+    pub(crate) kind: FstNodeType,
+    // Name of the file
+    pub(crate) relative_file_name: String,
+    // File offset for a File, Parent dir for a Directory
+    pub(crate) file_offset_parent_dir: usize,
+    // File size for a File, next directory for a Directory
+    pub(crate) file_size_next_dir_index: usize,
+    pub(crate) file_name_offset: usize,
+}

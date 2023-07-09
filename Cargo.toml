@@ -1,5 +1,5 @@
 [workspace]
-members = ["geckolib", "patcher", "gui/common", "gui/web", "gui/native"]
+members = ["geckolib", "romhack", "gui/common", "gui/web", "gui/native"]
 
 [profile.release]
 panic = "abort"

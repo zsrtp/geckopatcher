@@ -1,5 +1,5 @@
 [package]
-name = "patcher"
+name = "romhack"
 description = "A multi-platform patcher for gamecube and wii games"
 authors = ["kipcode66 <kipcode66@gmail.com>"]
 version = "0.1.0"
@@ -11,15 +11,17 @@ keywords = ["romhack", "GameCube", "Wii"]
 publish = false
 
 [[bin]]
-name = "patcher"
+name = "romhack"
 path = "src/main.rs"
 
 [dependencies]
 geckolib = { path = "../geckolib" }
 color-eyre = "^0.6"
 async-std = "^1.12"
-env_logger = "^0.10"
+env_logger = { version = "^0.10", optional = true }
+log = { version = "^0.4", optional = true }
 futures = "^0.3"
+toml = "^0.7"
 
 [build-dependencies]
 
@@ -27,7 +29,7 @@ futures = "^0.3"
 
 [features]
 default = ["log"]
-log = ["async-std/log", "async-std/kv-log-macro"]
+log = ["env_logger", "dep:log", "async-std/log", "async-std/kv-log-macro"]
 
 [[example]]
 name = "title"
