@@ -2,7 +2,7 @@ use crate::iso::read::{DiscReader, DiscType};
 use crate::iso::{consts, FstEntry, FstNodeType};
 use async_std::io::prelude::SeekExt;
 use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
-use async_std::sync::{Arc, Mutex, Weak};
+use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 use std::io::{Error, SeekFrom};
@@ -50,10 +50,7 @@ pub enum NodeEnumMut<'a, R: AsyncRead + AsyncSeek> {
 
 pub struct GeckoFS<R: AsyncRead + AsyncSeek> {
     pub(super) root: Directory<R>,
-    pub(super) _iso_hdr: File<R>,
-    pub(super) _app_ldr: File<R>,
-    pub(super) _main_dol: File<R>,
-    pub(super) _game_toc: File<R>,
+    pub(super) system: Directory<R>,
     reader: Arc<Mutex<DiscReader<R>>>,
 }
 
@@ -61,18 +58,6 @@ impl<R> GeckoFS<R>
 where
     R: AsyncRead + AsyncSeek + 'static,
 {
-    #[doc = r"Visits all the children and replaces the weak reference of the filesystem."]
-    fn weak_replace_visitor(w: Weak<GeckoFS<R>>, root: &mut Directory<R>) {
-        root.fs = w.clone();
-        for child in root
-            .children
-            .iter_mut()
-            .filter_map(|c| c.as_directory_mut())
-        {
-            GeckoFS::weak_replace_visitor(w.clone(), child);
-        }
-    }
-
     #[doc = r"Utility function to read the disc."]
     async fn read_exact<R2: DerefMut<Target = DiscReader<R>>>(
         reader: &mut R2,
@@ -91,27 +76,31 @@ where
         let entry = &fst[cur_index];
 
         if entry.kind == FstNodeType::Directory {
-            let mut dir = Directory::new(parent_dir.fs.clone(), entry.relative_file_name.clone());
-            
+            let mut dir =
+                Directory::new(parent_dir.reader.clone(), entry.relative_file_name.clone());
+
             while cur_index < entry.file_size_next_dir_index - 1 {
                 cur_index = GeckoFS::get_dir_structure_recursive(cur_index + 1, fst, &mut dir);
             }
 
             parent_dir.children.push(Box::new(dir));
         } else {
-            let file = File::new(parent_dir.fs.clone(), entry.relative_file_name.clone(), entry.file_offset_parent_dir, entry.file_size_next_dir_index, entry.file_name_offset);
+            let file = File::new(
+                parent_dir.reader.clone(),
+                entry.relative_file_name.clone(),
+                entry.file_offset_parent_dir,
+                entry.file_size_next_dir_index,
+                entry.file_name_offset,
+            );
             parent_dir.children.push(Box::new(file));
         }
 
         cur_index
     }
 
-    pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Arc<Self>> {
-        let mut root = Directory::new(Weak::new(), "root");
-        let mut iso_hdr: File<R>;
-        let mut app_ldr: File<R>;
-        let mut main_dol: File<R>;
-        let mut game_toc: File<R>;
+    pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Arc<Mutex<Self>>> {
+        let mut root = Directory::new(reader.clone(), "root");
+        let mut system = Directory::new(reader.clone(), "&&systemdata");
         {
             let mut guard = reader.lock_arc().await;
             let is_wii = guard.get_type() == DiscType::Wii;
@@ -131,12 +120,7 @@ where
             )
             .await?;
             let fst_offset = (BE::read_u32(&buf[..]) << (if is_wii { 2 } else { 0 })) as u64;
-            GeckoFS::read_exact(
-                &mut guard,
-                SeekFrom::Start(fst_offset + 8),
-                &mut buf,
-            )
-            .await?;
+            GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
             let mut fst_list_buf = vec![0u8; num_entries * 0xC];
             GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset), &mut fst_list_buf).await?;
@@ -150,22 +134,17 @@ where
             .await?;
             let fst_size = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
             let mut str_tbl_buf = vec![0u8; fst_size - string_table_offset as usize];
-            GeckoFS::read_exact(&mut guard, SeekFrom::Start(string_table_offset + fst_offset), &mut str_tbl_buf).await?;
-
-            if false {
-                let mut buf = vec![0u8; num_entries * 12];
-                GeckoFS::read_exact(
-                    &mut guard,
-                    SeekFrom::Start(fst_offset + 8),
-                    &mut buf,
-                )
-                .await?;
-                // crate::debug!("FST entries: {:?}", buf);
-            }
+            GeckoFS::read_exact(
+                &mut guard,
+                SeekFrom::Start(string_table_offset + fst_offset),
+                &mut str_tbl_buf,
+            )
+            .await?;
 
             let mut fst_entries = Vec::with_capacity(num_entries);
             for i in 0..num_entries {
-                let kind = FstNodeType::try_from(fst_list_buf[i * 12]).unwrap_or(FstNodeType::Directory);
+                let kind =
+                    FstNodeType::try_from(fst_list_buf[i * 12]).unwrap_or(FstNodeType::Directory);
 
                 let string_offset = (BE::read_u32(&fst_list_buf[i * 12..]) & 0x00ffffff) as usize;
 
@@ -178,8 +157,8 @@ where
                 str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
                 let relative_file_name = String::from_utf8(str_buf)?;
 
-                let file_offset_parent_dir =
-                    (BE::read_u32(&fst_list_buf[i * 12 + 4..]) as usize) << (if is_wii { 2 } else { 0 });
+                let file_offset_parent_dir = (BE::read_u32(&fst_list_buf[i * 12 + 4..]) as usize)
+                    << (if is_wii { 2 } else { 0 });
                 let file_size_next_dir_index = BE::read_u32(&fst_list_buf[i * 12 + 8..]) as usize;
 
                 fst_entries.push(FstEntry {
@@ -198,64 +177,83 @@ where
             )
             .await?;
             let dol_offset = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
-            crate::info!("fst_size: 0x{:08X}; fst entries list size: 0x{:08X}", fst_size, num_entries * 12);
+            crate::debug!(
+                "fst_size: 0x{:08X}; fst entries list size: 0x{:08X}",
+                fst_size,
+                num_entries * 12
+            );
 
-            iso_hdr = File::new(Weak::new(), "iso.hdr", 0, consts::HEADER_LENGTH, 0);
-            app_ldr = File::new(
-                Weak::new(),
+            system.children.push(Box::new(File::new(
+                reader.clone(),
+                "iso.hdr",
+                0,
+                consts::HEADER_LENGTH,
+                0,
+            )));
+            system.children.push(Box::new(File::new(
+                reader.clone(),
                 "AppLoader.ldr",
                 consts::HEADER_LENGTH,
                 dol_offset - consts::HEADER_LENGTH,
                 0,
-            );
-            main_dol = File::new(
-                Weak::new(),
+            )));
+            system.children.push(Box::new(File::new(
+                reader.clone(),
                 "Start.dol",
                 dol_offset,
                 fst_offset as usize - dol_offset,
                 0,
-            );
-            game_toc = File::new(Weak::new(), "Game.toc", fst_offset as usize, fst_size, 0);
+            )));
+            system.children.push(Box::new(File::new(
+                reader.clone(),
+                "Game.toc",
+                fst_offset as usize,
+                fst_size,
+                0,
+            )));
 
             let mut count = 1;
 
             while count < num_entries {
                 let entry = &fst_entries[count];
                 if entry.kind == FstNodeType::Directory {
-                    let mut new_dir = Directory::<R>::new(Weak::new(), entry.relative_file_name.clone());
+                    let mut new_dir =
+                        Directory::<R>::new(reader.clone(), entry.relative_file_name.clone());
                     while count < entry.file_size_next_dir_index - 1 {
-                        count = GeckoFS::get_dir_structure_recursive(count + 1, &fst_entries, &mut new_dir);
+                        count = GeckoFS::get_dir_structure_recursive(
+                            count + 1,
+                            &fst_entries,
+                            &mut new_dir,
+                        );
                     }
                     root.children.push(Box::new(new_dir));
                 } else {
-                    let file = File::new(Weak::new(), entry.relative_file_name.clone(), entry.file_offset_parent_dir, entry.file_size_next_dir_index, entry.file_name_offset);
+                    let file = File::new(
+                        reader.clone(),
+                        entry.relative_file_name.clone(),
+                        entry.file_offset_parent_dir,
+                        entry.file_size_next_dir_index,
+                        entry.file_name_offset,
+                    );
                     root.children.push(Box::new(file));
                 }
                 count += 1;
             }
         }
-        Ok(Arc::new_cyclic(|weak| {
-            GeckoFS::weak_replace_visitor(weak.clone(), &mut root);
-            crate::debug!("{} children", root.children.len());
-            iso_hdr.fs = weak.clone();
-            app_ldr.fs = weak.clone();
-            game_toc.fs = weak.clone();
-            main_dol.fs = weak.clone();
-            Self {
-                root,
-                _iso_hdr: iso_hdr,
-                _app_ldr: app_ldr,
-                _game_toc: game_toc,
-                _main_dol: main_dol,
-                reader: reader.clone(),
-            }
-        }))
+        crate::debug!("{} children", root.children.len());
+        Ok(Arc::new(Mutex::new(Self {
+            root,
+            system,
+            reader: reader.clone(),
+        })))
     }
 
-    pub fn main_dol_mut(&mut self) -> Option<&mut File<R>> {
-        self.root
-            .resolve_node("&&systemdata/Start.dol")?
+    pub fn main_dol_mut(&mut self) -> &mut File<R> {
+        self.system
+            .resolve_node("Start.dol")
+            .unwrap()
             .as_file_mut()
+            .unwrap()
     }
 
     pub fn banner_mut(&mut self) -> Option<&mut File<R>> {
@@ -303,18 +301,18 @@ where
 pub struct Directory<R: AsyncRead + AsyncSeek> {
     name: String,
     children: Vec<Box<dyn Node<R>>>,
-    fs: Weak<GeckoFS<R>>,
+    reader: Arc<Mutex<DiscReader<R>>>,
 }
 
 impl<R> Directory<R>
 where
     R: AsyncRead + AsyncSeek + 'static,
 {
-    pub fn new<S: Into<String>>(fs: Weak<GeckoFS<R>>, name: S) -> Directory<R> {
+    pub fn new<S: Into<String>>(reader: Arc<Mutex<DiscReader<R>>>, name: S) -> Directory<R> {
         Self {
             name: name.into(),
             children: Vec::new(),
-            fs,
+            reader,
         }
     }
 
@@ -344,7 +342,7 @@ where
 
     pub async fn mkdir(&mut self, name: String) -> Result<&mut Directory<R>> {
         self.children
-            .push(Box::new(Directory::new(self.fs.clone(), name)));
+            .push(Box::new(Directory::new(self.reader.clone(), name)));
         Ok(self
             .children
             .last_mut()
@@ -382,14 +380,23 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+enum FileReadState {
+    #[default]
+    Seeking,
+    Reading,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 struct FileState {
     cursor: u64,
+    state: FileReadState,
 }
 
 pub struct File<R: AsyncRead + AsyncSeek> {
     fst: FstEntry,
     state: FileState,
-    fs: Weak<GeckoFS<R>>,
+    reader: Arc<Mutex<DiscReader<R>>>,
 }
 
 impl<R> File<R>
@@ -397,7 +404,7 @@ where
     R: AsyncRead + AsyncSeek,
 {
     pub fn new<S: Into<String>>(
-        fs: Weak<GeckoFS<R>>,
+        reader: Arc<Mutex<DiscReader<R>>>,
         name: S,
         file_offset_parent_dir: usize,
         file_size_next_dir_index: usize,
@@ -411,8 +418,8 @@ where
                 file_size_next_dir_index,
                 file_name_offset,
             },
-            state: FileState { cursor: 0 },
-            fs,
+            state: Default::default(),
+            reader,
         }
     }
 }
@@ -423,6 +430,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
         cx: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
+        crate::debug!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos,);
         let pos = match pos {
             SeekFrom::Start(pos) => {
                 if pos > self.fst.file_size_next_dir_index as u64 {
@@ -454,56 +462,52 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Current(pos)
             }
         };
-        match self.fs.upgrade() {
-            Some(fs) => match fs.reader.try_lock_arc() {
-                Some(mut guard) => {
-                    let guard_pin = std::pin::pin!(guard.deref_mut());
-                    match guard_pin.poll_seek(
-                        cx,
-                        match pos {
-                            SeekFrom::Start(pos) => {
-                                SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + pos)
-                            }
-                            SeekFrom::End(pos) => SeekFrom::Start(
-                                ((self.fst.file_offset_parent_dir as i64
-                                    + self.fst.file_size_next_dir_index as i64)
-                                    + pos) as u64,
-                            ),
-                            SeekFrom::Current(pos) => SeekFrom::Start(
-                                (self.fst.file_offset_parent_dir as i64
-                                    + self.state.cursor as i64
-                                    + pos) as u64,
-                            ),
-                        },
-                    ) {
-                        Poll::Ready(Ok(p)) => match pos {
-                            SeekFrom::Start(pos) => {
-                                self.state.cursor = pos;
-                                Poll::Ready(Ok(p))
-                            }
-                            SeekFrom::End(pos) => {
-                                self.state.cursor =
-                                    (self.fst.file_size_next_dir_index as i64 + pos) as u64;
-                                Poll::Ready(Ok(p))
-                            }
-                            SeekFrom::Current(pos) => {
-                                self.state.cursor = (self.state.cursor as i64 + pos) as u64;
-                                Poll::Ready(Ok(p))
-                            }
-                        },
-                        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-                        Poll::Pending => Poll::Pending,
-                    }
+        match self.reader.try_lock_arc() {
+            Some(mut guard) => {
+                crate::debug!("Disc reader locked");
+                let guard_pin = std::pin::pin!(guard.deref_mut());
+                match guard_pin.poll_seek(
+                    cx,
+                    match pos {
+                        SeekFrom::Start(pos) => {
+                            SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + pos)
+                        }
+                        SeekFrom::End(pos) => SeekFrom::Start(
+                            ((self.fst.file_offset_parent_dir as i64
+                                + self.fst.file_size_next_dir_index as i64)
+                                + pos) as u64,
+                        ),
+                        SeekFrom::Current(pos) => SeekFrom::Start(
+                            (self.fst.file_offset_parent_dir as i64
+                                + self.state.cursor as i64
+                                + pos) as u64,
+                        ),
+                    },
+                ) {
+                    Poll::Ready(Ok(p)) => match pos {
+                        SeekFrom::Start(pos) => {
+                            self.state.cursor = pos;
+                            Poll::Ready(Ok(p))
+                        }
+                        SeekFrom::End(pos) => {
+                            self.state.cursor =
+                                (self.fst.file_size_next_dir_index as i64 + pos) as u64;
+                            Poll::Ready(Ok(p))
+                        }
+                        SeekFrom::Current(pos) => {
+                            self.state.cursor = (self.state.cursor as i64 + pos) as u64;
+                            Poll::Ready(Ok(p))
+                        }
+                    },
+                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                    Poll::Pending => Poll::Pending,
                 }
-                None => Poll::Ready(Err(async_std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    eyre::eyre!("Reader was deallocated! what!?"),
-                ))),
-            },
-            None => Poll::Ready(Err(async_std::io::Error::new(
-                std::io::ErrorKind::Other,
-                eyre::eyre!("File System was deallocated! what!?"),
-            ))),
+            }
+            None => {
+                crate::debug!("Disc reader can't be locked");
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
         }
     }
 }
@@ -514,34 +518,58 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        if self.state.cursor + buf.len() as u64 > self.fst.file_size_next_dir_index as u64 {
-            return Poll::Ready(Err(async_std::io::Error::new(
-                std::io::ErrorKind::Other,
-                eyre::eyre!("Index out of range"),
-            )));
-        }
-        match self.fs.upgrade() {
-            Some(fs) => match fs.reader.try_lock_arc() {
+        crate::debug!(
+            "Reading \"{}\" for 0x{:08X} byte(s)",
+            self.name(),
+            buf.len()
+        );
+        match self.state.state {
+            FileReadState::Seeking => match self.reader.try_lock_arc() {
                 Some(mut guard) => {
+                    crate::debug!("Disc reader locked");
+                    let guard_pin = std::pin::pin!(guard.deref_mut());
+                    match guard_pin.poll_seek(cx, SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + self.state.cursor)) {
+                        Poll::Ready(Ok(_)) => {
+                            self.state.state = FileReadState::Reading;
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
+                        }
+                        Poll::Ready(Err(err)) => {
+                            self.state.state = FileReadState::Seeking;
+                            Poll::Ready(Err(err))
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                },
+                None => {
+                    crate::debug!("Disc reader can't be locked");
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            },
+            FileReadState::Reading => match self.reader.try_lock_arc() {
+                Some(mut guard) => {
+                    crate::debug!("Disc reader locked");
                     let guard_pin = std::pin::pin!(guard.deref_mut());
                     match guard_pin.poll_read(cx, buf) {
                         Poll::Ready(Ok(num_read)) => {
                             self.state.cursor += num_read as u64;
+                            self.state.state = FileReadState::Seeking;
                             Poll::Ready(Ok(num_read))
                         }
-                        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-                        Poll::Pending => todo!(),
+                        Poll::Ready(Err(err)) => {
+                            self.state.state = FileReadState::Seeking;
+                            Poll::Ready(Err(err))
+                        }
+                        Poll::Pending => Poll::Pending,
                     }
                 }
-                None => Poll::Ready(Err(async_std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    eyre::eyre!("Reader was deallocated! what!?"),
-                ))),
+                None => {
+                    crate::debug!("Disc reader can't be locked");
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
             },
-            None => Poll::Ready(Err(async_std::io::Error::new(
-                std::io::ErrorKind::Other,
-                eyre::eyre!("File System was deallocated! what!?"),
-            ))),
         }
     }
 }
@@ -567,10 +595,10 @@ where
     }
 
     fn as_file_ref(&self) -> Option<&File<R>> {
-        todo!()
+        Some(self)
     }
 
     fn as_file_mut(&mut self) -> Option<&mut File<R>> {
-        todo!()
+        Some(self)
     }
 }

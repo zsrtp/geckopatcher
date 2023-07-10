@@ -18,7 +18,6 @@ pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
-pub mod io;
 
 use config::Config;
 use eyre::Result;
