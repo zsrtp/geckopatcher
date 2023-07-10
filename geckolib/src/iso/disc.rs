@@ -66,7 +66,7 @@ impl Unpackable for WiiDiscHeader {
 }
 
 pub fn disc_get_header(raw: &[u8]) -> WiiDiscHeader {
-    let mut unk1 = [0 as u8; 14];
+    let mut unk1 = [0_u8; 14];
     let mut game_title = [0 as char; 64];
     unsafe {
         unk1.copy_from_slice(&raw[0xA..0x18]);
@@ -81,10 +81,10 @@ pub fn disc_get_header(raw: &[u8]) -> WiiDiscHeader {
         disc_version: raw[7],
         audio_streaming: raw[8] != 0,
         streaming_buffer_size: raw[9],
-        unk1: unk1,
+        unk1,
         wii_magic: BE::read_u32(&raw[0x18..0x1C]),
         gc_magic: BE::read_u32(&raw[0x1C..0x20]),
-        game_title: game_title,
+        game_title,
         disable_hash_verif: raw[0x60],
         disable_disc_encrypt: raw[0x61],
     }
@@ -102,10 +102,10 @@ pub fn disc_set_header(buffer: &mut [u8], dh: &WiiDiscHeader) {
         buffer[0x07] = dh.disc_version;
         buffer[0x08] = dh.audio_streaming as u8;
         buffer[0x09] = dh.streaming_buffer_size;
-        (&mut buffer[0x0A..0x18]).copy_from_slice(&dh.unk1[..]);
+        buffer[0x0A..0x18].copy_from_slice(&dh.unk1[..]);
         BE::write_u32(&mut buffer[0x18..], dh.wii_magic);
         BE::write_u32(&mut buffer[0x1C..], dh.gc_magic);
-        (&mut buffer[0x20..0x60]).copy_from_slice(std::mem::transmute(&dh.game_title[..]));
+        buffer[0x20..0x60].copy_from_slice(std::mem::transmute(&dh.game_title[..]));
         buffer[0x60] = dh.disable_hash_verif;
         buffer[0x61] = dh.disable_disc_encrypt;
     };
@@ -142,7 +142,7 @@ pub fn disc_get_part_info(buf: &[u8]) -> PartInfo {
     }
     PartInfo {
         offset: part_info_offset,
-        entries: entries,
+        entries,
     }
 }
 
@@ -176,7 +176,7 @@ pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     }
     Ok(PartInfo {
         offset: part_info_offset,
-        entries: entries,
+        entries,
     })
 }
 
@@ -190,23 +190,18 @@ pub fn disc_set_part_info(buffer: &mut [u8], pi: &PartInfo) {
         );
         BE::write_u32(
             &mut buffer[pi.offset as usize + (8 * i) + 4..],
-            entry.part_type as u32,
+            entry.part_type,
         );
     }
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Default)]
 pub enum PartitionType {
     Data = 0,
     Update = 1,
     ChannelInstaller = 2,
+    #[default]
     Unknown = -1,
-}
-
-impl Default for PartitionType {
-    fn default() -> Self {
-        PartitionType::Unknown
-    }
 }
 
 impl From<PartitionType> for u32 {
@@ -261,16 +256,16 @@ impl Unpackable for Ticket {
 
 impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
     fn from(buf: &[u8; Ticket::BLOCK_SIZE]) -> Self {
-        let mut sig = [0 as u8; 0x100];
-        let mut sig_padding = [0 as u8; 0x3C];
+        let mut sig = [0_u8; 0x100];
+        let mut sig_padding = [0_u8; 0x3C];
         let mut sig_issuer = [0 as char; 0x40];
-        let mut unk1 = [0 as u8; 0x3F];
-        let mut title_key = [0 as u8; 0x10];
-        let mut ticket_id = [0 as u8; 0x08];
-        let mut title_id = [0 as u8; 0x08];
-        let mut unk4 = [0 as u8; 0x09];
-        let mut unk5 = [0 as u8; 0x50];
-        let mut fake_sign = [0 as u8; 0x58];
+        let mut unk1 = [0_u8; 0x3F];
+        let mut title_key = [0_u8; 0x10];
+        let mut ticket_id = [0_u8; 0x08];
+        let mut title_id = [0_u8; 0x08];
+        let mut unk4 = [0_u8; 0x09];
+        let mut unk5 = [0_u8; 0x50];
+        let mut fake_sign = [0_u8; 0x58];
         unsafe {
             sig.copy_from_slice(&buf[0x4..0x104]);
             sig_padding.copy_from_slice(&buf[0x104..0x140]);
@@ -285,60 +280,60 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
         };
         Ticket {
             sig_type: BE::read_u32(&buf[0x00..]),
-            sig: sig,
-            sig_padding: sig_padding,
-            sig_issuer: sig_issuer,
-            unk1: unk1,
-            title_key: title_key,
+            sig,
+            sig_padding,
+            sig_issuer,
+            unk1,
+            title_key,
             unk2: buf[0x1CF],
-            ticket_id: ticket_id,
+            ticket_id,
             console_id: BE::read_u32(&buf[0x1D8..]),
-            title_id: title_id,
+            title_id,
             unk3: BE::read_u16(&buf[0x1E4..]),
             n_dlc: BE::read_u16(&buf[0x1E6..]),
-            unk4: unk4,
+            unk4,
             common_key_index: buf[0x1F1],
-            unk5: unk5,
+            unk5,
             padding2: BE::read_u16(&buf[0x242..]),
             enable_time_limit: BE::read_u32(&buf[0x244..]),
             time_limit: BE::read_u32(&buf[0x248..]),
-            fake_sign: fake_sign,
+            fake_sign,
         }
     }
 }
 
 impl From<&Ticket> for [u8; Ticket::BLOCK_SIZE] {
     fn from(t: &Ticket) -> Self {
-        let mut buf = [0 as u8; Ticket::BLOCK_SIZE];
+        let mut buf = [0_u8; Ticket::BLOCK_SIZE];
 
         BE::write_u32(&mut buf[0x00..], t.sig_type);
-        (&mut buf[0x04..0x104]).copy_from_slice(&t.sig[..]);
-        (&mut buf[0x104..0x140]).copy_from_slice(&t.sig_padding[..]);
+        buf[0x04..0x104].copy_from_slice(&t.sig[..]);
+        buf[0x104..0x140].copy_from_slice(&t.sig_padding[..]);
         unsafe {
-            (&mut buf[0x140..0x180]).copy_from_slice(std::mem::transmute(&t.sig_issuer[..]));
+            buf[0x140..0x180].copy_from_slice(std::mem::transmute(&t.sig_issuer[..]));
         }
-        (&mut buf[0x180..0x1BF]).copy_from_slice(&t.unk1[..]);
-        (&mut buf[0x1BF..0x1CF]).copy_from_slice(&t.title_key[..]);
+        buf[0x180..0x1BF].copy_from_slice(&t.unk1[..]);
+        buf[0x1BF..0x1CF].copy_from_slice(&t.title_key[..]);
         buf[0x1CF] = t.unk2;
-        (&mut buf[0x1D0..0x1D8]).copy_from_slice(&t.ticket_id[..]);
+        buf[0x1D0..0x1D8].copy_from_slice(&t.ticket_id[..]);
         BE::write_u32(&mut buf[0x1D8..], t.console_id);
-        (&mut buf[0x1DC..0x1E4]).copy_from_slice(&t.title_id[..]);
+        buf[0x1DC..0x1E4].copy_from_slice(&t.title_id[..]);
         BE::write_u16(&mut buf[0x1E4..], t.unk3);
         BE::write_u16(&mut buf[0x1E6..], t.n_dlc);
-        (&mut buf[0x1E8..0x1F1]).copy_from_slice(&t.unk4[..]);
+        buf[0x1E8..0x1F1].copy_from_slice(&t.unk4[..]);
         buf[0x1F1] = t.common_key_index;
-        (&mut buf[0x1F2..0x242]).copy_from_slice(&t.unk5[..]);
+        buf[0x1F2..0x242].copy_from_slice(&t.unk5[..]);
         BE::write_u16(&mut buf[0x242..], t.padding2);
         BE::write_u32(&mut buf[0x244..], t.enable_time_limit);
         BE::write_u32(&mut buf[0x248..], t.time_limit);
-        (&mut buf[0x24C..0x2A4]).copy_from_slice(&t.fake_sign[..]);
+        buf[0x24C..0x2A4].copy_from_slice(&t.fake_sign[..]);
         buf
     }
 }
 
 impl Default for Ticket {
     fn default() -> Self {
-        Ticket::try_from(&[0 as u8; Ticket::BLOCK_SIZE]).unwrap()
+        Ticket::try_from(&[0_u8; Ticket::BLOCK_SIZE]).unwrap()
     }
 }
 
@@ -376,8 +371,8 @@ impl From<&[u8; PartHeader::BLOCK_SIZE]> for PartHeader {
 
 impl From<&PartHeader> for [u8; PartHeader::BLOCK_SIZE] {
     fn from(ph: &PartHeader) -> Self {
-        let mut buf = [0 as u8; PartHeader::BLOCK_SIZE];
-        (&mut buf[..0x2A4]).copy_from_slice(&<[u8; 0x2A4]>::from(&ph.ticket));
+        let mut buf = [0_u8; PartHeader::BLOCK_SIZE];
+        buf[..0x2A4].copy_from_slice(&<[u8; 0x2A4]>::from(&ph.ticket));
         BE::write_u32(&mut buf[0x2A4..], ph.tmd_size as u32);
         BE::write_u32(&mut buf[0x2A8..], (ph.tmd_offset >> 2) as u32);
         BE::write_u32(&mut buf[0x2AC..], ph.cert_size as u32);
@@ -543,15 +538,15 @@ pub fn decrypt_title_key(tik: &Ticket) -> AesKey {
     let mut iv: AesKey = Default::default();
     iv[0..tik.title_id.len()].copy_from_slice(&tik.title_id);
     let cipher = Aes128Cbc::new_from_slices(&key[..], &iv[..]).unwrap();
-    let mut block = [0 as u8; 256];
+    let mut block = [0_u8; 256];
     block[0..tik.title_key.len()].copy_from_slice(&tik.title_key);
 
     buf.copy_from_slice(&cipher.decrypt(&mut block).unwrap()[..tik.title_key.len()]);
     buf
 }
 
-fn decrypt_partition_inplace<'a>(
-    buf: &'a mut [u8],
+fn decrypt_partition_inplace(
+    buf: &mut [u8],
     part: &WiiPartition,
 ) -> Result<(), WiiCryptoError> {
     #[cfg(feature = "log")]
@@ -561,10 +556,10 @@ fn decrypt_partition_inplace<'a>(
     let (_, data_slice) = buf.split_at_mut((part.part_offset + part.header.data_offset) as usize);
     let mut data_pool: Vec<&mut [u8]> = data_slice.chunks_mut(consts::WII_SECTOR_SIZE).collect();
     data_pool.par_iter_mut().for_each(|data| {
-        let mut iv = [0 as u8; consts::WII_KEY_SIZE];
+        let mut iv = [0_u8; consts::WII_KEY_SIZE];
         iv[..consts::WII_KEY_SIZE]
             .copy_from_slice(&data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE]);
-        // aes_decrypt_inplace(&mut data[..consts::WII_SECTOR_HASH_SIZE], &[0 as u8; consts::WII_KEY_SIZE], &part_key).unwrap();
+        // aes_decrypt_inplace(&mut data[..consts::WII_SECTOR_HASH_SIZE], &[0_u8; consts::WII_KEY_SIZE], &part_key).unwrap();
         aes_decrypt_inplace(
             &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
             &iv,
@@ -585,7 +580,7 @@ fn decrypt_partition_inplace<'a>(
     // println!("");
     // println!("title code: {}", String::from_utf8_lossy(&buf[part.part_offset + part.header.data_offset..][..0x06]));
     // println!("title code of the partition: {}", String::from_utf8_lossy(&buf[part.part_offset + part.header.data_offset..][0x20..0x46]));
-    return Ok(());
+    Ok(())
 }
 
 pub fn parse_disc(buf: &mut [u8]) -> Result<Option<WiiPartitions>, WiiCryptoError> {
@@ -615,7 +610,7 @@ pub fn parse_disc(buf: &mut [u8]) -> Result<Option<WiiPartitions>, WiiCryptoErro
         }
         ret_vec.push(part);
     }
-    if ret_vec.len() > 0 {
+    if !ret_vec.is_empty() {
         if let Some(data_idx) = data_idx {
             ret = Some(WiiPartitions {
                 data_idx,
@@ -624,7 +619,7 @@ pub fn parse_disc(buf: &mut [u8]) -> Result<Option<WiiPartitions>, WiiCryptoErro
             });
         }
     }
-    return Ok(ret);
+    Ok(ret)
     // }
 }
 
@@ -635,7 +630,7 @@ pub fn finalize_iso(
     // We use the original iso as a buffer to work on inplace.
     let mut part_opt: Option<WiiPartition> = None;
 
-    let part_info = disc_get_part_info(&original_iso[..]);
+    let part_info = disc_get_part_info(original_iso);
     for entry in part_info.entries.iter() {
         let part = WiiPartition {
             part_offset: entry.offset,
@@ -693,7 +688,7 @@ pub fn finalize_iso(
         //     data_pool.push(section);
         // }
         data_pool.par_iter_mut().for_each(|data| {
-            let mut iv = [0 as u8; consts::WII_KEY_SIZE];
+            let mut iv = [0_u8; consts::WII_KEY_SIZE];
             aes_encrypt_inplace(
                 &mut data[..consts::WII_SECTOR_HASH_SIZE],
                 &iv,
@@ -807,7 +802,7 @@ fn hash_partition(partition: &mut [u8]) {
     // h4 / TMD
     let mut tmd = partition_get_tmd(partition, header.tmd_offset as usize);
     let mut tmd_size = 0x1e4 + 36 * tmd.contents.len();
-    if tmd.contents.len() > 0 {
+    if !tmd.contents.is_empty() {
         let content = &mut tmd.contents[0];
         content.hash.copy_from_slice(
             &Sha1::from(&partition[h3_offset..][..0x18000])

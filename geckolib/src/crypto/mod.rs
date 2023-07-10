@@ -39,7 +39,7 @@ const COMMON_KEY_MASK: [[u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT] = [
 
 lazy_static! {
     pub static ref COMMON_KEY: [[u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT] = {
-        let mut ck = [[0 as u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT];
+        let mut ck = [[0_u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT];
         for (v, (k, m)) in ck.iter_mut().flatten().zip(
             COMMON_KEY_
                 .iter()
@@ -176,7 +176,7 @@ macro_rules! declare_tryfrom {
                         name: stringify![$T].to_string(),
                     })
                 } else {
-                    let mut buf = [0 as u8; <$T as Unpackable>::BLOCK_SIZE];
+                    let mut buf = [0_u8; <$T as Unpackable>::BLOCK_SIZE];
                     buf.clone_from_slice(&slice[..<$T as Unpackable>::BLOCK_SIZE]);
                     Ok(<$T>::from(&buf))
                 }
@@ -185,11 +185,11 @@ macro_rules! declare_tryfrom {
     };
 }
 
-pub fn aes_decrypt_inplace<'a, K: Deref<Target = [u8; 0x10]>>(
-    data: &'a mut [u8],
+pub fn aes_decrypt_inplace<K: Deref<Target = [u8; 0x10]>>(
+    data: &mut [u8],
     iv: K,
     key: K,
-) -> Result<&'a [u8], WiiCryptoError> {
+) -> Result<&[u8], WiiCryptoError> {
     let cipher = Aes128Cbc::new_from_slices(&*key, &*iv).unwrap();
     let ret = cipher
         .decrypt(&mut *data)
@@ -197,12 +197,12 @@ pub fn aes_decrypt_inplace<'a, K: Deref<Target = [u8; 0x10]>>(
     Ok(ret)
 }
 
-pub fn aes_encrypt_inplace<'a, K: Deref<Target = [u8; 0x10]>>(
-    data: &'a mut [u8],
+pub fn aes_encrypt_inplace<K: Deref<Target = [u8; 0x10]>>(
+    data: &mut [u8],
     iv: K,
     key: K,
     size: usize,
-) -> Result<&'a [u8], WiiCryptoError> {
+) -> Result<&[u8], WiiCryptoError> {
     let cipher = Aes128Cbc::new_from_slices(&*key, &*iv).unwrap();
     cipher
         .encrypt(&mut *data, size)

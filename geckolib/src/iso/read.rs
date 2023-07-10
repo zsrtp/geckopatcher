@@ -104,7 +104,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     }
     #[cfg(feature = "log")]
     debug!("{:} partitions found", ret_vec.len());
-    if ret_vec.len() > 0 {
+    if !ret_vec.is_empty() {
         if let Some(data_idx) = data_idx {
             return Ok(WiiPartitions {
                 data_idx,
@@ -115,7 +115,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     }
     #[cfg(feature = "log")]
     warn!("No Game Partition found!");
-    return Err(WiiCryptoError::NoGamePartition.into());
+    Err(WiiCryptoError::NoGamePartition.into())
 }
 
 impl<R> WiiDiscReader<R>
@@ -138,7 +138,7 @@ where
         let mut buf = vec![0u8; WiiDiscHeader::BLOCK_SIZE];
         reader.seek(SeekFrom::Start(0)).await?;
         reader.read_exact(&mut buf).await?;
-        this.disc_info.disc_header = disc_get_header(&mut buf);
+        this.disc_info.disc_header = disc_get_header(&buf);
         #[cfg(feature = "log")]
         trace!("{:?}", this.disc_info.disc_header);
         if this.disc_info.disc_header.wii_magic != 0x5D1C9EA3 {
@@ -160,7 +160,7 @@ where
     fn clone(&self) -> Self {
         Self {
             disc_info: self.disc_info.clone(),
-            cursor: self.cursor.clone(),
+            cursor: self.cursor,
             state: self.state.clone(),
             reader: self.reader.clone(),
         }
@@ -230,7 +230,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
         let decrypted_size = (this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size
             / consts::WII_SECTOR_SIZE as u64)
             * consts::WII_SECTOR_DATA_SIZE as u64;
-        if buf.len() == 0 || *this.cursor >= decrypted_size {
+        if buf.is_empty() || *this.cursor >= decrypted_size {
             return Poll::Ready(Ok(0));
         }
         let part = this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx];
@@ -253,7 +253,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
             WiiDiscReaderState::Seeking => {
                 let start_blk_addr = part.part_offset
                     + part.header.data_offset
-                    + (start_blk_idx * consts::WII_SECTOR_SIZE as usize) as u64;
+                    + (start_blk_idx * consts::WII_SECTOR_SIZE) as u64;
                 #[cfg(feature = "log")]
                 debug!("Seeking to 0x{:08X}", start_blk_addr);
                 ready!(this.reader.poll_seek(cx, SeekFrom::Start(start_blk_addr)))?;
@@ -279,7 +279,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                 #[cfg(feature = "log")]
                 trace!("data_pool size: {}", data_pool.len());
                 let decrypt_process = move |data: &mut &mut [u8]| {
-                    let mut iv = [0 as u8; consts::WII_KEY_SIZE];
+                    let mut iv = [0_u8; consts::WII_KEY_SIZE];
                     iv[..consts::WII_KEY_SIZE].copy_from_slice(
                         &data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE],
                     );
@@ -290,7 +290,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                     // Decrypt the hash to check if valid (not required here)
                     aes_decrypt_inplace(
                         &mut data[..consts::WII_SECTOR_HASH_SIZE],
-                        &[0 as u8; consts::WII_KEY_SIZE],
+                        &[0_u8; consts::WII_KEY_SIZE],
                         &part_key,
                     )
                     .unwrap();
@@ -325,13 +325,13 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                         std::cmp::max(0, vstart as i64 - block_pos as i64) as usize;
                     let block_read_end = std::cmp::min(
                         consts::WII_SECTOR_DATA_SIZE as u64,
-                        (vstart + read_size as u64) - block_pos as u64,
+                        (vstart + read_size as u64) - block_pos,
                     ) as usize;
                     buf[buf_write_start..buf_write_end].copy_from_slice(
                         &block[consts::WII_SECTOR_HASH_SIZE..][block_read_start..block_read_end],
                     );
                 }
-                *this.cursor = *this.cursor + buf.len() as u64;
+                *this.cursor += buf.len() as u64;
                 *this.state = WiiDiscReaderState::Seeking;
                 Poll::Ready(Ok(buf.len()))
             }
@@ -343,7 +343,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
 #[pin_project(project = DiskReaderProj)]
 pub enum DiscReader<R: AsyncRead + AsyncSeek> {
     Gamecube(#[pin] GCDiscReader<Pin<Box<R>>>),
-    Wii(#[pin] WiiDiscReader<Pin<Box<R>>>),
+    Wii(#[pin] Box<WiiDiscReader<Pin<Box<R>>>>),
 }
 
 impl<R> AsyncSeek for DiscReader<R>
@@ -398,7 +398,7 @@ where
         if BE::read_u32(&buf[4..][..4]) == 0xC2339F3D {
             Ok(Self::Gamecube(GCDiscReader::new(reader)))
         } else if BE::read_u32(&buf[..][..4]) == 0x5D1C9EA3 {
-            Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))
+            Ok(Self::Wii(Box::new(WiiDiscReader::try_parse(reader).await?)))
         } else {
             Err(eyre::eyre!("Not a game disc"))
         }

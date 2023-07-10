@@ -18,6 +18,7 @@ pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
+pub mod io;
 
 use config::Config;
 use eyre::Result;
@@ -46,13 +47,13 @@ fn write_file_to_zip<R: Write + Seek, S: Into<String>>(
 #[cfg(not(feature = "web"))]
 fn add_file_to_zip(
     index: usize,
-    iso_path: &String,
+    iso_path: &str,
     actual_path: &PathBuf,
     zip: &mut ZipWriter<BufWriter<File>>,
     new_map: &mut HashMap<String, PathBuf>,
 ) -> Result<()> {
     let zip_path = format!("replace{}.dat", index);
-    new_map.insert(iso_path.clone(), PathBuf::from(&zip_path));
+    new_map.insert(iso_path.to_owned(), PathBuf::from(&zip_path));
     write_file_to_zip(zip, zip_path, &std::fs::read(actual_path)?)?;
     Ok(())
 }
@@ -66,7 +67,7 @@ fn add_entry_to_zip(
     new_map: &mut HashMap<String, PathBuf>,
 ) -> Result<()> {
     if actual_path.is_file() {
-        *index = *index + 1;
+        *index += 1;
         add_file_to_zip(*index, iso_path, actual_path, zip, new_map)?;
     } else if actual_path.is_dir() {
         for entry in std::fs::read_dir(actual_path)? {
@@ -166,7 +167,7 @@ impl IsoBuilder {
         write_file_to_zip(
             &mut zip,
             "RomHack.toml",
-            &toml::to_string(&config)?.as_bytes(),
+            toml::to_string(&config)?.as_bytes(),
         )?;
 
         Ok(())

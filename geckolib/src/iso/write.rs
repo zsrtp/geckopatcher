@@ -228,7 +228,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscWriter<R> {
                     buf2.chunks_mut(consts::WII_SECTOR_SIZE).collect();
                 crate::trace!("data_pool size: {}", data_pool.len());
                 let decrypt_process = move |data: &mut &mut [u8]| {
-                    let mut iv = [0 as u8; consts::WII_KEY_SIZE];
+                    let mut iv = [0_u8; consts::WII_KEY_SIZE];
                     iv[..consts::WII_KEY_SIZE].copy_from_slice(
                         &data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE],
                     );
@@ -237,7 +237,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscWriter<R> {
                     // Decrypt the hash to check if valid (not required here)
                     aes_decrypt_inplace(
                         &mut data[..consts::WII_SECTOR_HASH_SIZE],
-                        &[0 as u8; consts::WII_KEY_SIZE],
+                        &[0_u8; consts::WII_KEY_SIZE],
                         &part_key,
                     )
                     .unwrap();

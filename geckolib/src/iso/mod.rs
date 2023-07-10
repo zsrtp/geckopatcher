@@ -19,17 +19,12 @@ pub mod consts {
     pub const FST_ALIGNMENT: usize = 256;
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
 pub(crate) enum FstNodeType {
+    #[default]
     File = 0,
     Directory = 1,
-}
-
-impl Default for FstNodeType {
-    fn default() -> Self {
-        FstNodeType::File
-    }
 }
 
 impl TryFrom<u8> for FstNodeType {

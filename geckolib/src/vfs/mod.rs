@@ -10,21 +10,21 @@ use std::ops::DerefMut;
 use std::task::{Context, Poll};
 
 pub trait Node<R: AsyncRead + AsyncSeek> {
-    fn name<'a>(&'a self) -> &'a str;
+    fn name(&self) -> &str;
     fn get_type(&self) -> NodeType;
-    fn as_directory_ref<'a>(&'a self) -> Option<&'a Directory<R>>;
-    fn as_directory_mut<'a>(&'a mut self) -> Option<&'a mut Directory<R>>;
-    fn as_file_ref<'a>(&'a self) -> Option<&'a File<R>>;
-    fn as_file_mut<'a>(&'a mut self) -> Option<&'a mut File<R>>;
+    fn as_directory_ref(&self) -> Option<&Directory<R>>;
+    fn as_directory_mut(&mut self) -> Option<&mut Directory<R>>;
+    fn as_file_ref(&self) -> Option<&File<R>>;
+    fn as_file_mut(&mut self) -> Option<&mut File<R>>;
 
-    fn as_enum_ref<'a>(&'a self) -> NodeEnumRef<'a, R> {
+    fn as_enum_ref(&self) -> NodeEnumRef<'_, R> {
         match self.get_type() {
             NodeType::File => NodeEnumRef::File(self.as_file_ref().unwrap()),
             NodeType::Directory => NodeEnumRef::Directory(self.as_directory_ref().unwrap()),
         }
     }
 
-    fn as_enum_mut<'a>(&'a mut self) -> NodeEnumMut<'a, R> {
+    fn as_enum_mut(&mut self) -> NodeEnumMut<'_, R> {
         match self.get_type() {
             NodeType::File => NodeEnumMut::File(self.as_file_mut().unwrap()),
             NodeType::Directory => NodeEnumMut::Directory(self.as_directory_mut().unwrap()),
@@ -133,7 +133,7 @@ where
             let fst_offset = (BE::read_u32(&buf[..]) << (if is_wii { 2 } else { 0 })) as u64;
             GeckoFS::read_exact(
                 &mut guard,
-                SeekFrom::Start((fst_offset + 8) as u64),
+                SeekFrom::Start(fst_offset + 8),
                 &mut buf,
             )
             .await?;
@@ -145,7 +145,7 @@ where
                 let mut buf = [0u8; 1];
                 GeckoFS::read_exact(
                     &mut guard,
-                    SeekFrom::Start((fst_offset + i as u64 * 12) as u64),
+                    SeekFrom::Start(fst_offset + i as u64 * 12),
                     &mut buf,
                 )
                 .await?;
@@ -154,7 +154,7 @@ where
                 let mut buf = [0u8; 4];
                 GeckoFS::read_exact(
                     &mut guard,
-                    SeekFrom::Start((fst_offset + i as u64 * 12) as u64),
+                    SeekFrom::Start(fst_offset + i as u64 * 12),
                     &mut buf,
                 )
                 .await?;
@@ -266,15 +266,13 @@ where
     }
 
     pub fn main_dol_mut(&mut self) -> Option<&mut File<R>> {
-        Some(
-            self.root
-                .resolve_node("&&systemdata/Start.dol")?
-                .as_file_mut()?,
-        )
+        self.root
+            .resolve_node("&&systemdata/Start.dol")?
+            .as_file_mut()
     }
 
     pub fn banner_mut(&mut self) -> Option<&mut File<R>> {
-        Some(self.root.resolve_node("opening.bnr")?.as_file_mut()?)
+        self.root.resolve_node("opening.bnr")?.as_file_mut()
     }
 
     pub async fn get_disc_type(&self) -> DiscType {
@@ -290,7 +288,7 @@ impl<R> Node<R> for GeckoFS<R>
 where
     R: AsyncRead + AsyncSeek,
 {
-    fn name<'a>(&'a self) -> &'a str {
+    fn name(&self) -> &str {
         self.root.name()
     }
 
@@ -298,19 +296,19 @@ where
         NodeType::Directory
     }
 
-    fn as_directory_ref<'a>(&'a self) -> Option<&'a Directory<R>> {
+    fn as_directory_ref(&self) -> Option<&Directory<R>> {
         Some(&self.root)
     }
 
-    fn as_directory_mut<'a>(&'a mut self) -> Option<&'a mut Directory<R>> {
+    fn as_directory_mut(&mut self) -> Option<&mut Directory<R>> {
         Some(&mut self.root)
     }
 
-    fn as_file_ref<'a>(&'a self) -> Option<&'a File<R>> {
+    fn as_file_ref(&self) -> Option<&File<R>> {
         None
     }
 
-    fn as_file_mut<'a>(&'a mut self) -> Option<&'a mut File<R>> {
+    fn as_file_mut(&mut self) -> Option<&mut File<R>> {
         None
     }
 }
@@ -357,7 +355,7 @@ where
         Some(dir)
     }
 
-    pub async fn mkdir<'a>(&'a mut self, name: String) -> Result<&mut Directory<R>> {
+    pub async fn mkdir(&mut self, name: String) -> Result<&mut Directory<R>> {
         self.children
             .push(Box::new(Directory::new(self.fs.clone(), name)));
         Ok(self
@@ -372,7 +370,7 @@ impl<R> Node<R> for Directory<R>
 where
     R: AsyncRead + AsyncSeek,
 {
-    fn name<'a>(&'a self) -> &'a str {
+    fn name(&self) -> &str {
         &self.name
     }
 
@@ -380,19 +378,19 @@ where
         NodeType::Directory
     }
 
-    fn as_directory_ref<'a>(&'a self) -> Option<&'a Directory<R>> {
+    fn as_directory_ref(&self) -> Option<&Directory<R>> {
         Some(self)
     }
 
-    fn as_directory_mut<'a>(&'a mut self) -> Option<&'a mut Directory<R>> {
+    fn as_directory_mut(&mut self) -> Option<&mut Directory<R>> {
         Some(self)
     }
 
-    fn as_file_ref<'a>(&'a self) -> Option<&'a File<R>> {
+    fn as_file_ref(&self) -> Option<&File<R>> {
         None
     }
 
-    fn as_file_mut<'a>(&'a mut self) -> Option<&'a mut File<R>> {
+    fn as_file_mut(&mut self) -> Option<&mut File<R>> {
         None
     }
 }
@@ -565,7 +563,7 @@ impl<R> Node<R> for File<R>
 where
     R: AsyncRead + AsyncSeek,
 {
-    fn name<'a>(&'a self) -> &'a str {
+    fn name(&self) -> &str {
         &self.fst.relative_file_name
     }
 
@@ -573,19 +571,19 @@ where
         NodeType::File
     }
 
-    fn as_directory_ref<'a>(&'a self) -> Option<&'a Directory<R>> {
+    fn as_directory_ref(&self) -> Option<&Directory<R>> {
         None
     }
 
-    fn as_directory_mut<'a>(&'a mut self) -> Option<&'a mut Directory<R>> {
+    fn as_directory_mut(&mut self) -> Option<&mut Directory<R>> {
         None
     }
 
-    fn as_file_ref<'a>(&'a self) -> Option<&'a File<R>> {
+    fn as_file_ref(&self) -> Option<&File<R>> {
         todo!()
     }
 
-    fn as_file_mut<'a>(&'a mut self) -> Option<&'a mut File<R>> {
+    fn as_file_mut(&mut self) -> Option<&mut File<R>> {
         todo!()
     }
 }
