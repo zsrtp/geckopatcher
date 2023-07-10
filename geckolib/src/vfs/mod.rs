@@ -138,56 +138,49 @@ where
             )
             .await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
+            let mut fst_list_buf = vec![0u8; num_entries * 0xC];
+            GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset), &mut fst_list_buf).await?;
             let string_table_offset = num_entries as u64 * 0xC;
+
+            GeckoFS::read_exact(
+                &mut guard,
+                SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
+                &mut buf,
+            )
+            .await?;
+            let fst_size = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
+            let mut str_tbl_buf = vec![0u8; fst_size - string_table_offset as usize];
+            GeckoFS::read_exact(&mut guard, SeekFrom::Start(string_table_offset + fst_offset), &mut str_tbl_buf).await?;
+
+            if false {
+                let mut buf = vec![0u8; num_entries * 12];
+                GeckoFS::read_exact(
+                    &mut guard,
+                    SeekFrom::Start(fst_offset + 8),
+                    &mut buf,
+                )
+                .await?;
+                // crate::debug!("FST entries: {:?}", buf);
+            }
 
             let mut fst_entries = Vec::with_capacity(num_entries);
             for i in 0..num_entries {
-                let mut buf = [0u8; 1];
-                GeckoFS::read_exact(
-                    &mut guard,
-                    SeekFrom::Start(fst_offset + i as u64 * 12),
-                    &mut buf,
-                )
-                .await?;
-                let kind = FstNodeType::try_from(buf[0]).unwrap_or(FstNodeType::Directory);
+                let kind = FstNodeType::try_from(fst_list_buf[i * 12]).unwrap_or(FstNodeType::Directory);
 
-                let mut buf = [0u8; 4];
-                GeckoFS::read_exact(
-                    &mut guard,
-                    SeekFrom::Start(fst_offset + i as u64 * 12),
-                    &mut buf,
-                )
-                .await?;
-                let string_offset = (BE::read_u32(&buf) & 0x00ffffff) as usize;
+                let string_offset = (BE::read_u32(&fst_list_buf[i * 12..]) & 0x00ffffff) as usize;
 
-                let pos = string_offset as u64 + string_table_offset + fst_offset;
-                let mut buf = [0u8; 1];
+                let pos = string_offset;
                 let mut end = pos;
-                GeckoFS::read_exact(&mut guard, SeekFrom::Start(end), &mut buf).await?;
-                while buf[0] != 0 {
+                while str_tbl_buf[end] != 0 {
                     end += 1;
-                    GeckoFS::read_exact(&mut guard, SeekFrom::Start(end), &mut buf).await?;
                 }
-                let mut buf = vec![0u8; (end - pos) as usize];
-                GeckoFS::read_exact(&mut guard, SeekFrom::Start(pos), &mut buf).await?;
-                let relative_file_name = String::from_utf8(buf)?;
+                let mut str_buf = Vec::new();
+                str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
+                let relative_file_name = String::from_utf8(str_buf)?;
 
-                let mut buf = [0u8; 4];
-                GeckoFS::read_exact(
-                    &mut guard,
-                    SeekFrom::Start(fst_offset + i as u64 * 12 + 4),
-                    &mut buf,
-                )
-                .await?;
                 let file_offset_parent_dir =
-                    (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
-                GeckoFS::read_exact(
-                    &mut guard,
-                    SeekFrom::Start(fst_offset + i as u64 * 12 + 8),
-                    &mut buf,
-                )
-                .await?;
-                let file_size_next_dir_index = BE::read_u32(&buf) as usize;
+                    (BE::read_u32(&fst_list_buf[i * 12 + 4..]) as usize) << (if is_wii { 2 } else { 0 });
+                let file_size_next_dir_index = BE::read_u32(&fst_list_buf[i * 12 + 8..]) as usize;
 
                 fst_entries.push(FstEntry {
                     kind,
@@ -205,13 +198,7 @@ where
             )
             .await?;
             let dol_offset = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
-            GeckoFS::read_exact(
-                &mut guard,
-                SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
-                &mut buf,
-            )
-            .await?;
-            let fst_size = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
+            crate::info!("fst_size: 0x{:08X}; fst entries list size: 0x{:08X}", fst_size, num_entries * 12);
 
             iso_hdr = File::new(Weak::new(), "iso.hdr", 0, consts::HEADER_LENGTH, 0);
             app_ldr = File::new(
