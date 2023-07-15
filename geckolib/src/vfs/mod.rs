@@ -1,7 +1,7 @@
 use crate::iso::disc::DiscType;
 use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNodeType};
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
+use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite, self};
 use async_std::prelude::*;
 use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
@@ -87,7 +87,7 @@ where
             parent_dir.children.push(Box::new(dir));
         } else {
             let file = File::new(
-                parent_dir.reader.clone(),
+                FileDataSource::Reader(parent_dir.reader.clone()),
                 entry.relative_file_name.clone(),
                 entry.file_offset_parent_dir,
                 entry.file_size_next_dir_index,
@@ -185,28 +185,28 @@ where
             );
 
             system.children.push(Box::new(File::new(
-                reader.clone(),
+                FileDataSource::Reader(reader.clone()),
                 "iso.hdr",
                 0,
                 consts::HEADER_LENGTH,
                 0,
             )));
             system.children.push(Box::new(File::new(
-                reader.clone(),
+                FileDataSource::Reader(reader.clone()),
                 "AppLoader.ldr",
                 consts::HEADER_LENGTH,
                 dol_offset - consts::HEADER_LENGTH,
                 0,
             )));
             system.children.push(Box::new(File::new(
-                reader.clone(),
+                FileDataSource::Reader(reader.clone()),
                 "Start.dol",
                 dol_offset,
                 fst_offset as usize - dol_offset,
                 0,
             )));
             system.children.push(Box::new(File::new(
-                reader.clone(),
+                FileDataSource::Reader(reader.clone()),
                 "Game.toc",
                 fst_offset as usize,
                 fst_size,
@@ -230,7 +230,7 @@ where
                     root.children.push(Box::new(new_dir));
                 } else {
                     let file = File::new(
-                        reader.clone(),
+                        FileDataSource::Reader(reader.clone()),
                         entry.relative_file_name.clone(),
                         entry.file_offset_parent_dir,
                         entry.file_size_next_dir_index,
@@ -416,11 +416,17 @@ struct FileState {
     state: FileReadState,
 }
 
+#[derive(Debug)]
+pub enum FileDataSource<R: AsyncRead + AsyncSeek> {
+    Reader(Arc<Mutex<DiscReader<R>>>),
+    Box(Box<[u8]>),
+}
+
 // TODO Add an enum which gives the choice between using a reader or a boxed slice (to allow having custom files).
 pub struct File<R: AsyncRead + AsyncSeek> {
     fst: FstEntry,
     state: FileState,
-    reader: Arc<Mutex<DiscReader<R>>>,
+    reader: FileDataSource<R>,
 }
 
 impl<R> File<R>
@@ -428,7 +434,7 @@ where
     R: AsyncRead + AsyncSeek,
 {
     pub fn new<S: Into<String>>(
-        reader: Arc<Mutex<DiscReader<R>>>,
+        reader: FileDataSource<R>,
         name: S,
         file_offset_parent_dir: usize,
         file_size_next_dir_index: usize,
@@ -447,12 +453,22 @@ where
         }
     }
 
+    pub fn set_data(&mut self, data: Box<[u8]>) {
+        self.reader = FileDataSource::Box(data);
+    }
+
     pub fn len(&self) -> usize {
-        self.fst.file_size_next_dir_index
+        match &self.reader {
+            FileDataSource::Reader(_) => self.fst.file_size_next_dir_index,
+            FileDataSource::Box(data) => data.len(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        match &self.reader {
+            FileDataSource::Reader(_) => self.len() == 0,
+            FileDataSource::Box(data) => data.is_empty(),
+        }
     }
 }
 
@@ -465,7 +481,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
         crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos,);
         let pos = match pos {
             SeekFrom::Start(pos) => {
-                if pos > self.fst.file_size_next_dir_index as u64 {
+                if pos > self.len() as u64 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -474,7 +490,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Start(pos)
             }
             SeekFrom::End(pos) => {
-                let new_pos = self.fst.file_size_next_dir_index as i64 + pos;
+                let new_pos = self.len() as i64 + pos;
                 if new_pos < 0 || pos > 0 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
@@ -485,7 +501,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
             }
             SeekFrom::Current(pos) => {
                 let new_pos = self.state.cursor as i64 + pos;
-                if new_pos < 0 || new_pos > self.fst.file_size_next_dir_index as i64 {
+                if new_pos < 0 || new_pos > self.len() as i64 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -494,50 +510,64 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Current(pos)
             }
         };
-        match self.reader.try_lock_arc() {
-            Some(mut guard) => {
-                let guard_pin = std::pin::pin!(guard.deref_mut());
-                match guard_pin.poll_seek(
-                    cx,
-                    match pos {
-                        SeekFrom::Start(pos) => {
-                            SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + pos)
-                        }
-                        SeekFrom::End(pos) => SeekFrom::Start(
-                            ((self.fst.file_offset_parent_dir as i64
-                                + self.fst.file_size_next_dir_index as i64)
-                                + pos) as u64,
-                        ),
-                        SeekFrom::Current(pos) => SeekFrom::Start(
-                            (self.fst.file_offset_parent_dir as i64
-                                + self.state.cursor as i64
-                                + pos) as u64,
-                        ),
-                    },
-                ) {
-                    Poll::Ready(Ok(_)) => match pos {
-                        SeekFrom::Start(pos) => {
-                            self.state.cursor = pos;
-                            Poll::Ready(Ok(self.state.cursor))
-                        }
-                        SeekFrom::End(pos) => {
-                            self.state.cursor =
-                                (self.fst.file_size_next_dir_index as i64 + pos) as u64;
-                            Poll::Ready(Ok(self.state.cursor))
-                        }
-                        SeekFrom::Current(pos) => {
-                            self.state.cursor = (self.state.cursor as i64 + pos) as u64;
-                            Poll::Ready(Ok(self.state.cursor))
-                        }
-                    },
-                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-                    Poll::Pending => Poll::Pending,
+        match &self.reader {
+            FileDataSource::Reader(reader) => match reader.try_lock_arc() {
+                Some(mut guard) => {
+                    let guard_pin = std::pin::pin!(guard.deref_mut());
+                    match guard_pin.poll_seek(
+                        cx,
+                        match pos {
+                            SeekFrom::Start(pos) => {
+                                SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + pos)
+                            }
+                            SeekFrom::End(pos) => SeekFrom::Start(
+                                ((self.fst.file_offset_parent_dir as i64 + self.len() as i64) + pos)
+                                    as u64,
+                            ),
+                            SeekFrom::Current(pos) => SeekFrom::Start(
+                                (self.fst.file_offset_parent_dir as i64
+                                    + self.state.cursor as i64
+                                    + pos) as u64,
+                            ),
+                        },
+                    ) {
+                        Poll::Ready(Ok(_)) => match pos {
+                            SeekFrom::Start(pos) => {
+                                self.state.cursor = pos;
+                                Poll::Ready(Ok(self.state.cursor))
+                            }
+                            SeekFrom::End(pos) => {
+                                self.state.cursor = (self.len() as i64 + pos) as u64;
+                                Poll::Ready(Ok(self.state.cursor))
+                            }
+                            SeekFrom::Current(pos) => {
+                                self.state.cursor = (self.state.cursor as i64 + pos) as u64;
+                                Poll::Ready(Ok(self.state.cursor))
+                            }
+                        },
+                        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                        Poll::Pending => Poll::Pending,
+                    }
                 }
-            }
-            None => {
-                cx.waker().wake_by_ref();
-                Poll::Pending
-            }
+                None => {
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            },
+            FileDataSource::Box(_) => match pos {
+                SeekFrom::Start(pos) => {
+                    self.state.cursor = pos;
+                    Poll::Ready(Ok(self.state.cursor))
+                }
+                SeekFrom::End(pos) => {
+                    self.state.cursor = (self.len() as i64 + pos) as u64;
+                    Poll::Ready(Ok(self.state.cursor))
+                }
+                SeekFrom::Current(pos) => {
+                    self.state.cursor = (self.state.cursor as i64 + pos) as u64;
+                    Poll::Ready(Ok(self.state.cursor))
+                }
+            },
         }
     }
 }
@@ -555,53 +585,75 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
         );
         let end = std::cmp::min(
             buf.len(),
-            (self.fst.file_size_next_dir_index as i64 - self.state.cursor as i64) as usize,
+            (self.len() as i64 - self.state.cursor as i64) as usize,
         );
         match self.state.state {
-            FileReadState::Seeking => match self.reader.try_lock_arc() {
-                Some(mut guard) => {
-                    let guard_pin = std::pin::pin!(guard.deref_mut());
-                    match guard_pin.poll_seek(
-                        cx,
-                        SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + self.state.cursor),
-                    ) {
-                        Poll::Ready(Ok(_)) => {
-                            self.state.state = FileReadState::Reading;
-                            cx.waker().wake_by_ref();
-                            Poll::Pending
+            FileReadState::Seeking => match &self.reader {
+                FileDataSource::Reader(reader) => match reader.try_lock_arc() {
+                    Some(mut guard) => {
+                        let guard_pin = std::pin::pin!(guard.deref_mut());
+                        match guard_pin.poll_seek(
+                            cx,
+                            SeekFrom::Start(
+                                self.fst.file_offset_parent_dir as u64 + self.state.cursor,
+                            ),
+                        ) {
+                            Poll::Ready(Ok(_)) => {
+                                self.state.state = FileReadState::Reading;
+                                cx.waker().wake_by_ref();
+                                Poll::Pending
+                            }
+                            Poll::Ready(Err(err)) => {
+                                self.state.state = FileReadState::Seeking;
+                                Poll::Ready(Err(err))
+                            }
+                            Poll::Pending => Poll::Pending,
                         }
-                        Poll::Ready(Err(err)) => {
-                            self.state.state = FileReadState::Seeking;
-                            Poll::Ready(Err(err))
-                        }
-                        Poll::Pending => Poll::Pending,
                     }
-                }
-                None => {
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
+                    None => {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                },
+                FileDataSource::Box(data) => {
+                    if self.state.cursor > data.len() as u64 {
+                        Poll::Ready(Err(io::Error::from(io::ErrorKind::InvalidInput)))
+                    } else {
+                        self.state.state = FileReadState::Reading;
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
                 }
             },
-            FileReadState::Reading => match self.reader.try_lock_arc() {
-                Some(mut guard) => {
-                    let guard_pin = std::pin::pin!(guard.deref_mut());
-                    match guard_pin.poll_read(cx, &mut buf[..end]) {
-                        Poll::Ready(Ok(num_read)) => {
-                            self.state.cursor += num_read as u64;
-                            self.state.state = FileReadState::Seeking;
-                            Poll::Ready(Ok(num_read))
+            FileReadState::Reading => match &self.reader {
+                FileDataSource::Reader(reader) => match reader.try_lock_arc() {
+                    Some(mut guard) => {
+                        let guard_pin = std::pin::pin!(guard.deref_mut());
+                        match guard_pin.poll_read(cx, &mut buf[..end]) {
+                            Poll::Ready(Ok(num_read)) => {
+                                self.state.cursor += num_read as u64;
+                                self.state.state = FileReadState::Seeking;
+                                Poll::Ready(Ok(num_read))
+                            }
+                            Poll::Ready(Err(err)) => {
+                                self.state.state = FileReadState::Seeking;
+                                Poll::Ready(Err(err))
+                            }
+                            Poll::Pending => Poll::Pending,
                         }
-                        Poll::Ready(Err(err)) => {
-                            self.state.state = FileReadState::Seeking;
-                            Poll::Ready(Err(err))
-                        }
-                        Poll::Pending => Poll::Pending,
                     }
-                }
-                None => {
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
-                }
+                    None => {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                },
+                FileDataSource::Box(data) => {
+                    let num_read = std::cmp::min(buf.len(), (data.len() as u64 - self.state.cursor) as usize);
+                    buf[..num_read].copy_from_slice(&data[self.state.cursor as usize..][..num_read]);
+                    self.state.cursor += num_read as u64;
+                    self.state.state = FileReadState::Seeking;
+                    Poll::Ready(Ok(num_read))
+                },
             },
         }
     }
