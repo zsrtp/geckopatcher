@@ -1,6 +1,7 @@
-use aes::Aes128;
-use block_modes::block_padding::NoPadding;
-use block_modes::{BlockMode, Cbc};
+use aes::{
+    cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit},
+    Block,
+};
 use std::ops::Deref;
 use thiserror::Error;
 
@@ -39,7 +40,7 @@ const COMMON_KEY_MASK: [[u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT] = [
 
 lazy_static! {
     pub static ref COMMON_KEY: [[u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT] = {
-        let mut ck = [[0_u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT];
+        let mut ck = [[0u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT];
         for (v, (k, m)) in ck.iter_mut().flatten().zip(
             COMMON_KEY_
                 .iter()
@@ -53,7 +54,8 @@ lazy_static! {
 }
 
 // create an alias for convenience
-pub type Aes128Cbc = Cbc<Aes128, NoPadding>;
+pub type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
+pub type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 
 #[derive(Copy, Clone)]
 pub struct AesKey {
@@ -185,26 +187,22 @@ macro_rules! declare_tryfrom {
     };
 }
 
-pub fn aes_decrypt_inplace<K: Deref<Target = [u8; 0x10]>>(
+pub fn aes_decrypt_inplace<K: Deref<Target = [u8; consts::WII_KEY_SIZE]>>(
     data: &mut [u8],
     iv: K,
     key: K,
-) -> Result<&[u8], WiiCryptoError> {
-    let cipher = Aes128Cbc::new_from_slices(&*key, &*iv).unwrap();
-    let ret = cipher
-        .decrypt(&mut *data)
-        .or(Err(WiiCryptoError::AesDecryptError))?;
-    Ok(ret)
+) {
+    let mut cipher = Aes128CbcDec::new_from_slices(&*key, &*iv).unwrap();
+    data.chunks_exact_mut(consts::WII_KEY_SIZE)
+        .for_each(|chunk| cipher.decrypt_block_mut(Block::from_mut_slice(chunk)));
 }
 
-pub fn aes_encrypt_inplace<K: Deref<Target = [u8; 0x10]>>(
+pub fn aes_encrypt_inplace<K: Deref<Target = [u8; consts::WII_KEY_SIZE]>>(
     data: &mut [u8],
     iv: K,
     key: K,
-    size: usize,
-) -> Result<&[u8], WiiCryptoError> {
-    let cipher = Aes128Cbc::new_from_slices(&*key, &*iv).unwrap();
-    cipher
-        .encrypt(&mut *data, size)
-        .or(Err(WiiCryptoError::AesEncryptError))
+) {
+    let mut cipher = Aes128CbcEnc::new_from_slices(&*key, &*iv).unwrap();
+    data.chunks_exact_mut(consts::WII_KEY_SIZE)
+        .for_each(|chunk| cipher.encrypt_block_mut(Block::from_mut_slice(chunk)));
 }

@@ -1,4 +1,5 @@
-use crate::iso::read::{DiscReader, DiscType};
+use crate::iso::disc::DiscType;
+use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNodeType};
 use async_std::io::prelude::SeekExt;
 use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
@@ -105,7 +106,7 @@ where
             let mut guard = reader.lock_arc().await;
             let is_wii = guard.get_type() == DiscType::Wii;
             crate::debug!(
-                "{:?}",
+                "{}",
                 if is_wii {
                     "The disc is a Wii game"
                 } else {
@@ -248,24 +249,16 @@ where
         })))
     }
 
-    pub fn main_dol_mut(&mut self) -> &mut File<R> {
-        self.system
-            .resolve_node("Start.dol")
-            .unwrap()
-            .as_file_mut()
-            .unwrap()
+    pub fn sys_mut(&mut self) -> &mut Directory<R> {
+        &mut self.system
     }
 
-    pub fn banner_mut(&mut self) -> Option<&mut File<R>> {
-        self.root.resolve_node("opening.bnr")?.as_file_mut()
+    pub fn root_mut(&mut self) -> &mut Directory<R> {
+        &mut self.root
     }
 
     pub async fn get_disc_type(&self) -> DiscType {
         self.reader.lock_arc().await.get_type()
-    }
-
-    pub fn get_child_count(&self) -> usize {
-        self.root.children.len()
     }
 }
 
@@ -430,7 +423,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
         cx: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
-        crate::debug!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos,);
+        crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos,);
         let pos = match pos {
             SeekFrom::Start(pos) => {
                 if pos > self.fst.file_size_next_dir_index as u64 {
@@ -464,7 +457,6 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
         };
         match self.reader.try_lock_arc() {
             Some(mut guard) => {
-                crate::debug!("Disc reader locked");
                 let guard_pin = std::pin::pin!(guard.deref_mut());
                 match guard_pin.poll_seek(
                     cx,
@@ -484,19 +476,19 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                         ),
                     },
                 ) {
-                    Poll::Ready(Ok(p)) => match pos {
+                    Poll::Ready(Ok(_)) => match pos {
                         SeekFrom::Start(pos) => {
                             self.state.cursor = pos;
-                            Poll::Ready(Ok(p))
+                            Poll::Ready(Ok(self.state.cursor))
                         }
                         SeekFrom::End(pos) => {
                             self.state.cursor =
                                 (self.fst.file_size_next_dir_index as i64 + pos) as u64;
-                            Poll::Ready(Ok(p))
+                            Poll::Ready(Ok(self.state.cursor))
                         }
                         SeekFrom::Current(pos) => {
                             self.state.cursor = (self.state.cursor as i64 + pos) as u64;
-                            Poll::Ready(Ok(p))
+                            Poll::Ready(Ok(self.state.cursor))
                         }
                     },
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
@@ -504,7 +496,6 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                 }
             }
             None => {
-                crate::debug!("Disc reader can't be locked");
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
@@ -518,17 +509,23 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
-        crate::debug!(
+        crate::trace!(
             "Reading \"{}\" for 0x{:08X} byte(s)",
             self.name(),
             buf.len()
         );
+        let end = std::cmp::min(
+            buf.len(),
+            (self.fst.file_size_next_dir_index as i64 - self.state.cursor as i64) as usize,
+        );
         match self.state.state {
             FileReadState::Seeking => match self.reader.try_lock_arc() {
                 Some(mut guard) => {
-                    crate::debug!("Disc reader locked");
                     let guard_pin = std::pin::pin!(guard.deref_mut());
-                    match guard_pin.poll_seek(cx, SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + self.state.cursor)) {
+                    match guard_pin.poll_seek(
+                        cx,
+                        SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + self.state.cursor),
+                    ) {
                         Poll::Ready(Ok(_)) => {
                             self.state.state = FileReadState::Reading;
                             cx.waker().wake_by_ref();
@@ -540,18 +537,16 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                         }
                         Poll::Pending => Poll::Pending,
                     }
-                },
+                }
                 None => {
-                    crate::debug!("Disc reader can't be locked");
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             },
             FileReadState::Reading => match self.reader.try_lock_arc() {
                 Some(mut guard) => {
-                    crate::debug!("Disc reader locked");
                     let guard_pin = std::pin::pin!(guard.deref_mut());
-                    match guard_pin.poll_read(cx, buf) {
+                    match guard_pin.poll_read(cx, &mut buf[..end]) {
                         Poll::Ready(Ok(num_read)) => {
                             self.state.cursor += num_read as u64;
                             self.state.state = FileReadState::Seeking;
@@ -565,7 +560,6 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                     }
                 }
                 None => {
-                    crate::debug!("Disc reader can't be locked");
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }

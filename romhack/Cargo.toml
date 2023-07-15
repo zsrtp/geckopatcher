@@ -33,3 +33,6 @@ log = ["env_logger", "dep:log", "async-std/log", "async-std/kv-log-macro"]
 
 [[example]]
 name = "title"
+
+[[example]]
+name = "reproc"

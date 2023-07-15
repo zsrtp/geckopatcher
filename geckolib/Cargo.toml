@@ -12,13 +12,13 @@ path = "src/lib.rs"
 [dependencies]
 wasm-bindgen = { version = "^0.2", optional = true }
 log = "^0.4"
-aes = "^0.7"
+aes = "^0.8"
 sha1_smol = "^1.0"
-block-modes = { version = "^0.8" }
+cbc = { version = "^0.1" }
 eyre = "^0.6"
 thiserror = "^1.0"
+num = "^0.4"
 toml = "^0.7"
-async-stream = "^0.3"
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 serde = "^1.0"
 serde_derive = "^1.0"

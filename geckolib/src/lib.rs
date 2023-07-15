@@ -1,6 +1,6 @@
 #[cfg(feature = "log")]
 extern crate log;
-#[cfg(not(target = "wasm32"))]
+#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
 extern crate rayon;
 extern crate thiserror;
 #[cfg(feature = "web")]
@@ -8,7 +8,8 @@ extern crate wasm_bindgen;
 #[macro_use]
 extern crate lazy_static;
 extern crate async_std;
-extern crate block_modes;
+extern crate num;
+extern crate cbc;
 extern crate eyre;
 extern crate serde;
 extern crate sha1_smol;
@@ -19,6 +20,7 @@ pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
 
+use async_std::fs as async_fs;
 use config::Config;
 use eyre::Result;
 use std::collections::HashMap;
@@ -105,7 +107,8 @@ impl IsoBuilder {
 
     #[cfg(not(feature = "web"))]
     async fn build_raw(mut _config: Config) -> Result<()> {
-        Ok(())
+        crate::debug!("");
+        todo!()
     }
 
     #[cfg(not(feature = "web"))]
@@ -132,7 +135,7 @@ impl IsoBuilder {
                 write_file_to_zip(
                     &mut zip,
                     "libcompiled.a",
-                    &async_std::fs::read(libs.get(0).unwrap()).await?,
+                    &async_fs::read(libs.get(0).unwrap()).await?,
                 )?;
                 libs.remove(0);
                 let mut modified_libs = Vec::new();
@@ -142,12 +145,12 @@ impl IsoBuilder {
                     crate::info!("Storing {:?} as {}", lib_path, zip_path);
 
                     modified_libs.push(zip_path.clone());
-                    write_file_to_zip(&mut zip, zip_path, &async_std::fs::read(lib_path).await?)?;
+                    write_file_to_zip(&mut zip, zip_path, &async_fs::read(lib_path).await?)?;
                 }
 
                 if let Some(path) = &mut config.src.patch {
                     crate::info!("Storing patch.asm");
-                    write_file_to_zip(&mut zip, "patch.asm", &async_std::fs::read(path).await?)?;
+                    write_file_to_zip(&mut zip, "patch.asm", &async_fs::read(path).await?)?;
                 }
             } else {
                 return Err(eyre::eyre!("No libraries suplied"));
@@ -156,7 +159,7 @@ impl IsoBuilder {
 
         if let Some(path) = &config.info.image {
             crate::info!("Storing banner");
-            write_file_to_zip(&mut zip, "banner.dat", &async_std::fs::read(path).await?)?;
+            write_file_to_zip(&mut zip, "banner.dat", &async_fs::read(path).await?)?;
         }
 
         crate::info!("Storing patch index");

@@ -1,14 +1,13 @@
 use super::disc::*;
-use crate::crypto::{aes_decrypt_inplace, consts, WiiCryptoError, Unpackable};
+use crate::crypto::{aes_decrypt_inplace, consts, Unpackable, WiiCryptoError};
 use async_std::io::prelude::SeekExt;
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, ReadExt};
+use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use async_std::task::ready;
-use byteorder::{BE, ByteOrder};
+use byteorder::{ByteOrder, BE};
 use eyre::Result;
-#[cfg(feature = "log")]
-use log::{debug, trace, warn};
 use pin_project::pin_project;
-use rayon::prelude::{IntoParallelRefMutIterator, ParallelIterator};
+#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+use rayon::prelude::*;
 use std::io::SeekFrom;
 use std::pin::Pin;
 use std::task::Poll;
@@ -84,28 +83,51 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     reader: &mut Pin<&mut R>,
     part_info: &PartInfo,
 ) -> Result<WiiPartitions> {
-    #[cfg(feature = "log")]
-    debug!("Fetching partitions from reader");
+    crate::debug!("Fetching partitions from reader");
     let mut ret_vec: Vec<WiiPartition> = Vec::new();
     let mut data_idx: Option<usize> = None;
     for (i, entry) in part_info.entries.iter().enumerate() {
-        let mut buf = [0u8; 0x2C0];
+        let mut tmd_count_buf = [0u8; 2];
         reader.seek(SeekFrom::Start(entry.offset)).await?;
-        reader.read(&mut buf).await?;
+        reader.read_exact(&mut tmd_count_buf).await?;
+        let tmd_count = BE::read_u16(&tmd_count_buf);
+        let mut buf = vec![0u8; 0x2C0 + TitleMetaData::get_size_n(tmd_count)];
+        reader.seek(SeekFrom::Start(entry.offset)).await?;
+        reader.read_exact(&mut buf).await?;
+        let header = PartHeader::try_from(&buf[..0x2C0])?;
+        let tmd = TitleMetaData::from_partition(&buf[0x2C0..], 0);
+        let mut buf = vec![0u8; header.cert_size];
+        reader.seek(SeekFrom::Start(header.cert_offset)).await?;
+        reader.read_exact(&mut buf).await?;
+        let cert = buf.into_boxed_slice();
         let part = WiiPartition {
             part_offset: entry.offset,
             part_type: entry.part_type,
-            header: PartHeader::try_from(&buf)?,
+            header,
+            tmd,
+            cert,
         };
         if part.part_type == 0 && data_idx.is_none() {
             data_idx = Some(i);
         }
         ret_vec.push(part);
     }
-    #[cfg(feature = "log")]
-    debug!("{:} partitions found", ret_vec.len());
+    crate::debug!("{:} partitions found", ret_vec.len());
     if !ret_vec.is_empty() {
         if let Some(data_idx) = data_idx {
+            crate::trace!(
+                "(cert_offset: {:08X})",
+                ret_vec[data_idx].header.cert_offset
+            );
+            crate::trace!(
+                "(data_offset: {:08X})",
+                ret_vec[data_idx].header.data_offset
+            );
+            crate::trace!(
+                "(data_size: {:08X}; decrypted size: {:08X})",
+                ret_vec[data_idx].header.data_size,
+                to_decrypted_size(ret_vec[data_idx].header.data_size)
+            );
             return Ok(WiiPartitions {
                 data_idx,
                 part_info: part_info.clone(),
@@ -113,8 +135,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
             });
         }
     }
-    #[cfg(feature = "log")]
-    warn!("No Game Partition found!");
+    crate::warn!("No Game Partition found!");
     Err(WiiCryptoError::NoGamePartition.into())
 }
 
@@ -123,11 +144,11 @@ where
     R: AsyncRead + AsyncSeek,
 {
     pub async fn try_parse(reader: R) -> Result<Self> {
-        #[cfg(feature = "log")]
-        debug!("Trying to parse a Wii Disc from the reader");
+        crate::debug!("Trying to parse a Wii Disc from the reader");
         let mut this = Self {
             disc_info: WiiDisc {
                 disc_header: Default::default(),
+                disc_region: Default::default(),
                 partitions: Default::default(),
             },
             cursor: 0,
@@ -139,8 +160,11 @@ where
         reader.seek(SeekFrom::Start(0)).await?;
         reader.read_exact(&mut buf).await?;
         this.disc_info.disc_header = disc_get_header(&buf);
-        #[cfg(feature = "log")]
-        trace!("{:?}", this.disc_info.disc_header);
+        let mut buf = vec![0u8; WiiDiscRegion::BLOCK_SIZE];
+        reader.seek(SeekFrom::Start(0x4E000)).await?;
+        reader.read_exact(&mut buf).await?;
+        this.disc_info.disc_region = WiiDiscRegion::parse(&buf);
+        crate::trace!("{:?}", this.disc_info.disc_header);
         if this.disc_info.disc_header.wii_magic != 0x5D1C9EA3 {
             return Err(WiiCryptoError::NotWiiDisc {
                 magic: this.disc_info.disc_header.wii_magic,
@@ -177,11 +201,11 @@ where
         pos: std::io::SeekFrom,
     ) -> std::task::Poll<std::io::Result<u64>> {
         let this = self.project();
+        let part = &this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx];
         match pos {
             SeekFrom::Current(pos) => {
                 if *this.cursor as i64 + pos < 0i64
-                    || *this.cursor as i64 + pos
-                        > this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size as i64
+                    || *this.cursor as i64 + pos > to_decrypted_size(part.header.data_size) as i64
                 {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -192,19 +216,17 @@ where
             }
             SeekFrom::End(pos) => {
                 if *this.cursor as i64 + pos < 0i64
-                    || *this.cursor as i64 + pos
-                        > this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size as i64
+                    || *this.cursor as i64 + pos > to_decrypted_size(part.header.data_size) as i64
                 {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "Invalid argument",
                     )));
                 }
-                *this.cursor =
-                    (this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size as i64 + pos) as u64;
+                *this.cursor = (to_decrypted_size(part.header.data_size) as i64 + pos) as u64;
             }
             SeekFrom::Start(pos) => {
-                if pos > this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size {
+                if pos > to_decrypted_size(part.header.data_size) {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "Invalid argument",
@@ -224,16 +246,17 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = self.project();
-        #[cfg(feature = "log")]
-        debug!("Pooling WiiDiscReader for read ({} byte(s))", buf.len());
+        crate::trace!("Pooling WiiDiscReader for read ({} byte(s))", buf.len());
         // If the requested size is 0, or if we are done reading, return without changing buf.
-        let decrypted_size = (this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx].header.data_size
-            / consts::WII_SECTOR_SIZE as u64)
-            * consts::WII_SECTOR_DATA_SIZE as u64;
+        let decrypted_size = to_decrypted_size(
+            this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx]
+                .header
+                .data_size,
+        );
         if buf.is_empty() || *this.cursor >= decrypted_size {
             return Poll::Ready(Ok(0));
         }
-        let part = this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx];
+        let part = &this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx];
         // Calculate the size and bounds of what has to be read.
         let read_size = std::cmp::min(buf.len(), (decrypted_size - *this.cursor) as usize);
         // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
@@ -241,8 +264,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
         let vend = vstart + read_size as u64;
         let start_blk_idx = (vstart / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
         let end_blk_idx = ((vend - 1) / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
-        #[cfg(feature = "log")]
-        debug!(
+        crate::trace!(
             "Loading data from 0x{:08X} to 0x{:08X} (spanning {} block(s))",
             vstart,
             vend,
@@ -254,11 +276,9 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                 let start_blk_addr = part.part_offset
                     + part.header.data_offset
                     + (start_blk_idx * consts::WII_SECTOR_SIZE) as u64;
-                #[cfg(feature = "log")]
-                debug!("Seeking to 0x{:08X}", start_blk_addr);
+                crate::trace!("Seeking to 0x{:08X}", start_blk_addr);
                 ready!(this.reader.poll_seek(cx, SeekFrom::Start(start_blk_addr)))?;
-                #[cfg(feature = "log")]
-                debug!("Seeking succeeded");
+                crate::trace!("Seeking succeeded");
                 let n_blk = end_blk_idx - start_blk_idx + 1;
                 let buf = vec![0u8; n_blk * consts::WII_SECTOR_SIZE];
                 *this.state = WiiDiscReaderState::Reading(buf);
@@ -266,51 +286,44 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                 Poll::Pending
             }
             WiiDiscReaderState::Reading(buf2) => {
-                #[cfg(feature = "log")]
-                debug!("Reading...");
+                crate::trace!("Reading...");
                 ready!(this.reader.poll_read(cx, buf2))?;
-                #[cfg(feature = "log")]
-                debug!("Reading successful");
+                crate::trace!("Reading successful");
                 let part_key = decrypt_title_key(&part.header.ticket);
-                #[cfg(feature = "log")]
-                trace!("Partition key: {:?}", part_key);
+                crate::trace!("Partition key: {:?}", part_key);
+                #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
                 let mut data_pool: Vec<&mut [u8]> =
-                    buf2.chunks_mut(consts::WII_SECTOR_SIZE).collect();
-                #[cfg(feature = "log")]
-                trace!("data_pool size: {}", data_pool.len());
+                    buf2.par_chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
+                #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
+                let mut data_pool: Vec<&mut [u8]> =
+                    buf2.chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
+                crate::trace!("data_pool size: {}", data_pool.len());
                 let decrypt_process = move |data: &mut &mut [u8]| {
                     let mut iv = [0_u8; consts::WII_KEY_SIZE];
                     iv[..consts::WII_KEY_SIZE].copy_from_slice(
                         &data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE],
                     );
-                    #[cfg(feature = "log")]
-                    trace!("iv: {:?}", iv);
-                    #[cfg(feature = "log")]
-                    trace!("before: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
+                    crate::trace!("iv: {:?}", iv);
+                    crate::trace!("before: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
                     // Decrypt the hash to check if valid (not required here)
                     aes_decrypt_inplace(
                         &mut data[..consts::WII_SECTOR_HASH_SIZE],
                         &[0_u8; consts::WII_KEY_SIZE],
                         &part_key,
-                    )
-                    .unwrap();
+                    );
                     aes_decrypt_inplace(
                         &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
                         &iv,
                         &part_key,
-                    )
-                    .unwrap();
-                    #[cfg(feature = "log")]
-                    trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
+                    );
+                    crate::trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
                 };
-                #[cfg(feature = "log")]
-                debug!("Decrypting blocks");
-                #[cfg(not(target_arch = "wasm32"))]
+                crate::trace!("Decrypting blocks");
+                #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
                 data_pool.par_iter_mut().for_each(decrypt_process);
-                #[cfg(target_arch = "wasm32")]
+                #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
                 data_pool.iter_mut().for_each(decrypt_process);
-                #[cfg(feature = "log")]
-                debug!("Decryption done");
+                crate::trace!("Decryption done");
                 for (i, block) in data_pool.iter().enumerate() {
                     let block_pos =
                         (start_blk_idx + i) as u64 * consts::WII_SECTOR_DATA_SIZE as u64;
@@ -378,12 +391,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum DiscType {
-    Gamecube = 0,
-    Wii,
-}
-
 impl<R> DiscReader<R>
 where
     R: AsyncRead + AsyncSeek,
@@ -393,11 +400,12 @@ where
         reader.seek(SeekFrom::Start(0x18)).await?;
         let mut buf = [0u8; 8];
         reader.read(&mut buf).await?;
-        #[cfg(feature = "log")]
-        debug!("Magics: {:?}", buf);
+        crate::debug!("Magics: {:?}", buf);
         if BE::read_u32(&buf[4..][..4]) == 0xC2339F3D {
+            crate::debug!("Loading Gamecube disc");
             Ok(Self::Gamecube(GCDiscReader::new(reader)))
         } else if BE::read_u32(&buf[..][..4]) == 0x5D1C9EA3 {
+            crate::debug!("Loading Wii disc");
             Ok(Self::Wii(Box::new(WiiDiscReader::try_parse(reader).await?)))
         } else {
             Err(eyre::eyre!("Not a game disc"))
