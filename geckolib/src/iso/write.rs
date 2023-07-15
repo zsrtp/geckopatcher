@@ -11,13 +11,11 @@ use std::ops::Deref;
 use std::task::Poll;
 use std::{future::Future, io::SeekFrom};
 use std::{pin::Pin, task::Context};
-#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
-extern crate rayon;
 
 use crate::{
     crypto::{aes_encrypt_inplace, consts, AesKey, Unpackable},
     iso::disc::{
-        align_addr, disc_set_header, to_decrypted_size, to_encrypted_size, PartHeader, TMDContent,
+        align_addr, disc_set_header, to_decrypted_addr, to_encrypted_addr, PartHeader, TMDContent,
         TitleMetaData, WiiDiscHeader,
     },
 };
@@ -652,7 +650,7 @@ where
                         "Invalid argument",
                     )));
                 }
-                *this.cursor = (to_decrypted_size(
+                *this.cursor = (to_decrypted_addr(
                     this.disc.partitions.partitions[this.disc.partitions.data_idx]
                         .header
                         .data_size,
@@ -771,7 +769,7 @@ where
                         *this.cursor = vend;
                         crate::debug!("cursor end: 0x{:08X}", *this.cursor);
                         part.header.data_size =
-                            std::cmp::max(part.header.data_size, to_encrypted_size(*this.cursor));
+                            std::cmp::max(part.header.data_size, to_encrypted_addr(*this.cursor));
                         // The state is already set to the initial state. We just need to return Ready
                         Poll::Ready(Ok(buf.len()))
                     } else {

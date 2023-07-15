@@ -10,6 +10,7 @@ use geckolib::{
 // Reprocesses a given iso (load iso in to a FileSystem, then save it back into an other iso)
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
+    #[cfg(feature = "log")]
     env_logger::init();
 
     async_std::task::block_on(async {

@@ -15,7 +15,7 @@ name = "romhack"
 path = "src/main.rs"
 
 [dependencies]
-geckolib = { path = "../geckolib" }
+geckolib = { path = "../geckolib", default-features = false }
 color-eyre = "^0.6"
 async-std = "^1.12"
 env_logger = { version = "^0.10", optional = true }
@@ -28,8 +28,9 @@ toml = "^0.7"
 [dev-dependencies]
 
 [features]
-default = ["log"]
-log = ["env_logger", "dep:log", "async-std/log", "async-std/kv-log-macro"]
+default = ["log", "parallel"]
+log = ["geckolib/log", "env_logger", "dep:log", "async-std/log", "async-std/kv-log-macro"]
+parallel = ["geckolib/parallel"]
 
 [[example]]
 name = "title"

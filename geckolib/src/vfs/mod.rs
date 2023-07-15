@@ -1,8 +1,8 @@
 use crate::iso::disc::DiscType;
 use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNodeType};
-use async_std::io::prelude::SeekExt;
-use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
+use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
+use async_std::prelude::*;
 use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
@@ -249,6 +249,36 @@ where
         })))
     }
 
+    pub async fn serialize<W>(&mut self, writer: &mut W, _is_wii: bool) -> Result<()>
+    where
+        W: AsyncWrite + AsyncSeek + Unpin,
+    {
+        let mut writer = std::pin::pin!(writer);
+        let sys = self.sys_mut();
+        let mut buf = Vec::new();
+        sys.resolve_node("iso.hdr")
+            .ok_or(eyre::eyre!(
+                "ISO Header file not found in the virtual FileSystem"
+            ))?
+            .as_file_mut()
+            .ok_or(eyre::eyre!("\"iso.hdr\" is not a File!"))?
+            .read_to_end(&mut buf)
+            .await?;
+        writer.write_all(&buf).await?;
+        buf.clear();
+        sys.resolve_node("AppLoader.ldr")
+            .ok_or(eyre::eyre!(
+                "AppLoader file not found in the virtual FileSystem"
+            ))?
+            .as_file_mut()
+            .ok_or(eyre::eyre!("\"AppLoader.ldr\" is not a File!"))?
+            .read_to_end(&mut buf)
+            .await?;
+        writer.write_all(&buf).await?;
+
+        todo!()
+    }
+
     pub fn sys_mut(&mut self) -> &mut Directory<R> {
         &mut self.system
     }
@@ -386,6 +416,7 @@ struct FileState {
     state: FileReadState,
 }
 
+// TODO Add an enum which gives the choice between using a reader or a boxed slice (to allow having custom files).
 pub struct File<R: AsyncRead + AsyncSeek> {
     fst: FstEntry,
     state: FileState,
@@ -414,6 +445,14 @@ where
             state: Default::default(),
             reader,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.fst.file_size_next_dir_index
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
