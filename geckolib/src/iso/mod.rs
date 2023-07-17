@@ -15,8 +15,10 @@ pub mod consts {
     pub const OFFSET_GC_MAGIC: usize = 0x01C;
     pub const OFFSET_WII_MAGIC: usize = 0x018;
     pub const HEADER_LENGTH: usize = 0x2440;
-    pub const DOL_ALIGNMENT: usize = 1024;
-    pub const FST_ALIGNMENT: usize = 256;
+    pub const DOL_ALIGNMENT_BIT: usize = 10;
+    pub const DOL_ALIGNMENT: usize = 1 << DOL_ALIGNMENT_BIT;
+    pub const FST_ALIGNMENT_BIT: usize = 8;
+    pub const FST_ALIGNMENT: usize = 1 << FST_ALIGNMENT_BIT;
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
@@ -39,7 +41,7 @@ impl TryFrom<u8> for FstNodeType {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct FstEntry {
     pub(crate) kind: FstNodeType,
     // Name of the file

@@ -11,6 +11,7 @@ use geckolib::vfs::GeckoFS;
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
+    #[cfg(feature = "log")]
     env_logger::init();
 
     task::block_on(async {
@@ -24,7 +25,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         f.seek(std::io::SeekFrom::Start(0)).await?;
         let mut buf = vec![0u8; 0x60];
         f.read(&mut buf).await?;
-        println!(
+        log::info!(
             "[{}] Game Title: {:02X?}",
             String::from_utf8_lossy(&buf[..6]),
             String::from_utf8_lossy(&buf[0x20..0x60])
@@ -36,13 +37,13 @@ fn main() -> color_eyre::eyre::Result<()> {
             let f = Arc::new(Mutex::new(f));
             let fs = GeckoFS::parse(f).await?;
             let mut guard = fs.lock_arc().await;
-            let file = guard.sys_mut().resolve_node("Start.dol").unwrap().as_file_mut().unwrap();
+            let file = guard.sys_mut().get_file_mut("Start.dol")?;
             let size = file.seek(SeekFrom::End(0)).await? as usize;
             file.seek(SeekFrom::Start(0)).await?;
             let mut buf = vec![0u8; size];
             let num_read = file.read(&mut buf).await?;
-            println!("file size: 0x{:08X}; read amount: 0x{:08X}", size, num_read);
-            println!(
+            log::info!("file size: 0x{:08X}; read amount: 0x{:08X}", size, num_read);
+            log::info!(
                 "Main dol: {}",
                 buf.iter()
                     .take(0x110)
@@ -50,7 +51,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                     .collect::<Vec<String>>()
                     .join("")
             );
-            println!("Has banner: {:?}", guard.root_mut().resolve_node("opening.bnr").is_some());
+            log::info!("Has banner: {:?}", guard.root_mut().get_file("opening.bnr").is_ok());
         }
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;

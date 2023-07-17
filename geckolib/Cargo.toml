@@ -23,15 +23,26 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 serde = "^1.0"
 serde_derive = "^1.0"
 byteorder = "^1.4"
-async-std = { version = "^1.12", default-features = false, features = ["std"] }
-image = "^0.24"
+async-std = { version = "^1.12", default-features = false, features = [
+    "std",
+    "async-io",
+    "futures-lite",
+    "pin-project-lite",
+    "gloo-timers",
+] }
+image = { version = "^0.24", default-features = false, features = [
+    "jpeg",
+    "png",
+] }
 goblin = "^0.7"
 lazy_static = "^1.4"
 pin-project = "^1.1"
 rayon = { version = "^1.7", optional = true }
+indicatif = { version = "^0.17", optional = true }
 
 [features]
 default = ["parallel", "log"]
-web = ["dep:wasm-bindgen"]
-parallel = ["dep:rayon"]
-log = ["async-std/log"]
+web = ["wasm-bindgen"]
+parallel = ["rayon", "image/jpeg_rayon", "indicatif?/rayon"]
+log = ["async-std/default"]
+progress = ["indicatif"]

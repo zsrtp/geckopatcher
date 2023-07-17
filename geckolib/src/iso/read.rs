@@ -86,7 +86,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     crate::debug!("Fetching partitions from reader");
     let mut ret_vec: Vec<WiiPartition> = Vec::new();
     let mut data_idx: Option<usize> = None;
-    for (i, entry) in part_info.entries.iter().enumerate() {
+    for entry in part_info.entries.iter() {
         let mut tmd_count_buf = [0u8; 2];
         reader.seek(SeekFrom::Start(entry.offset)).await?;
         reader.read_exact(&mut tmd_count_buf).await?;
@@ -108,9 +108,9 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
             cert,
         };
         if part.part_type == 0 && data_idx.is_none() {
-            data_idx = Some(i);
+            data_idx = Some(ret_vec.len());
+            ret_vec.push(part);
         }
-        ret_vec.push(part);
     }
     crate::debug!("{:} partitions found", ret_vec.len());
     if !ret_vec.is_empty() {
@@ -416,6 +416,13 @@ where
         match self {
             DiscReader::Gamecube(_) => DiscType::Gamecube,
             DiscReader::Wii(_) => DiscType::Wii,
+        }
+    }
+
+    pub fn get_disc_info(&self) -> Option<WiiDisc> {
+        match self {
+            DiscReader::Gamecube(_) => None,
+            DiscReader::Wii(wii) => Some(wii.disc_info.clone()),
         }
     }
 }

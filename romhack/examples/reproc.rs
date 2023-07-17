@@ -1,9 +1,9 @@
 use async_std::{
-    io::{prelude::SeekExt, BufReader, ReadExt, WriteExt},
+    io::{prelude::SeekExt, BufReader, ReadExt},
     sync::{Arc, Mutex},
 };
 use geckolib::{
-    iso::{read::DiscReader, write::DiscWriter, consts},
+    iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
 };
 
@@ -25,7 +25,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             guard.seek(std::io::SeekFrom::Start(0)).await?;
             let mut buf = vec![0u8; 0x60];
             guard.read(&mut buf).await?;
-            println!(
+            log::info!(
                 "[{}] Game Title: {:02X?}",
                 String::from_utf8_lossy(&buf[..6]),
                 String::from_utf8_lossy(&buf[0x20..0x60])
@@ -36,31 +36,32 @@ fn main() -> color_eyre::eyre::Result<()> {
         }
         let out = {
             let guard = f.lock_arc().await;
-            Arc::new(Mutex::new(DiscWriter::from_reader(guard, async_std::fs::OpenOptions::new().write(true).read(true).create(true).open(std::env::args().nth(2).expect("No output file were provided")).await?).await?))
+            Arc::new(Mutex::new(
+                DiscWriter::new(
+                    async_std::fs::OpenOptions::new()
+                        .write(true)
+                        .read(true)
+                        .create(true)
+                        .open(
+                            std::env::args()
+                                .nth(2)
+                                .expect("No output file was provided"),
+                        )
+                        .await?,
+                    guard.get_disc_info(),
+                )
+                .await?,
+            ))
         };
 
         let fs = GeckoFS::parse(f).await?;
         {
             let mut out_guard = out.lock_arc().await;
             let mut fs_guard = fs.lock_arc().await;
-            let file = fs_guard.sys_mut().resolve_node("iso.hdr").unwrap().as_file_mut().unwrap();
-            let mut buf = vec![0u8; 6];
-            file.read_exact(&mut buf).await?;
-            file.seek(std::io::SeekFrom::Start(0)).await?;
-            println!("iso.hdr: {:?}", String::from_utf8_lossy(&buf[..6]));
-            let mut buf: Vec<u8> = Vec::new();
-            file.read_to_end(&mut buf).await?;
-            out_guard.write_all(&buf).await?;
-            buf.clear();
-            let path = match out_guard.get_type() {
-                geckolib::iso::disc::DiscType::Gamecube => "map/Final/Release/frameworkF.map",
-                geckolib::iso::disc::DiscType::Wii => "map/Rfinal/Release/RframeworkF.map",
-            };
-            let file2 = fs_guard.root_mut().resolve_node(path).unwrap().as_file_mut().unwrap();
-            file2.read_to_end(&mut buf).await?;
-            out_guard.seek(std::io::SeekFrom::Start(consts::HEADER_LENGTH as u64)).await?;
-            out_guard.write_all(&buf).await?;
-            out_guard.flush().await?;
+            let is_wii = out_guard.get_type() == DiscType::Wii;
+            fs_guard.serialize(&mut out_guard, is_wii).await?;
+            #[cfg(feature = "log")]
+            log::info!("Encrypting the ISO");
             out_guard.finalize().await?;
         }
         <color_eyre::eyre::Result<()>>::Ok(())

@@ -22,14 +22,21 @@ env_logger = { version = "^0.10", optional = true }
 log = { version = "^0.4", optional = true }
 futures = "^0.3"
 toml = "^0.7"
+indicatif = "^0.17"
 
 [build-dependencies]
 
 [dev-dependencies]
 
 [features]
-default = ["log", "parallel"]
-log = ["geckolib/log", "env_logger", "dep:log", "async-std/log", "async-std/kv-log-macro"]
+default = ["parallel", "log"]
+log = [
+    "geckolib/log",
+    "dep:env_logger",
+    "dep:log",
+    "async-std/log",
+    "async-std/kv-log-macro",
+]
 parallel = ["geckolib/parallel"]
 
 [[example]]
