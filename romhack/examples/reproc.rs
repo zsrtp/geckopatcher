@@ -36,33 +36,31 @@ fn main() -> color_eyre::eyre::Result<()> {
         }
         let out = {
             let guard = f.lock_arc().await;
-            Arc::new(Mutex::new(
-                DiscWriter::new(
-                    async_std::fs::OpenOptions::new()
-                        .write(true)
-                        .read(true)
-                        .create(true)
-                        .open(
-                            std::env::args()
-                                .nth(2)
-                                .expect("No output file was provided"),
-                        )
-                        .await?,
-                    guard.get_disc_info(),
-                )
-                .await?,
-            ))
+            DiscWriter::new(
+                async_std::fs::OpenOptions::new()
+                    .write(true)
+                    .read(true)
+                    .create(true)
+                    .open(
+                        std::env::args()
+                            .nth(2)
+                            .expect("No output file was provided"),
+                    )
+                    .await?,
+                guard.get_disc_info(),
+            )
+            .await?
         };
 
+        let mut out = std::pin::pin!(out);
         let fs = GeckoFS::parse(f).await?;
         {
-            let mut out_guard = out.lock_arc().await;
             let mut fs_guard = fs.lock_arc().await;
-            let is_wii = out_guard.get_type() == DiscType::Wii;
-            fs_guard.serialize(&mut out_guard, is_wii).await?;
+            let is_wii = out.get_type() == DiscType::Wii;
+            fs_guard.serialize(&mut out, is_wii).await?;
             #[cfg(feature = "log")]
             log::info!("Encrypting the ISO");
-            out_guard.finalize().await?;
+            out.finalize().await?;
         }
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;

@@ -1,10 +1,11 @@
+use crate::crypto::Unpackable;
 use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNodeType};
+use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
 use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
-use async_std::prelude::*;
-use async_std::sync::{Arc, Mutex, MutexGuardArc};
+use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 use std::io::{Error, SeekFrom};
@@ -137,9 +138,9 @@ where
             let fst_offset = (BE::read_u32(&buf[..]) << (if is_wii { 2 } else { 0 })) as u64;
             GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
-            let mut fst_list_buf = vec![0u8; num_entries * 0xC];
+            let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
             GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset), &mut fst_list_buf).await?;
-            let string_table_offset = num_entries as u64 * 0xC;
+            let string_table_offset = num_entries as u64 * FstEntry::BLOCK_SIZE as u64;
 
             GeckoFS::read_exact(
                 &mut guard,
@@ -156,33 +157,110 @@ where
             )
             .await?;
 
-            let mut fst_entries = Vec::with_capacity(num_entries);
-            for i in 0..num_entries {
-                let kind =
-                    FstNodeType::try_from(fst_list_buf[i * 12]).unwrap_or(FstNodeType::Directory);
+            crate::debug!(
+                "#fst enties: {}; #names: {}",
+                num_entries,
+                str_tbl_buf.split(|b| *b == 0).count()
+            );
 
-                let string_offset = (BE::read_u32(&fst_list_buf[i * 12..]) & 0x00ffffff) as usize;
+            let root_name = (0, "".into());
+            let name_it = {
+                let offsets = std::iter::once(0).chain(
+                    str_tbl_buf
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, b)| if *b == 0 { Some(i + 1) } else { None })
+                        .take(num_entries - 1),
+                );
+                std::iter::once(root_name).chain(
+                    offsets.zip(
+                        str_tbl_buf
+                            .split(|b| *b == 0)
+                            .map(String::from_utf8_lossy)
+                            .map(|s| s.to_string()),
+                    ),
+                )
+            };
 
-                let pos = string_offset;
-                let mut end = pos;
-                while str_tbl_buf[end] != 0 {
-                    end += 1;
+            let fst_entries: Vec<FstEntry> = {
+                fst_list_buf
+                    .chunks_exact(FstEntry::BLOCK_SIZE)
+                    .zip(name_it)
+                    .enumerate()
+            }
+            .map(|(i, (entry_buf, (name_off, name)))| {
+                let kind = FstNodeType::try_from(entry_buf[0]).unwrap_or(FstNodeType::Directory);
+
+                let string_offset = (BE::read_u32(entry_buf) & 0x00ffffff) as usize;
+                if string_offset != name_off {
+                    crate::warn!(
+                        "String offset for file \"{}\" differs (extracted {}, calculated: {}",
+                        name,
+                        string_offset,
+                        name_off
+                    );
                 }
-                let mut str_buf = Vec::new();
-                str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
-                let relative_file_name = String::from_utf8(str_buf)?;
 
-                let file_offset_parent_dir = (BE::read_u32(&fst_list_buf[i * 12 + 4..]) as usize)
-                    << (if is_wii { 2 } else { 0 });
-                let file_size_next_dir_index = BE::read_u32(&fst_list_buf[i * 12 + 8..]) as usize;
+                // let pos = string_offset;
+                // let mut end = pos;
+                // while str_tbl_buf[end] != 0 {
+                //     end += 1;
+                // }
+                // crate::trace!("entry #{} string size: {}", i, end - pos);
+                // let mut str_buf = Vec::new();
+                // str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
+                // let relative_file_name = String::from_utf8_lossy(&str_buf).to_string();
+                let relative_file_name = name;
 
-                fst_entries.push(FstEntry {
+                let file_offset_parent_dir =
+                    (BE::read_u32(&entry_buf[4..]) as usize) << (if is_wii { 2 } else { 0 });
+                let file_size_next_dir_index = BE::read_u32(&entry_buf[8..]) as usize;
+
+                let fst_entry = FstEntry {
                     kind,
                     relative_file_name,
                     file_offset_parent_dir,
                     file_size_next_dir_index,
-                    file_name_offset: 0,
-                });
+                    file_name_offset: string_offset,
+                };
+                crate::trace!("parsed entry #{}: {:?}", i, fst_entry);
+                fst_entry
+            })
+            .collect();
+            #[cfg(disabled)]
+            {
+                for i in 0..num_entries {
+                    let kind = FstNodeType::try_from(fst_list_buf[i * 12])
+                        .unwrap_or(FstNodeType::Directory);
+
+                    let string_offset =
+                        (BE::read_u32(&fst_list_buf[i * 12..]) & 0x00ffffff) as usize;
+
+                    let pos = string_offset;
+                    let mut end = pos;
+                    while str_tbl_buf[end] != 0 {
+                        end += 1;
+                    }
+                    crate::trace!("entry #{} string size: {}", i, end - pos);
+                    let mut str_buf = Vec::new();
+                    str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
+                    let relative_file_name = String::from_utf8(str_buf)?;
+
+                    let file_offset_parent_dir = (BE::read_u32(&fst_list_buf[i * 12 + 4..])
+                        as usize)
+                        << (if is_wii { 2 } else { 0 });
+                    let file_size_next_dir_index =
+                        BE::read_u32(&fst_list_buf[i * 12 + 8..]) as usize;
+
+                    fst_entries.push(FstEntry {
+                        kind,
+                        relative_file_name,
+                        file_offset_parent_dir,
+                        file_size_next_dir_index,
+                        file_name_offset: string_offset,
+                    });
+                    crate::trace!("parsed entry #{}: {:?}", i, fst_entries.last());
+                }
             }
 
             GeckoFS::read_exact(
@@ -195,7 +273,7 @@ where
             crate::debug!(
                 "fst_size: 0x{:08X}; fst entries list size: 0x{:08X}",
                 fst_size,
-                num_entries * 12
+                num_entries * FstEntry::BLOCK_SIZE
             );
 
             system.add_file(File::new(
@@ -227,29 +305,9 @@ where
                 0,
             ));
 
-            let mut count = 1;
-
-            while count < num_entries {
-                let entry = &fst_entries[count];
-                if entry.kind == FstNodeType::Directory {
-                    let new_dir = root.mkdir(entry.relative_file_name.clone());
-                    while count < entry.file_size_next_dir_index - 1 {
-                        count = GeckoFS::get_dir_structure_recursive(
-                            count + 1,
-                            &fst_entries,
-                            new_dir,
-                        );
-                    }
-                } else {
-                    root.add_file(File::new(
-                        FileDataSource::Reader(reader.clone()),
-                        entry.relative_file_name.clone(),
-                        entry.file_offset_parent_dir,
-                        entry.file_size_next_dir_index,
-                        entry.file_name_offset,
-                    ));
-                }
-                count += 1;
+            let mut count = 0;
+            while count + 1 < num_entries {
+                count = GeckoFS::get_dir_structure_recursive(count + 1, &fst_entries, &mut root);
             }
         }
         crate::debug!("{} children", root.children.len());
@@ -299,7 +357,8 @@ where
                 fst_name_bank.extend_from_slice(file.name().as_bytes());
                 fst_name_bank.push(0);
 
-                *offset += align_addr(file.len() as u64, 5);
+                *offset += file.len() as u64;
+                *offset = align_addr(*offset, 5);
 
                 file.fst = fst_entry.clone();
                 output_fst.push(fst_entry);
@@ -334,7 +393,7 @@ where
         };
     }
 
-    pub async fn serialize<W>(&mut self, writer: &mut MutexGuardArc<W>, is_wii: bool) -> Result<()>
+    pub async fn serialize<W>(&mut self, writer: &mut W, is_wii: bool) -> Result<()>
     where
         W: AsyncWrite + AsyncSeek + Unpin,
     {
@@ -388,18 +447,26 @@ where
         writer.write_all(&buf).await?;
         writer.write_all(&vec![0u8; fst_list_padding_size]).await?;
 
-        let mut output_fst = Vec::new();
+        let mut output_fst = vec![FstEntry {
+            kind: FstNodeType::Directory,
+            file_size_next_dir_index: 0,
+            ..Default::default()
+        }];
         let mut fst_name_bank = Vec::new();
 
         let mut offset = (fst_list_offset + fst_len) as u64;
-        GeckoFS::visitor_fst_entries(
-            self.root_mut(),
-            &mut output_fst,
-            &mut fst_name_bank,
-            0,
-            &mut offset,
-        );
-        crate::info!("output_fst size = {}", output_fst.len());
+        for node in self.root_mut().iter_mut() {
+            let l = output_fst.len();
+            GeckoFS::visitor_fst_entries(
+                node.as_mut(),
+                &mut output_fst,
+                &mut fst_name_bank,
+                l,
+                &mut offset,
+            );
+        }
+        output_fst[0].file_size_next_dir_index = output_fst.len();
+        crate::debug!("output_fst size = {}", output_fst.len());
 
         for entry in output_fst {
             let mut buf = [0u8; 12];
@@ -555,22 +622,36 @@ where
     }
 
     pub fn mkdir(&mut self, name: String) -> &mut Directory<R> {
-        self.children
-            .push(Box::new(Directory::new(self.reader.clone(), name)));
-        self.children
-            .last_mut()
-            .map(|x| x.as_directory_mut().unwrap())
-            .unwrap()
+        if self.children.iter().all(|c| c.name() != name) {
+            self.children
+                .push(Box::new(Directory::new(self.reader.clone(), name)));
+            self.children
+                .last_mut()
+                .map(|x| x.as_directory_mut().unwrap())
+                .unwrap()
+        } else {
+            self.children
+                .iter_mut()
+                .find(|c| c.name() == name)
+                .map(|c| c.as_directory_mut().unwrap())
+                .unwrap()
+        }
     }
 
     pub fn add_file(&mut self, file: File<R>) -> &mut File<R> {
-        if !self.children.iter().any(|c| c.name() == file.name()) {
+        if self.children.iter().all(|c| c.name() != file.name()) {
             self.children.push(Box::new(file));
+            self.children
+                .last_mut()
+                .map(|c| c.as_file_mut().unwrap())
+                .unwrap()
+        } else {
+            self.children
+                .iter_mut()
+                .find(|c| c.name() == file.name())
+                .map(|c| c.as_file_mut().unwrap())
+                .unwrap()
         }
-        self.children
-            .last_mut()
-            .map(|c| c.as_file_mut().unwrap())
-            .unwrap()
     }
 
     pub fn iter(&self) -> std::slice::Iter<'_, Box<dyn Node<R>>> {
@@ -598,7 +679,7 @@ where
         }
         let mut stack = Vec::new();
         traverse_depth(self, &mut stack);
-        crate::info!("{} fst files", stack.len());
+        crate::debug!("{} fst files", stack.len());
         stack.into_iter()
     }
 
@@ -619,7 +700,7 @@ where
         }
         let mut stack = Vec::new();
         traverse_depth(self, &mut stack);
-        crate::info!("{} fst files", stack.len());
+        crate::debug!("{} fst files", stack.len());
         stack.into_iter()
     }
 

@@ -253,7 +253,7 @@ pub fn disc_set_part_info(buffer: &mut [u8], pi: &PartInfo) {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PartitionType {
     Data = 0,
     Update = 1,
@@ -341,7 +341,7 @@ impl Ticket {
             val += 1;
         }
         self.time_limit = val;
-        crate::trace!(
+        crate::debug!(
             "Ticket fake signing status: hash[0]={}, attempt(s)={}",
             hash[0],
             val
@@ -634,8 +634,9 @@ impl TitleMetaData {
             }
             val += 1;
         }
-        BE::write_u32(&mut self.fake_sign, val);
-        // println!("TMD fake signing status: hash[0]={}, attempt(s)={}", hash[0], val);
+        *self = TitleMetaData::from_partition(&tmd_buf, 0);
+        // BE::write_u32(&mut self.fake_sign, val);
+        crate::debug!("TMD fake signing status: hash[0]={}, attempt(s)={}", hash[0], val);
     }
 }
 
@@ -647,7 +648,7 @@ impl Default for TitleMetaData {
 
 #[derive(Debug, Clone)]
 pub struct WiiPartition {
-    pub part_type: u32,
+    pub part_type: PartitionType,
     pub part_offset: u64,
     pub header: PartHeader,
     pub tmd: TitleMetaData,
@@ -672,199 +673,6 @@ pub fn decrypt_title_key(tik: &Ticket) -> AesKey {
     aes_decrypt_inplace(&mut block, iv, key);
     buf.copy_from_slice(&block[..tik.title_key.len()]);
     buf
-}
-
-#[cfg(disabled)]
-// This will be put into the writer and reworked, it is kept here as a reference and will be removed later on.
-pub fn finalize_iso(patched_partition: &[u8], original_iso: &mut [u8]) -> Result<()> {
-    // We use the original iso as a buffer to work on inplace.
-    let mut part_opt: Option<WiiPartition> = None;
-
-    let part_info = disc_get_part_info(original_iso);
-    for entry in part_info.entries.iter() {
-        let part = WiiPartition {
-            part_offset: entry.offset,
-            part_type: entry.part_type,
-            header: PartHeader::try_from(&original_iso[entry.offset as usize..][..0x2C0])?,
-        };
-        if entry.part_type == 0 && part_opt.is_none() {
-            part_opt = Some(part);
-        }
-    }
-    let mut part_info = part_info;
-    part_info.entries.retain(|&e| e.part_type == 0);
-    disc_set_part_info(&mut original_iso[..], &part_info);
-
-    if let Some(part) = part_opt {
-        let part_data_offset = part.part_offset + part.header.data_offset;
-        let _n_sectors = (part.header.data_size / 0x8000) as usize;
-
-        // reset partition to 0
-        for i in part_data_offset..part_data_offset + part.header.data_size {
-            original_iso[i as usize] = 0;
-        }
-
-        // Put the data in place
-        for i in 0..(patched_partition.len() / consts::WII_SECTOR_DATA_SIZE) {
-            original_iso[part_data_offset as usize
-                + i * consts::WII_SECTOR_SIZE
-                + consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE]
-                .copy_from_slice(
-                    &patched_partition[i * consts::WII_SECTOR_DATA_SIZE..]
-                        [..consts::WII_SECTOR_DATA_SIZE],
-                );
-        }
-
-        hash_partition(
-            &mut original_iso[part.part_offset as usize..]
-                [..(part.header.data_offset + part.header.data_size) as usize],
-        );
-        // original_iso[0x60] = 1u8;
-
-        // set partition data size
-        let part_header = part.header;
-
-        // encrypt everything
-        let part_key = decrypt_title_key(&part_header.ticket);
-
-        // let mut data_pool: Vec<&mut [u8]> = Vec::with_capacity(n_sectors);
-        let (_, data_slice) =
-            original_iso.split_at_mut((part.part_offset + part.header.data_offset) as usize);
-        let mut data_pool: Vec<&mut [u8]> =
-            data_slice.chunks_mut(consts::WII_SECTOR_SIZE).collect();
-        // for _ in 0..n_sectors {
-        //     let (section, new_data_slice) = data_slice.split_at_mut(consts::WII_SECTOR_SIZE);
-        //     data_slice = new_data_slice;
-        //     data_pool.push(section);
-        // }
-        data_pool.par_iter_mut().for_each(|data| {
-            let mut iv = [0_u8; consts::WII_KEY_SIZE];
-            aes_encrypt_inplace(
-                &mut data[..consts::WII_SECTOR_HASH_SIZE],
-                &iv,
-                &part_key,
-                consts::WII_SECTOR_HASH_SIZE,
-            )
-            .expect("Could not encrypt hash sector");
-            iv[..consts::WII_KEY_SIZE]
-                .copy_from_slice(&data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE]);
-            aes_encrypt_inplace(
-                &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
-                &iv,
-                &part_key,
-                consts::WII_SECTOR_DATA_SIZE,
-            )
-            .expect("Could not encrypt data sector");
-        });
-    }
-
-    Ok(())
-}
-
-#[cfg(disabled)]
-fn hash_partition(partition: &mut [u8]) {
-    let header = PartHeader::try_from(&partition[..0x2C0]).expect("Invalid partition header.");
-    let n_sectors = (header.data_size / 0x8000) as usize;
-    let n_clusters = n_sectors / 8;
-    let n_groups = n_clusters / 8;
-    // println!("part offset: {:#010X}; sectors: {}; clusters: {}; groups: {}", header.data_offset, n_sectors, n_clusters, n_groups);
-
-    // h0
-    // println!("h0");
-    let mut data_pool: Vec<&mut [u8]> = Vec::with_capacity(n_sectors);
-    let (_, mut data_slice) = partition.split_at_mut(header.data_offset as usize);
-    for _ in 0..n_sectors {
-        let (section, new_data_slice) = data_slice.split_at_mut(consts::WII_SECTOR_SIZE);
-        data_slice = new_data_slice;
-        data_pool.push(section);
-    }
-    data_pool.par_iter_mut().for_each(|data| {
-        let mut hash = [0u8; 0x400];
-        for j in 0..31 {
-            Sha1::from(&data[..]);
-            hash[j * 20..(j + 1) * 20].copy_from_slice(
-                &Sha1::from(&data[consts::WII_SECTOR_HASH_SIZE + j * 0x400..][..0x400])
-                    .digest()
-                    .bytes()[..],
-            );
-        }
-        data[..0x400].copy_from_slice(&hash);
-    });
-    // h1
-    // println!("h1");
-    let mut data_pool: Vec<&mut [u8]> = Vec::with_capacity(n_clusters);
-    let (_, mut data_slice) = partition.split_at_mut(header.data_offset as usize);
-    for _ in 0..n_clusters {
-        let (section, new_data_slice) = data_slice.split_at_mut(consts::WII_SECTOR_SIZE * 8);
-        data_slice = new_data_slice;
-        data_pool.push(section);
-    }
-    data_pool.par_iter_mut().for_each(|data| {
-        let mut hash = [0u8; 0x0a0];
-        for j in 0..8 {
-            hash[j * 20..(j + 1) * 20]
-                .copy_from_slice(&Sha1::from(&data[j * 0x8000..][..0x26c]).digest().bytes()[..]);
-        }
-        for j in 0..8 {
-            data[j * 0x8000 + 0x280..][..0xa0].copy_from_slice(&hash);
-        }
-    });
-    // h2
-    // println!("h2");
-    let mut data_pool: Vec<&mut [u8]> = Vec::with_capacity(n_groups);
-    let (_, mut data_slice) = partition.split_at_mut(header.data_offset as usize);
-    for _ in 0..n_groups {
-        let (section, new_data_slice) = data_slice.split_at_mut(consts::WII_SECTOR_SIZE * 64);
-        data_slice = new_data_slice;
-        data_pool.push(section);
-    }
-    data_pool.par_iter_mut().for_each(|data| {
-        let mut hash = [0u8; 0x0a0];
-        for j in 0..8 {
-            hash[j * 20..(j + 1) * 20].copy_from_slice(
-                &Sha1::from(&data[j * 8 * 0x8000 + 0x280..][..0xa0])
-                    .digest()
-                    .bytes()[..],
-            );
-        }
-        for j in 0..64 {
-            data[j * 0x8000 + 0x340..][..0xa0].copy_from_slice(&hash);
-        }
-    });
-    // h3
-    // println!("h3");
-    let h3_offset = header.h3_offset as usize;
-    // zero the h3 table
-    partition[h3_offset..][..0x18000].copy_from_slice(&[0u8; 0x18000]);
-    // divide and conquer
-    let mut data_pool: Vec<(&mut [u8], &mut [u8])> = Vec::with_capacity(n_groups);
-    let (h3, mut data_slice) = partition.split_at_mut(header.data_offset as usize);
-    let (_, mut h3) = h3.split_at_mut(h3_offset);
-    for _ in 0..n_groups {
-        let (section, new_data_slice) = data_slice.split_at_mut(consts::WII_SECTOR_SIZE * 64);
-        let (hash_section, new_h3) = h3.split_at_mut(20);
-        data_slice = new_data_slice;
-        h3 = new_h3;
-        data_pool.push((hash_section, section));
-    }
-    data_pool.par_iter_mut().for_each(|(hash, sector)| {
-        hash[..20].copy_from_slice(&Sha1::from(&sector[0x340..][..0xa0]).digest().bytes()[..]);
-    });
-    // h4 / TMD
-    let mut tmd = partition_get_tmd(partition, header.tmd_offset as usize);
-    let mut tmd_size = 0x1e4 + 36 * tmd.contents.len();
-    if !tmd.contents.is_empty() {
-        let content = &mut tmd.contents[0];
-        content.hash.copy_from_slice(
-            &Sha1::from(&partition[h3_offset..][..0x18000])
-                .digest()
-                .bytes()[..],
-        );
-        tmd_size = partition_set_tmd(partition, header.tmd_offset as usize, &tmd);
-    }
-    tmd_fake_sign(&mut partition[header.tmd_offset as usize..][..tmd_size]);
-    ticket_fake_sign(&mut partition[..Ticket::BLOCK_SIZE]);
-    // println!("hashing done.");
 }
 
 // Disc Data classes

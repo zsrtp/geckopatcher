@@ -188,6 +188,7 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
         }
     }
     data_pool.for_each(h2_process);
+    // single H3
     let mut ret_buf = [0u8; consts::WII_HASH_SIZE];
     ret_buf.copy_from_slice(&Sha1::from(&buf[0x340..][..0xa0]).digest().bytes());
     ret_buf
@@ -200,7 +201,7 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
     hashes_.extend(
         std::iter::repeat(0).take(consts::WII_H3_SIZE - hashes.len() * consts::WII_HASH_SIZE),
     );
-    crate::trace!(
+    crate::debug!(
         "[fake_sign] Hashes size: 0x{:08X}; Hashes padding size: 0x{:08X}; H3 size: 0x{:08X}",
         hashes.len() * consts::WII_HASH_SIZE,
         consts::WII_H3_SIZE - hashes.len() * consts::WII_HASH_SIZE,
@@ -268,8 +269,8 @@ where
         BE::write_u32(&mut buf[4..], 0x40020 >> 2);
         let offset: u64 = 0x50000;
         let i = 0;
-        let part_type: u32 = part.part_type;
-        crate::info!("part_type: {}", part_type);
+        let part_type: u32 = part.part_type.into();
+        crate::debug!("part_type: {}", part_type);
         part.part_offset = offset;
         BE::write_u32(&mut buf[0x20 + (8 * i)..], (offset >> 2) as u32);
         BE::write_u32(&mut buf[0x20 + (8 * i) + 4..], part_type);
@@ -298,6 +299,7 @@ where
 
         // Make sure there is at least one content in the TitleMetaData
         if part.tmd.contents.is_empty() {
+            crate::warn!("TMD has no content value. Generating new value");
             part.tmd.contents.push(TMDContent {
                 content_id: 0,
                 index: 0,
@@ -525,6 +527,7 @@ where
                                 consts::WII_H3_SIZE - this.hashes.len() * consts::WII_HASH_SIZE,
                             ),
                         );
+                        TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
                         *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPartHeader(
                             decrypt_title_key(&part.header.ticket),
                             buf,

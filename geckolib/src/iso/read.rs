@@ -102,15 +102,15 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
         let cert = buf.into_boxed_slice();
         let part = WiiPartition {
             part_offset: entry.offset,
-            part_type: entry.part_type,
+            part_type: entry.part_type.into(),
             header,
             tmd,
             cert,
         };
-        if part.part_type == 0 && data_idx.is_none() {
+        if part.part_type == PartitionType::Data && data_idx.is_none() {
             data_idx = Some(ret_vec.len());
-            ret_vec.push(part);
         }
+        ret_vec.push(part);
     }
     crate::debug!("{:} partitions found", ret_vec.len());
     if !ret_vec.is_empty() {

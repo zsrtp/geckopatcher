@@ -1,3 +1,5 @@
+use crate::crypto::Unpackable;
+
 pub mod disc;
 pub mod read;
 pub mod write;
@@ -51,4 +53,8 @@ pub(crate) struct FstEntry {
     // File size for a File, next directory for a Directory
     pub(crate) file_size_next_dir_index: usize,
     pub(crate) file_name_offset: usize,
+}
+
+impl Unpackable for FstEntry {
+    const BLOCK_SIZE: usize = 0xC;
 }
