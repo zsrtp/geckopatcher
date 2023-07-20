@@ -8,6 +8,10 @@ use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWr
 use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+#[cfg(feature = "progress")]
+use indicatif::{ProgressBar, ProgressStyle, HumanBytes};
+#[cfg(feature = "progress")]
+use std::time::Duration;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
 use std::task::{Context, Poll};
@@ -461,12 +465,17 @@ where
                 node.as_mut(),
                 &mut output_fst,
                 &mut fst_name_bank,
-                l,
+                l+4,
                 &mut offset,
             );
         }
         output_fst[0].file_size_next_dir_index = output_fst.len();
         crate::debug!("output_fst size = {}", output_fst.len());
+        #[cfg(feature = "progress")]
+        let write_total_size = output_fst
+            .iter()
+            .filter_map(|f| if f.kind == FstNodeType::File {Some(f.file_size_next_dir_index as u64)} else {None})
+            .sum::<u64>();
 
         for entry in output_fst {
             let mut buf = [0u8; 12];
@@ -484,14 +493,32 @@ where
         writer.write_all(&fst_name_bank).await?;
 
         // Traverse the root directory tree to write all the files in order
+        #[cfg(feature = "progress")]
+        let bar = ProgressBar::new(write_total_size).with_message("Writing virtual FileSystem");
+        #[cfg(feature = "progress")]
+        {
+            let style = ProgressStyle::with_template("{spinner} {msg} {wide_bar} {percent}%")?;
+            bar.enable_steady_tick(Duration::from_millis(200));
+            bar.println("Writing virtual FileSystem");
+            bar.set_style(style);
+        }
         let mut offset = writer.seek(SeekFrom::Current(0)).await? as usize;
         for file in self.root.iter_recurse_mut() {
+            #[cfg(feature = "progress")]
+            {
+                bar.set_message(format!("{:<32.32} ({:<3.1})", file.name(), HumanBytes(file.len() as u64)));
+                bar.inc(file.len() as u64);
+            }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
             let mut buf = Vec::with_capacity(file.len());
             file.read_to_end(&mut buf).await?;
             writer.write_all(&buf).await?;
             offset += file.len();
+        }
+        #[cfg(feature = "progress")]
+        {
+            bar.finish_and_clear();
         }
 
         Ok(())

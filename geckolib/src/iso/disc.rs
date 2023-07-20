@@ -6,7 +6,7 @@ use async_std::io::ReadExt;
 use eyre::Result;
 use num::Unsigned;
 #[cfg(disabled)]
-#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 use rayon::prelude::*;
 
 use crate::crypto::aes_decrypt_inplace;

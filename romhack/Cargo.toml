@@ -29,7 +29,7 @@ indicatif = "^0.17"
 [dev-dependencies]
 
 [features]
-default = ["parallel", "log"]
+default = ["parallel", "log", "progress"]
 log = [
     "geckolib/log",
     "dep:env_logger",
@@ -37,6 +37,7 @@ log = [
     "async-std/log",
     "async-std/kv-log-macro",
 ]
+progress = ["geckolib/progress"]
 parallel = ["geckolib/parallel"]
 
 [[example]]

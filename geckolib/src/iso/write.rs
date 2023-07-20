@@ -4,8 +4,10 @@ use async_std::{
 };
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+#[cfg(feature = "progress")]
+use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
 use pin_project::pin_project;
-#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 use rayon::{prelude::ParallelIterator, slice::ParallelSliceMut};
 use sha1_smol::Sha1;
 use std::task::Poll;
@@ -129,13 +131,15 @@ pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
     finalize_state: WiiDiscWriterFinalizeState,
     #[pin]
     writer: W,
+    #[cfg(feature = "progress")]
+    bar: ProgressBar,
 }
 
 fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     // h0
-    #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
     let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE);
-    #[cfg(any(target = "wasm32", not(feature = "parallel")))]
+    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
     let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE);
     fn h0_process(data: &mut [u8]) {
         let (hash, data) = data.split_at_mut(consts::WII_SECTOR_HASH_SIZE);
@@ -151,14 +155,14 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     }
     data_pool.for_each(h0_process);
     // h1
-    #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
     let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE * 8);
-    #[cfg(any(target = "wasm32", not(feature = "parallel")))]
+    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
     let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE * 8);
     fn h1_process(data: &mut [u8]) {
-        let mut hash = [0u8; 0x0a0];
+        let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
         for j in 0..8 {
-            hash[j * 20..(j + 1) * 20].copy_from_slice(
+            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
                 &Sha1::from(&data[j * consts::WII_SECTOR_SIZE..][..0x26c])
                     .digest()
                     .bytes()[..],
@@ -170,14 +174,14 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     }
     data_pool.for_each(h1_process);
     // h2
-    #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
     let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE * 64);
-    #[cfg(any(target = "wasm32", not(feature = "parallel")))]
+    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
     let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE * 64);
     fn h2_process(h: &mut [u8]) {
-        let mut hash = [0u8; 0x0a0];
+        let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
         for j in 0..8 {
-            hash[j * 20..(j + 1) * 20].copy_from_slice(
+            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
                 &Sha1::from(&h[j * 8 * consts::WII_SECTOR_SIZE + 0x280..][..0xa0])
                     .digest()
                     .bytes()[..],
@@ -190,7 +194,7 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     data_pool.for_each(h2_process);
     // single H3
     let mut ret_buf = [0u8; consts::WII_HASH_SIZE];
-    ret_buf.copy_from_slice(&Sha1::from(&buf[0x340..][..0xa0]).digest().bytes());
+    ret_buf.copy_from_slice(&Sha1::from(&buf[0x340 + 1..][..0xa0]).digest().bytes());
     ret_buf
 }
 
@@ -218,9 +222,9 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
 
 fn encrypt_group(group: &mut [u8], part_key: AesKey) {
     crate::trace!("Encrypting group");
-    #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
     let data_pool = group.par_chunks_exact_mut(consts::WII_SECTOR_SIZE);
-    #[cfg(any(target = "wasm32", not(feature = "parallel")))]
+    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
     let data_pool = group.chunks_exact_mut(consts::WII_SECTOR_SIZE);
     let encrypt_process = |data: &mut [u8]| {
         let mut iv = [0u8; consts::WII_KEY_SIZE];
@@ -249,6 +253,8 @@ where
             finalize_state: WiiDiscWriterFinalizeState::default(),
             hashes: Vec::new(),
             writer,
+            #[cfg(feature = "progress")]
+            bar: ProgressBar::hidden(),
         };
 
         // Write ISO header
@@ -340,6 +346,12 @@ where
         let this = self.project();
         let mut part = &mut this.disc.partitions.partitions[this.disc.partitions.data_idx];
         let finalize_state = std::mem::take(this.finalize_state);
+        #[cfg(feature = "progress")]
+        {
+            if !this.bar.is_hidden() {
+                this.bar.tick();
+            }
+        }
         match finalize_state {
             WiiDiscWriterFinalizeState::Init => {
                 crate::trace!("WiiDiscWriterFinalizeState::Init");
@@ -354,6 +366,19 @@ where
                     WiiDiscWriterFinalizeState::SeekToStart(None)
                 };
                 let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
+                #[cfg(feature = "progress")]
+                {
+                    this.bar.reset();
+                    this.bar.set_draw_target(ProgressDrawTarget::stderr());
+                    this.bar.set_length(n_group * 2);
+                    this.bar.set_style(
+                        ProgressStyle::with_template(
+                            "{prefix:.grey} {msg} {wide_bar} {percent}% {pos}/{len:6}",
+                        ).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
+                    );
+                    this.bar.set_prefix("[1/2]");
+                    this.bar.set_message("Building hash table");
+                }
                 this.hashes.clear();
                 this.hashes
                     .resize(n_group as usize, [0u8; consts::WII_HASH_SIZE]);
@@ -506,9 +531,17 @@ where
                             consts::WII_SECTOR_SIZE * 64,
                             vec![0u8; consts::WII_SECTOR_SIZE * 64],
                         );
+                        #[cfg(feature = "progress")]
+                        {
+                            this.bar.inc(1);
+                        }
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     } else if part_key.is_some() {
+                        #[cfg(feature = "progress")]
+                        {
+                            this.bar.finish_and_clear();
+                        }
                         *this.finalize_state = WiiDiscWriterFinalizeState::Done;
                         Poll::Ready(Ok(()))
                     } else {
@@ -564,6 +597,11 @@ where
                                     buf.split_at(n_written).1.to_vec(),
                                 )
                             } else {
+                                #[cfg(feature = "progress")]
+                                {
+                                    this.bar.set_prefix("[2/2]");
+                                    this.bar.set_message("Encrypting partition");
+                                }
                                 WiiDiscWriterFinalizeState::SeekToStart(Some(part_key))
                             };
                             cx.waker().wake_by_ref();
@@ -620,6 +658,8 @@ where
             finalize_state: self.finalize_state.clone(),
             hashes: self.hashes.clone(),
             writer: self.writer.clone(),
+            #[cfg(feature = "progress")]
+            bar: ProgressBar::hidden(),
         }
     }
 }
@@ -709,7 +749,7 @@ where
                     + (start_blk_idx * consts::WII_SECTOR_SIZE) as u64;
                 let start_blk_pos = (start_blk_idx * consts::WII_SECTOR_DATA_SIZE) as u64;
                 let block_offset = std::cmp::max(0, vstart as i64 - start_blk_pos as i64) as u64;
-                let seek_pos = start_blk_addr + block_offset + consts::WII_SECTOR_HASH_SIZE as u64;
+                let seek_pos = start_blk_addr + block_offset + to_encrypted_addr(0u64);
                 crate::trace!("Seeking to 0x{:08X}", seek_pos);
                 if this
                     .writer
@@ -785,8 +825,7 @@ where
                     } else {
                         let blk_addr = part.part_offset
                             + part.header.data_offset
-                            + ((block_idx + 1) * consts::WII_SECTOR_SIZE) as u64
-                            + consts::WII_SECTOR_HASH_SIZE as u64;
+                            + to_encrypted_addr(((block_idx + 1) * consts::WII_SECTOR_DATA_SIZE) as u64);
                         *this.state =
                             WiiDiscWriterState::SeekingNextBlock(block_idx + 1, blk_addr, buf_);
                         cx.waker().wake_by_ref();

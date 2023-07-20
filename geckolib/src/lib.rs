@@ -1,6 +1,6 @@
 #[cfg(feature = "log")]
 extern crate log;
-#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 extern crate rayon;
 extern crate thiserror;
 #[cfg(feature = "web")]
@@ -22,7 +22,7 @@ pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
 
-#[cfg(all(not(feature = "web"), not(target = "wasm32"), not(target_os = "unknown")))]
+#[cfg(all(not(feature = "web"), not(target_family = "wasm"), not(target_os = "unknown")))]
 use async_std::fs::read;
 use config::Config;
 use eyre::Result;

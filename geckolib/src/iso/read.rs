@@ -6,7 +6,7 @@ use async_std::task::ready;
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 use pin_project::pin_project;
-#[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 use rayon::prelude::*;
 use std::io::SeekFrom;
 use std::pin::Pin;
@@ -291,7 +291,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                 crate::trace!("Reading successful");
                 let part_key = decrypt_title_key(&part.header.ticket);
                 crate::trace!("Partition key: {:?}", part_key);
-                #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+                #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
                 let mut data_pool: Vec<&mut [u8]> =
                     buf2.par_chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
                 #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
@@ -319,7 +319,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                     crate::trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
                 };
                 crate::trace!("Decrypting blocks");
-                #[cfg(all(not(target = "wasm32"), feature = "parallel"))]
+                #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
                 data_pool.par_iter_mut().for_each(decrypt_process);
                 #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
                 data_pool.iter_mut().for_each(decrypt_process);
