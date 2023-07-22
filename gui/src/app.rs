@@ -1,71 +1,188 @@
-#[cfg(target_arch = "wasm32")]
-use std::time::Duration;
-
 #[cfg(not(target_arch = "wasm32"))]
-use async_std::channel::{Sender, Receiver};
+use async_std::channel::{Receiver, Sender};
+use async_std::{
+    channel::{TryRecvError, TrySendError},
+    task::JoinHandle,
+};
+use futures_lite::Future;
+use rfd::FileHandle;
 #[cfg(target_arch = "wasm32")]
-use wasm_rs_shared_channel::spsc::{Receiver, Sender};
+use std::{cell::RefCell, rc::Rc};
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::{closure::Closure, prelude::wasm_bindgen, JsValue};
+#[cfg(target_arch = "wasm32")]
+use web_sys::MessageChannel;
 
 #[derive(Debug)]
 pub enum InFile {
     Dropped(egui::DroppedFile),
-    Path(rfd::FileHandle),
+    Path(std::path::PathBuf),
 }
 
 impl InFile {
     fn name(&self) -> String {
         match self {
             InFile::Dropped(f) => f.name.clone(),
-            InFile::Path(f) => f.file_name(),
+            InFile::Path(f) => f.file_name().expect("File name could not be obtained").to_str().expect("File name is not a valid UTF-8 string").to_string(),
         }
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Clone, Copy, Default)]
+enum ToAppMsg {
+    #[default]
+    Echo,
+    GetOpenFile,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default)]
+enum FromAppMsg {
+    #[default]
+    Echo,
+    OpenedFile(FileHandle),
+    NoFileOpened,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct MessageChannel {
+    sender: Sender<ToAppMsg>,
+    receiver: Receiver<FromAppMsg>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+enum OpenFileState {
+    #[default]
+    None,
+    Opening,
+    Opened,
+}
+
 pub struct PatcherApp {
-    // Example stuff:
     in_file: Option<InFile>,
-    channels: (Sender<u64>, Receiver<u64>),
+    // Convention for wasm32 is port1 is gui's and port2 is background
+    channels: MessageChannel,
+    picked_file: OpenFileState,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn run_thread(_port: &JsValue) {
+    loop {
+        wasm_rs_async_executor::single_threaded::block_on(async {
+            // println!("application thread received: {:?}", rcv_app.recv(Some(Duration::from_secs_f64(60. * 60. * 24. * 365.))).unwrap());
+            // let _ = snd_app.send(&0xa5);
+        });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = window)]
+    pub fn getSelectedFile();
 }
 
 impl PatcherApp {
+    #[cfg(not(target_arch = "wasm32"))]
     /// Called once before the first frame.
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
         // Start the parallel async thread which will handle all the asynchronous tasks.
-        #[cfg(not(target_arch = "wasm32"))]
+
+        use async_std::channel::RecvError;
         {
-            let (snd_app, rcv_ui) = async_std::channel::unbounded::<u64>();
-            let (snd_ui, rcv_app) = async_std::channel::unbounded::<u64>();
-            std::thread::spawn(move || -> ! {
-                let rcv_app = rcv_app;
+            let (snd_app, rcv_ui) = async_std::channel::unbounded::<FromAppMsg>();
+            let (snd_ui, rcv_app) = async_std::channel::unbounded::<ToAppMsg>();
+            async_std::task::spawn(async move {
+                let (snd_app, rcv_app) = (snd_app, rcv_app);
 
                 loop {
-                    async_std::task::block_on(async {
-                        if let Ok(msg) = rcv_app.recv().await {
-                            println!("application thread received: {}", msg);
-                            let _ = snd_app.send(msg).await;
+                    match rcv_app.recv().await {
+                        Ok(msg) => match msg {
+                            ToAppMsg::Echo => {
+                                if let Err(err) = snd_app.send(FromAppMsg::Echo).await {
+                                    log::warn!(
+                                        "The channel was closed! Terminating worker thread. {:?}",
+                                        err
+                                    );
+                                    return;
+                                }
+                            }
+                            ToAppMsg::GetOpenFile => {
+                                match rfd::AsyncFileDialog::new()
+                                    .add_filter("application/x-cd-image", &[".iso"])
+                                    .pick_file()
+                                    .await
+                                {
+                                    Some(file) => {
+                                        log::debug!("Got a file from the user!");
+                                        if snd_app.send(FromAppMsg::OpenedFile(file)).await.is_err()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                    None => {
+                                        if snd_app.send(FromAppMsg::NoFileOpened).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                };
+                            }
+                        },
+                        Err(RecvError) => {
+                            return;
                         }
-                    });
+                    }
                 }
             });
-            Self { in_file: None, channels: (snd_ui, rcv_ui) }
+            Self {
+                in_file: None,
+                channels: MessageChannel {
+                    sender: snd_ui,
+                    receiver: rcv_ui,
+                },
+                picked_file: Default::default(),
+            }
         }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let (snd_app, rcv_ui) = wasm_rs_shared_channel::spsc::channel(2).split();
-            let (snd_ui, rcv_app) = wasm_rs_shared_channel::spsc::channel(2).split();
-            wasm_rs_async_executor::single_threaded::spawn(async move {
-                loop {
-                    wasm_rs_async_executor::single_threaded::block_on(async {
-                        println!("application thread received: {:?}", rcv_app.recv(Some(Duration::from_secs_f64(60. * 60. * 24. * 365.))).unwrap());
-                    });
-                }
-            });
-            Self { in_file: None, channels: (snd_ui, rcv_ui) }
-        }
+    }
 
+    #[cfg(target_arch = "wasm32")]
+    /// Called once before the first frame.
+    pub fn new(_cc: &eframe::CreationContext<'_>, worker: Rc<RefCell<web_sys::Worker>>) -> Self {
+        use wasm_bindgen::JsCast;
+        // This is also where you can customize the look and feel of egui using
+        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+
+        // Start the parallel async thread which will handle all the asynchronous tasks.
+        {
+            let channels = MessageChannel::new().expect("Could not obtain a MessageChannel");
+            let data = js_sys::Object::new();
+            let _ = js_sys::Reflect::set(&data, &"type".into(), &JsValue::from_str("wasm_mem"));
+            let _ = js_sys::Reflect::set(&data, &"port".into(), &channels.port2());
+            // let _ = js_sys::Reflect::set(&data, &"mem".into(), &wasm_bindgen::memory());
+            let _ = worker
+                .borrow()
+                .post_message_with_transfer(&data, &js_sys::Array::of1(&channels.port2()));
+            let _ = channels.port1().add_event_listener_with_callback(
+                "message",
+                Closure::<dyn Fn(JsValue)>::new(|event: JsValue| {
+                    log::debug!("UI Message Channel got a message: {:?}", event);
+                })
+                .as_ref()
+                .unchecked_ref(),
+            );
+            channels.port1().start();
+            web_sys::console::dir_1(&wasm_bindgen::memory());
+            Self {
+                in_file: None,
+                channels,
+                file_picker: None,
+            }
+        }
     }
 }
 
@@ -78,7 +195,11 @@ impl eframe::App for PatcherApp {
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let Self { in_file, channels: (snd, rcv) } = self;
+        let Self {
+            in_file,
+            channels,
+            picked_file,
+        } = self;
 
         // Examples of how to create different panels and windows.
         // Pick whichever suits you.
@@ -107,22 +228,30 @@ impl eframe::App for PatcherApp {
                     "Open File...".into()
                 }
             };
-            if ui.button(file_button_text).clicked() {
+            if ui
+                .add_enabled(
+                    *picked_file != OpenFileState::Opening,
+                    egui::Button::new(file_button_text),
+                )
+                .clicked()
+            {
                 #[cfg(not(target_arch = "wasm32"))]
-                {
-                    let result = snd.send_blocking(42);
-                    log::debug!("{:?}", result);
-                    // let picked_file = futures_lite::future::block_on(rfd::AsyncFileDialog::new().pick_file());
-                    // *in_file = picked_file.map(InFile::Path);
+                if let Some(file) = rfd::FileDialog::new().pick_file() {
+                    *picked_file = OpenFileState::Opening;
+                    *in_file = Some(InFile::Path(file));
+                    *picked_file = OpenFileState::Opened;
+                } else {
+                    *picked_file = OpenFileState::None;
                 };
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let result = snd.send(&42);
-                    log::error!("{:?}", result);
-                    // wasm_bindgen_futures::spawn_local(async move {
-                    //     let picked_file = rfd::AsyncFileDialog::new().pick_file().await;
-                    //     // *in_file = picked_file.map(InFile::Path);
-                    // });
+                    let port = channels.port1();
+                    wasm_bindgen_futures::spawn_local(async move {
+                        let picked_file = rfd::AsyncFileDialog::new().pick_file().await;
+                        log::debug!("{:?}", picked_file.unwrap());
+                        // let _ = port.post_message(&JsValue::from_f64(42.));
+                    });
+                    getSelectedFile();
                 };
             }
 
@@ -159,5 +288,24 @@ impl eframe::App for PatcherApp {
                 ui.label("You would normally choose either panels OR windows.");
             });
         }
+
+        match channels.receiver.try_recv() {
+            Ok(FromAppMsg::Echo) => {
+                log::warn!("GUI got Echo");
+            },
+            Ok(FromAppMsg::NoFileOpened) => {
+                *picked_file = match *in_file {
+                    Some(_) => OpenFileState::Opened,
+                    None => OpenFileState::None,
+                };
+                *in_file = None;
+            }
+            Ok(FromAppMsg::OpenedFile(file)) => {
+                *picked_file = OpenFileState::Opened;
+                // *in_file = Some(InFile::Path(file));
+            }
+            Err(TryRecvError::Closed) => _frame.close(),
+            Err(TryRecvError::Empty) => {}
+        };
     }
 }

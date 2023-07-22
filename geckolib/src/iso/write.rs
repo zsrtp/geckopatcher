@@ -5,7 +5,7 @@ use async_std::{
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 #[cfg(feature = "progress")]
-use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use pin_project::pin_project;
 #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 use rayon::{prelude::ParallelIterator, slice::ParallelSliceMut};
@@ -180,15 +180,15 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE * 64);
     fn h2_process(h: &mut [u8]) {
         let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
-        for j in 0..8 {
-            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(&h[j * 8 * consts::WII_SECTOR_SIZE + 0x280..][..0xa0])
+        for i in 0..8 {
+            hash[i * consts::WII_HASH_SIZE..(i + 1) * consts::WII_HASH_SIZE].copy_from_slice(
+                &Sha1::from(&h[i * 8 * consts::WII_SECTOR_SIZE + 0x280..][..0xa0])
                     .digest()
                     .bytes()[..],
             );
         }
-        for j in 0..64 {
-            h[j * consts::WII_SECTOR_SIZE + 0x340..][..0xa0].copy_from_slice(&hash);
+        for i in 0..64 {
+            h[i * consts::WII_SECTOR_SIZE + 0x340..][..0xa0].copy_from_slice(&hash);
         }
     }
     data_pool.for_each(h2_process);
@@ -202,9 +202,7 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
     let content = &mut part.tmd.contents[0];
     let mut hashes_ = Vec::with_capacity(consts::WII_H3_SIZE);
     hashes_.extend(hashes.iter().flatten());
-    hashes_.extend(
-        std::iter::repeat(0).take(consts::WII_H3_SIZE - hashes.len() * consts::WII_HASH_SIZE),
-    );
+    hashes_.resize(consts::WII_H3_SIZE, 0);
     crate::debug!(
         "[fake_sign] Hashes size: 0x{:08X}; Hashes padding size: 0x{:08X}; H3 size: 0x{:08X}",
         hashes.len() * consts::WII_HASH_SIZE,
@@ -373,8 +371,9 @@ where
                     this.bar.set_length(n_group * 2);
                     this.bar.set_style(
                         ProgressStyle::with_template(
-                            "{prefix:.grey} {msg} {wide_bar} {percent}% {pos}/{len:6}",
-                        ).map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
+                            "{prefix:.bold.dim} {msg} {wide_bar} {percent}% {pos}/{len:6}",
+                        )
+                        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
                     );
                     this.bar.set_prefix("[1/2]");
                     this.bar.set_message("Building hash table");
@@ -825,7 +824,9 @@ where
                     } else {
                         let blk_addr = part.part_offset
                             + part.header.data_offset
-                            + to_encrypted_addr(((block_idx + 1) * consts::WII_SECTOR_DATA_SIZE) as u64);
+                            + to_encrypted_addr(
+                                ((block_idx + 1) * consts::WII_SECTOR_DATA_SIZE) as u64,
+                            );
                         *this.state =
                             WiiDiscWriterState::SeekingNextBlock(block_idx + 1, blk_addr, buf_);
                         cx.waker().wake_by_ref();

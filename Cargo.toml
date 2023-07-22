@@ -1,5 +1,6 @@
 [workspace]
 members = ["geckolib", "romhack", "gui"]
+resolver = "2"
 
 [profile.release]
 panic = "abort"

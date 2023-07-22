@@ -1,6 +1,9 @@
 use async_std::{fs, task};
 use geckolib::IsoBuilder;
 
+#[cfg(feature = "progress")]
+mod progress;
+
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
     #[cfg(feature = "log")]

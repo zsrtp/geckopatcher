@@ -465,7 +465,7 @@ where
                 node.as_mut(),
                 &mut output_fst,
                 &mut fst_name_bank,
-                l+4,
+                l,
                 &mut offset,
             );
         }
@@ -497,7 +497,7 @@ where
         let bar = ProgressBar::new(write_total_size).with_message("Writing virtual FileSystem");
         #[cfg(feature = "progress")]
         {
-            let style = ProgressStyle::with_template("{spinner} {msg} {wide_bar} {percent}%")?;
+            let style = ProgressStyle::with_template("{spinner:.bold.dim} {msg} {wide_bar} {percent}%")?;
             bar.enable_steady_tick(Duration::from_millis(200));
             bar.println("Writing virtual FileSystem");
             bar.set_style(style);
@@ -507,7 +507,6 @@ where
             #[cfg(feature = "progress")]
             {
                 bar.set_message(format!("{:<32.32} ({:<3.1})", file.name(), HumanBytes(file.len() as u64)));
-                bar.inc(file.len() as u64);
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
@@ -515,6 +514,10 @@ where
             file.read_to_end(&mut buf).await?;
             writer.write_all(&buf).await?;
             offset += file.len();
+            #[cfg(feature = "progress")]
+            {
+                bar.inc(file.len() as u64);
+            }
         }
         #[cfg(feature = "progress")]
         {
@@ -918,7 +921,8 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
         match &self.reader {
             FileDataSource::Reader(reader) => match reader.try_lock_arc() {
                 Some(mut guard) => {
-                    let guard_pin = std::pin::pin!(guard.deref_mut());
+                    let guard_mut = guard.deref_mut();
+                    let guard_pin = std::pin::pin!(guard_mut);
                     match guard_pin.poll_seek(
                         cx,
                         match pos {

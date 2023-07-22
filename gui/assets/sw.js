@@ -4,6 +4,7 @@ var filesToCache = [
   './index.html',
   './gui.js',
   './gui_bg.wasm',
+  './worker.js',
 ];
 
 /* Start the service worker and cache all of the app's content */

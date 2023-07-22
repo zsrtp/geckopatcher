@@ -13,7 +13,7 @@ extern crate cbc;
 extern crate eyre;
 extern crate serde;
 extern crate sha1_smol;
-#[cfg(all(feature = "progress", feature = "parallel"))]
+#[cfg(all(feature = "progress"))]
 extern crate indicatif;
 
 pub mod config;
@@ -21,15 +21,20 @@ pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
+pub mod update;
 
+use config::Config;
 #[cfg(all(not(feature = "web"), not(target_family = "wasm"), not(target_os = "unknown")))]
 use async_std::fs::read;
-use config::Config;
-use eyre::Result;
+#[cfg(not(feature = "web"))]
 use std::collections::HashMap;
+#[cfg(not(feature = "web"))]
 use std::io::{Seek, Write};
+#[cfg(not(feature = "web"))]
 use std::path::PathBuf;
+#[cfg(not(feature = "web"))]
 use std::{fs::File, io::BufWriter};
+#[cfg(not(feature = "web"))]
 use zip::{write::FileOptions, ZipWriter};
 
 pub enum IsoBuilder {
@@ -42,7 +47,7 @@ fn write_file_to_zip<R: Write + Seek, S: Into<String>>(
     zip: &mut ZipWriter<R>,
     filename: S,
     data: &[u8],
-) -> Result<()> {
+) -> eyre::Result<()> {
     zip.start_file(filename, FileOptions::default())?;
     zip.write_all(data)?;
     Ok(())
@@ -55,7 +60,7 @@ fn add_file_to_zip(
     actual_path: &PathBuf,
     zip: &mut ZipWriter<BufWriter<File>>,
     new_map: &mut HashMap<String, PathBuf>,
-) -> Result<()> {
+) -> eyre::Result<()> {
     let zip_path = format!("replace{}.dat", index);
     new_map.insert(iso_path.to_owned(), PathBuf::from(&zip_path));
     write_file_to_zip(zip, zip_path, &std::fs::read(actual_path)?)?;
@@ -69,7 +74,7 @@ fn add_entry_to_zip(
     actual_path: &PathBuf,
     zip: &mut ZipWriter<BufWriter<File>>,
     new_map: &mut HashMap<String, PathBuf>,
-) -> Result<()> {
+) -> eyre::Result<()> {
     if actual_path.is_file() {
         *index += 1;
         add_file_to_zip(*index, iso_path, actual_path, zip, new_map)?;
@@ -99,7 +104,7 @@ impl IsoBuilder {
     }
 
     #[cfg(not(feature = "web"))]
-    pub async fn build(self) -> Result<()> {
+    pub async fn build(self) -> eyre::Result<()> {
         match self {
             Self::Raw { config } => {
                 Self::build_raw(config).await?;
@@ -112,13 +117,13 @@ impl IsoBuilder {
     }
 
     #[cfg(not(feature = "web"))]
-    async fn build_raw(mut _config: Config) -> Result<()> {
+    async fn build_raw(mut _config: Config) -> eyre::Result<()> {
         crate::debug!("");
         todo!()
     }
 
     #[cfg(not(feature = "web"))]
-    async fn build_patch(mut config: Config) -> Result<()> {
+    async fn build_patch(mut config: Config) -> eyre::Result<()> {
         crate::info!("Creating patch file");
         config.build.iso.set_extension("patch");
         let mut zip = ZipWriter::new(BufWriter::new(File::create(&config.build.iso)?));
@@ -141,7 +146,7 @@ impl IsoBuilder {
                 write_file_to_zip(
                     &mut zip,
                     "libcompiled.a",
-                    &read(libs.get(0).unwrap()).await?,
+                    &async_std::fs::read(libs.get(0).unwrap()).await?,
                 )?;
                 libs.remove(0);
                 let mut modified_libs = Vec::new();
