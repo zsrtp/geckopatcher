@@ -9,29 +9,71 @@
     <!-- change this to your project name -->
     <title>Web Romhack Patcher</title>
 
+    <script type="module">
+        window["hasShowSaveFilePicker"] = () => {return "showSaveFilePicker" in window;};
+        window["getPatch"] = async () => {
+            let file = null;
+            try {
+                file = (await window.showOpenFilePicker({types: [{description: "Patch file", accept:{"application/x-patch":[".patch"]}}]}))[0];
+            }
+            catch (e) {
+                console.error(e);
+            }
+            return file;
+        };
+        window["getIso"] = async () => {
+            let file = null;
+            try {
+                file = (await window.showOpenFilePicker({types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}))[0];
+            }
+            catch (e) {
+                console.error(e);
+            }
+            return file;
+        };
+        window["getSave"] = async (name) => {
+            let file = null;
+            try {
+                let suggestedName = "tpgz.iso";
+                if (name !== undefined) {
+                    suggestedName = name;
+                }
+                file = (await window.showSaveFilePicker({suggestedName, types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}));
+            }
+            catch (e) {
+                console.error(e);
+            }
+            return file;
+        };
+    </script>
+
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" data-weak-refs data-reference-types data-wasm-opt="2" />
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="app" data-type="main" data-weak-refs data-reference-types data-wasm-opt="2" />
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="worker" data-type="worker" data-loader-shim data-weak-refs data-reference-types data-wasm-opt="2" />
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico">
 
 
-    <link data-trunk rel="copy-file" href="assets/sw.js" />
+    <link data-trunk rel="copy-file" href="assets/app_worker.js" />
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" />
     <link data-trunk rel="copy-file" href="assets/icon-256.png" />
     <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" />
     <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" />
-    <link data-trunk rel="copy-file" href="assets/worker.js" />
 
 
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon_ios_touch_192.png">
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#404040">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="black">
 
     <style>
+        :root {
+            color-scheme: light dark;
+        }
+
         html {
             /* Remove touch delay: */
             touch-action: manipulation;
@@ -40,14 +82,18 @@
         body {
             /* Light mode background color for what is not covered by the egui canvas,
             or where the egui canvas is translucent. */
-            background: #909090;
+            background: #c0c0c0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         @media (prefers-color-scheme: dark) {
             body {
                 /* Dark mode background color for what is not covered by the egui canvas,
                 or where the egui canvas is translucent. */
-                background: #404040;
+                background: #000000;
+                color: #f0f0f0;
             }
         }
 
@@ -59,31 +105,6 @@
             padding: 0 !important;
             height: 100%;
             width: 100%;
-        }
-
-        /* Position canvas in center-top: */
-        canvas {
-            margin-right: auto;
-            margin-left: auto;
-            display: block;
-            position: absolute;
-            top: 0%;
-            left: 50%;
-            transform: translate(-50%, 0%);
-        }
-
-        .centered {
-            margin-right: auto;
-            margin-left: auto;
-            display: block;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: #f0f0f0;
-            font-size: 24px;
-            font-family: Ubuntu-Light, Helvetica, sans-serif;
-            text-align: center;
         }
 
         /* ---------------------------------------------- */
@@ -115,27 +136,18 @@
                 transform: rotate(360deg);
             }
         }
+
+        fieldset#main_form {
+            display: grid;
+            grid-template-columns: auto 1fr;
+            grid-template-rows: 1fr 1fr 1fr 1fr;
+            gap: 5px 5px;
+        }
     </style>
 </head>
 
 <body>
-    <!-- The WASM code will resize the canvas dynamically -->
-    <!-- the id is hardcoded in main.rs . so, make sure both match. -->
-    <canvas id="the_canvas_id"></canvas>
-
-    <!--Register Service Worker. this will cache the wasm / js scripts for offline use (for PWA functionality). -->
-    <!-- Force refresh (Ctrl + F5) to load the latest files instead of cached files  -->
-    <script>
-        // We disable caching during development so that we always view the latest version.
-        if ('serviceWorker' in navigator && window.location.hash !== "#dev") {
-            window.addEventListener('load', function () {
-                navigator.serviceWorker.register('sw.js');
-            });
-        }
-        window["getSelectedFile"] = function() {
-            console.log("running getSelectedFile");
-        }
-    </script>
+    <div class="lds-dual-ring"></div>
 </body>
 
 </html>

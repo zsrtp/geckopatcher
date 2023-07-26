@@ -1,0 +1,239 @@
+use flume::{Receiver, Sender, TryRecvError, TrySendError};
+use rfd::FileHandle;
+
+#[derive(Debug)]
+pub enum InFile {
+    Dropped(egui::DroppedFile),
+    Path(FileHandle),
+}
+
+impl InFile {
+    fn name(&self) -> String {
+        match self {
+            InFile::Dropped(f) => f.name.clone(),
+            InFile::Path(f) => f.file_name(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum ToAppMsg {
+    #[default]
+    Echo,
+    GetOpenFile,
+}
+
+#[derive(Debug, Default)]
+enum FromAppMsg {
+    #[default]
+    Echo,
+    OpenedFile(FileHandle),
+    NoFileOpened,
+}
+
+struct MessageChannel {
+    sender: Sender<ToAppMsg>,
+    receiver: Receiver<FromAppMsg>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+enum OpenFileState {
+    #[default]
+    None,
+    Opening,
+    Opened,
+}
+
+pub struct PatcherApp {
+    in_file: Option<InFile>,
+    // Convention for wasm32 is port1 is gui's and port2 is background
+    channels: MessageChannel,
+    picked_file: OpenFileState,
+}
+
+impl PatcherApp {
+    /// Called once before the first frame.
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+        // This is also where you can customize the look and feel of egui using
+        // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
+
+        // Start the parallel async thread which will handle all the asynchronous tasks.
+        let (snd_app, rcv_ui) = flume::unbounded::<FromAppMsg>();
+        let (snd_ui, rcv_app) = flume::unbounded::<ToAppMsg>();
+        async_std::task::spawn(async move {
+            let (snd_app, rcv_app) = (snd_app, rcv_app);
+
+            loop {
+                match rcv_app.recv_async().await {
+                    Ok(msg) => match msg {
+                        ToAppMsg::Echo => {
+                            if let Err(err) = snd_app.send_async(FromAppMsg::Echo).await {
+                                log::warn!(
+                                    "The channel was closed! Terminating worker thread. {:?}",
+                                    err
+                                );
+                                return;
+                            }
+                        }
+                        ToAppMsg::GetOpenFile => {
+                            match rfd::AsyncFileDialog::new()
+                                .add_filter("application/x-cd-image", &["iso"])
+                                .pick_file()
+                                .await
+                            {
+                                Some(file) => {
+                                    log::debug!("Got a file from the user!");
+                                    if snd_app
+                                        .send_async(FromAppMsg::OpenedFile(file))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                None => {
+                                    if snd_app.send_async(FromAppMsg::NoFileOpened).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            };
+                        }
+                    },
+                    Err(flume::RecvError::Disconnected) => {
+                        return;
+                    }
+                }
+            }
+        });
+        Self {
+            in_file: None,
+            channels: MessageChannel {
+                sender: snd_ui,
+                receiver: rcv_ui,
+            },
+            picked_file: Default::default(),
+        }
+    }
+}
+
+impl eframe::App for PatcherApp {
+    // /// Called by the frame work to save state before shutdown.
+    // fn save(&mut self, _storage: &mut dyn eframe::Storage) {
+    //     // eframe::set_value(storage, eframe::APP_KEY, self);
+    // }
+
+    /// Called each time the UI needs repainting, which may be many times per second.
+    /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let Self {
+            in_file,
+            channels,
+            picked_file,
+        } = self;
+
+        // Examples of how to create different panels and windows.
+        // Pick whichever suits you.
+        // Tip: a good default choice is to just keep the `CentralPanel`.
+        // For inspiration and more examples, go to https://emilk.github.io/egui
+
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            // The top panel is often a good place for a menu bar:
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("File", |ui| {
+                    if ui.button("Quit").clicked() {
+                        _frame.close();
+                    }
+                });
+            });
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.heading("ISO Patching");
+
+            let file_button_text = {
+                if let Some(f) = in_file {
+                    f.name()
+                } else {
+                    "Open File...".into()
+                }
+            };
+            if ui
+                .add_enabled(
+                    *picked_file != OpenFileState::Opening,
+                    egui::Button::new(file_button_text),
+                )
+                .clicked()
+            {
+                match channels.sender.try_send(ToAppMsg::GetOpenFile) {
+                    Ok(_) => {
+                        *picked_file = OpenFileState::Opening;
+                    }
+                    Err(TrySendError::Full(_)) => {
+                        *picked_file = OpenFileState::None;
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        _frame.close();
+                    }
+                };
+            }
+
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    ui.label("powered by ");
+                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
+                    ui.label(" and ");
+                    ui.hyperlink_to(
+                        "eframe",
+                        "https://github.com/emilk/egui/tree/master/crates/eframe",
+                    );
+                    ui.label(".");
+                });
+                ui.horizontal(|ui| {
+                    ui.hyperlink_to("Github", "https://github.com/kipcode66/geckopatcher")
+                });
+                egui::warn_if_debug_build(ui);
+            });
+        });
+
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Status...");
+                ui.add(
+                    egui::ProgressBar::new(1.0)
+                        .animate(true)
+                        .text("Loading...")
+                        .show_percentage(),
+                );
+            });
+        });
+
+        if false {
+            egui::Window::new("Window").show(ctx, |ui| {
+                ui.label("Windows can be moved by dragging them.");
+                ui.label("They are automatically sized based on contents.");
+                ui.label("You can turn on resizing and scrolling if you like.");
+                ui.label("You would normally choose either panels OR windows.");
+            });
+        }
+
+        match channels.receiver.try_recv() {
+            Ok(FromAppMsg::Echo) => {
+                log::warn!("GUI got Echo");
+            }
+            Ok(FromAppMsg::NoFileOpened) => {
+                *picked_file = match *in_file {
+                    Some(_) => OpenFileState::Opened,
+                    None => OpenFileState::None,
+                };
+                *in_file = None;
+            }
+            Ok(FromAppMsg::OpenedFile(file)) => {
+                *picked_file = OpenFileState::Opened;
+                *in_file = Some(InFile::Path(file));
+            }
+            Err(TryRecvError::Disconnected) => _frame.close(),
+            Err(TryRecvError::Empty) => {}
+        };
+    }
+}

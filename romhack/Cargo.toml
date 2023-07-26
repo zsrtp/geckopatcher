@@ -10,10 +10,6 @@ license-file = "LICENSE"
 keywords = ["romhack", "GameCube", "Wii"]
 publish = false
 
-[[bin]]
-name = "romhack"
-path = "src/main.rs"
-
 [dependencies]
 geckolib = { path = "../geckolib", default-features = false }
 color-eyre = "^0.6"

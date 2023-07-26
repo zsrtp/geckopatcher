@@ -2,6 +2,7 @@
 name = "geckolib"
 version = "0.1.0"
 edition = "2021"
+resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -10,7 +11,6 @@ name = "geckolib"
 path = "src/lib.rs"
 
 [dependencies]
-wasm-bindgen = { version = "^0.2", optional = true }
 log = "^0.4"
 aes = "^0.8"
 sha1_smol = "^1.0"
@@ -42,7 +42,7 @@ indicatif = { version = "^0.17", optional = true }
 
 [features]
 default = ["parallel", "log"]
-web = ["wasm-bindgen"]
+web = []
 parallel = ["rayon", "image/jpeg_rayon", "indicatif?/rayon"]
 log = ["async-std/default"]
 progress = ["indicatif"]

@@ -3,8 +3,6 @@ extern crate log;
 #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 extern crate rayon;
 extern crate thiserror;
-#[cfg(feature = "web")]
-extern crate wasm_bindgen;
 #[macro_use]
 extern crate lazy_static;
 extern crate async_std;
