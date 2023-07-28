@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use wasm_bindgen::{JsCast, JsValue, prelude::wasm_bindgen};
+use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
 use web_sys::{File, HtmlInputElement, Worker};
 use yew::prelude::*;
 
@@ -42,17 +42,9 @@ impl Component for App {
         log::info!("{:?}", msg);
         match msg {
             Message::PatchIso(patch, iso) => {
-                log::info!("PatchIso {:?} {:?}", patch, iso);
                 // TODO Send the data to the Worker
                 let worker = self.worker.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let save = match get_save().await {
-                        Ok(save) => save,
-                        Err(_) => return,
-                    };
-                    if save.is_null() {
-                        return;
-                    }
                     let obj = js_sys::Object::new();
                     if js_sys::Reflect::set(&obj, &"type".into(), &"run".into()).is_err() {
                         return;
@@ -68,17 +60,16 @@ impl Component for App {
                     if js_sys::Reflect::set(&obj, &"file".into(), &iso.file).is_err() {
                         return;
                     }
-                    if js_sys::Reflect::set(&obj, &"save".into(), &save).is_err() {
-                        return;
-                    }
-                    worker.post_message_with_transfer(&obj, &js_sys::Array::of1(&save)).expect("Message cannot be sent to worker");
+                    worker
+                        .post_message(&obj)
+                        .expect("Message cannot be sent to worker");
                 });
                 false
             }
             Message::PatchError => {
                 log::info!("PatchError");
                 true
-            },
+            }
             Message::PatchedIso => {
                 log::info!("PatchedIso");
                 true
@@ -87,17 +78,17 @@ impl Component for App {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        if hasShowSaveFilePicker().is_truthy() {
+        // if hasShowSaveFilePicker().is_truthy() {
             html! {
                 <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))}></MainForm>
             }
-        } else {
-            html! {
-                <>
-                {"Sorry, but your browser doesn't seem to be supported (does not support "}<pre>{" showSaveFilePicker "}</pre>{")."}
-                </>
-            }
-        }
+        // } else {
+        //     html! {
+        //         <>
+        //         {"Sorry, but your browser doesn't seem to be supported (does not support "}<pre>{" showSaveFilePicker "}</pre>{")."}
+        //         </>
+        //     }
+        // }
     }
 }
 

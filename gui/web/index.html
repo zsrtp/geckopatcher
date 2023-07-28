@@ -38,7 +38,7 @@
                 if (name !== undefined) {
                     suggestedName = name;
                 }
-                let file = (await window.showSaveFilePicker({suggestedName, types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}));
+                file = (await window.showSaveFilePicker({suggestedName, types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}));
             }
             catch (e) {
                 console.error(e);

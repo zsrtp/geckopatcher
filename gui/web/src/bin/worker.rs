@@ -1,6 +1,5 @@
-use std::io::SeekFrom;
-
-use async_std::io::prelude::{ReadExt, SeekExt};
+use async_std::io::prelude::ReadExt;
+use js_sys::Array;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
@@ -28,7 +27,7 @@ impl async_std::io::Read for WebFile {
             Ok(n) => std::task::Poll::Ready(Ok(n as usize)),
             Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                err.as_string().unwrap_or("<unk error>".to_string()),
+                format!("{err:?}"),
             ))),
         }
     }
@@ -45,7 +44,7 @@ impl async_std::io::Seek for WebFile {
             Err(err) => {
                 return std::task::Poll::Ready(Err(std::io::Error::new(
                     std::io::ErrorKind::Other,
-                    err.as_string().unwrap_or("<unk error>".into()),
+                    format!("{err:?}"),
                 )))
             }
         };
@@ -100,7 +99,7 @@ impl async_std::io::Write for WebFile {
             Ok(n) => std::task::Poll::Ready(Ok(n as usize)),
             Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                err.as_string().unwrap_or("<unk error>".to_string()),
+                format!("{err:?}"),
             ))),
         }
     }
@@ -111,7 +110,10 @@ impl async_std::io::Write for WebFile {
     ) -> std::task::Poll<std::io::Result<()>> {
         match self.handle.flush() {
             Ok(_) => std::task::Poll::Ready(Ok(())),
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, err.as_string().unwrap_or("<unk error>".into())))),
+            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{err:?}"),
+            ))),
         }
     }
 
@@ -129,21 +131,52 @@ pub async extern "C" fn run_patch(
     patch: &JsValue,
     file: &JsValue,
     save: &JsValue,
-) -> Result<(), JsValue> {
-    let patch: web_sys::File = patch.clone().dyn_into()?;
-    let file: web_sys::File = file.clone().dyn_into()?;
-    let save: web_sys::FileSystemFileHandle = save.clone().dyn_into()?;
+) -> Result<Array, JsValue> {
+    let patch_handle: web_sys::FileSystemFileHandle = patch.clone().dyn_into()?;
+    let patch_access: web_sys::FileSystemSyncAccessHandle =
+        wasm_bindgen_futures::JsFuture::from(patch_handle.create_sync_access_handle())
+            .await?
+            .dyn_into()?;
+    let file_handle: web_sys::FileSystemFileHandle = file.clone().dyn_into()?;
+    let file_access: web_sys::FileSystemSyncAccessHandle =
+        wasm_bindgen_futures::JsFuture::from(file_handle.create_sync_access_handle())
+            .await?
+            .dyn_into()?;
+    let save_handle: web_sys::FileSystemFileHandle = save.clone().dyn_into()?;
     log::info!("getting handle...");
-    let save: web_sys::FileSystemSyncAccessHandle = wasm_bindgen_futures::JsFuture::from(save.create_sync_access_handle()).await?.dyn_into()?;
-    let mut f = WebFile {handle: save.clone(), cursor: 0};
+    let save_access: web_sys::FileSystemSyncAccessHandle =
+        wasm_bindgen_futures::JsFuture::from(save_handle.create_sync_access_handle())
+            .await?
+            .dyn_into()?;
+    log::debug!("Patching game... {:?} {:?} {:?}", patch_access, file_access, save_access);
 
-    f.seek(SeekFrom::Start(0));
+    save_access.truncate_with_u32(0)?;
+    let mut f = WebFile {
+        handle: save_access.clone(),
+        cursor: 0,
+    };
     let mut buf = [0u8; 6];
     let _ = f.read_exact(&mut buf).await;
-    log::info!("{buf:?}");
+    log::info!("{buf:X?}");
 
-    log::debug!("Patching game... {:?} {:?} {:?}", patch, file, save);
-    Ok(())
+    let mut f2 = WebFile {
+        handle: file_access.clone(),
+        cursor: 0,
+    };
+    let _ = f2.read_exact(&mut buf).await;
+    log::info!("{buf:X?}");
+
+    // TODO Start the process...
+
+    let _ = patch_access.flush();
+    let _ = file_access.flush();
+    let _ = save_access.flush();
+
+    patch_access.close();
+    file_access.close();
+    save_access.close();
+
+    Ok(Array::of3(patch, file, save))
 }
 
 fn main() {
