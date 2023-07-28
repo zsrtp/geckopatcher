@@ -1,5 +1,6 @@
 [workspace]
-members = ["geckolib", "romhack", "gui/web", "gui/native"]
+members = ["geckolib", "romhack", "gui/native"]
+exclude = ["gui/web"]
 resolver = "2"
 
 [profile.release]

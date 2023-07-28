@@ -71,7 +71,7 @@ impl Component for App {
                     if js_sys::Reflect::set(&obj, &"save".into(), &save).is_err() {
                         return;
                     }
-                    worker.post_message(&obj).expect("Message cannot be sent to worker");
+                    worker.post_message_with_transfer(&obj, &js_sys::Array::of1(&save)).expect("Message cannot be sent to worker");
                 });
                 false
             }

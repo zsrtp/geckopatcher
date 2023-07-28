@@ -1,3 +1,5 @@
+use std::io::{Read, Seek};
+
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use rfd::FileHandle;
 
@@ -10,7 +12,13 @@ pub enum InFile {
 impl InFile {
     fn name(&self) -> String {
         match self {
-            InFile::Dropped(f) => f.name.clone(),
+            InFile::Dropped(f) => f
+                .path
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or("<no name>".to_string()),
             InFile::Path(f) => f.file_name(),
         }
     }
@@ -21,6 +29,7 @@ enum ToAppMsg {
     #[default]
     Echo,
     GetOpenFile,
+    GetPatchFile,
 }
 
 #[derive(Debug, Default)]
@@ -28,7 +37,9 @@ enum FromAppMsg {
     #[default]
     Echo,
     OpenedFile(FileHandle),
+    OpenedPatch(FileHandle),
     NoFileOpened,
+    NoPatchOpened,
 }
 
 struct MessageChannel {
@@ -45,9 +56,11 @@ enum OpenFileState {
 }
 
 pub struct PatcherApp {
+    patch_file: Option<InFile>,
     in_file: Option<InFile>,
     // Convention for wasm32 is port1 is gui's and port2 is background
     channels: MessageChannel,
+    picked_patch: OpenFileState,
     picked_file: OpenFileState,
 }
 
@@ -74,6 +87,30 @@ impl PatcherApp {
                                 );
                                 return;
                             }
+                        }
+                        ToAppMsg::GetPatchFile => {
+                            match rfd::AsyncFileDialog::new()
+                                .add_filter("application/zip", &["patch"])
+                                .pick_file()
+                                .await
+                            {
+                                Some(file) => {
+                                    log::debug!("Got a patch file from the user!");
+                                    if snd_app
+                                        .send_async(FromAppMsg::OpenedPatch(file))
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                None => {
+                                    if snd_app.send_async(FromAppMsg::NoPatchOpened).await.is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                            };
                         }
                         ToAppMsg::GetOpenFile => {
                             match rfd::AsyncFileDialog::new()
@@ -106,11 +143,13 @@ impl PatcherApp {
             }
         });
         Self {
+            patch_file: None,
             in_file: None,
             channels: MessageChannel {
                 sender: snd_ui,
                 receiver: rcv_ui,
             },
+            picked_patch: Default::default(),
             picked_file: Default::default(),
         }
     }
@@ -126,8 +165,10 @@ impl eframe::App for PatcherApp {
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let Self {
+            patch_file,
             in_file,
             channels,
+            picked_patch,
             picked_file,
         } = self;
 
@@ -150,32 +191,75 @@ impl eframe::App for PatcherApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("ISO Patching");
 
-            let file_button_text = {
-                if let Some(f) = in_file {
-                    f.name()
-                } else {
-                    "Open File...".into()
-                }
-            };
-            if ui
-                .add_enabled(
-                    *picked_file != OpenFileState::Opening,
-                    egui::Button::new(file_button_text),
-                )
-                .clicked()
-            {
-                match channels.sender.try_send(ToAppMsg::GetOpenFile) {
-                    Ok(_) => {
-                        *picked_file = OpenFileState::Opening;
+            ui.group(|ui| {
+                egui::Grid::new("files_grid").show(ui, |ui| {
+                    ui.label("Patch File:");
+                    let patch_button_text = {
+                        if let Some(f) = patch_file {
+                            f.name()
+                        } else {
+                            "Open Patch...".into()
+                        }
+                    };
+                    let patch_button = ui.add_enabled(
+                        *picked_patch != OpenFileState::Opening,
+                        egui::Button::new(patch_button_text),
+                    );
+                    if patch_button.clicked() {
+                        match channels.sender.try_send(ToAppMsg::GetPatchFile) {
+                            Ok(_) => {
+                                *picked_patch = OpenFileState::Opening;
+                            }
+                            Err(TrySendError::Full(_)) => {
+                                *picked_patch = OpenFileState::None;
+                            }
+                            Err(TrySendError::Disconnected(_)) => {
+                                _frame.close();
+                            }
+                        };
                     }
-                    Err(TrySendError::Full(_)) => {
-                        *picked_file = OpenFileState::None;
+                    ui.end_row();
+
+                    ui.label("ISO File:");
+                    let file_button_text = {
+                        if let Some(f) = in_file {
+                            f.name()
+                        } else {
+                            "Open File...".into()
+                        }
+                    };
+                    if ui
+                        .add_enabled(
+                            *picked_file != OpenFileState::Opening,
+                            egui::Button::new(file_button_text),
+                        )
+                        .clicked()
+                    {
+                        match channels.sender.try_send(ToAppMsg::GetOpenFile) {
+                            Ok(_) => {
+                                *picked_file = OpenFileState::Opening;
+                            }
+                            Err(TrySendError::Full(_)) => {
+                                *picked_file = OpenFileState::None;
+                            }
+                            Err(TrySendError::Disconnected(_)) => {
+                                _frame.close();
+                            }
+                        };
                     }
-                    Err(TrySendError::Disconnected(_)) => {
-                        _frame.close();
+                    ui.end_row();
+
+                    if ui
+                        .add_enabled(
+                            in_file.is_some() && patch_file.is_some(),
+                            egui::Button::new("Patch ISO"),
+                        )
+                        .clicked()
+                    {
+                        todo!("Open Save File and launch Patching");
                     }
-                };
-            }
+                });
+            });
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
@@ -208,32 +292,58 @@ impl eframe::App for PatcherApp {
             });
         });
 
-        if false {
-            egui::Window::new("Window").show(ctx, |ui| {
-                ui.label("Windows can be moved by dragging them.");
-                ui.label("They are automatically sized based on contents.");
-                ui.label("You can turn on resizing and scrolling if you like.");
-                ui.label("You would normally choose either panels OR windows.");
-            });
-        }
-
         match channels.receiver.try_recv() {
             Ok(FromAppMsg::Echo) => {
                 log::warn!("GUI got Echo");
             }
             Ok(FromAppMsg::NoFileOpened) => {
-                *picked_file = match *in_file {
-                    Some(_) => OpenFileState::Opened,
-                    None => OpenFileState::None,
-                };
                 *in_file = None;
+                *picked_file = OpenFileState::None;
             }
             Ok(FromAppMsg::OpenedFile(file)) => {
-                *picked_file = OpenFileState::Opened;
                 *in_file = Some(InFile::Path(file));
+                *picked_file = OpenFileState::Opened;
+            }
+            Ok(FromAppMsg::NoPatchOpened) => {
+                *patch_file = None;
+                *picked_patch = OpenFileState::None;
+            }
+            Ok(FromAppMsg::OpenedPatch(file)) => {
+                *patch_file = Some(InFile::Path(file));
+                *picked_patch = OpenFileState::Opened;
             }
             Err(TryRecvError::Disconnected) => _frame.close(),
             Err(TryRecvError::Empty) => {}
         };
+
+        let files = ctx.input_mut(|i| i.raw.take().dropped_files);
+        for f in files {
+            if let Some(path) = &f.path {
+                let path_ = path.clone();
+                let fd = std::fs::File::open(path);
+                match fd {
+                    Err(err) => {
+                        log::warn!("could not read file at \"{path_:?}\": {err}");
+                        break;
+                    }
+                    Ok(mut file) => {
+                        let mut buf = [0u8; 6];
+                        if file.read_exact(&mut buf).is_err() {
+                            break;
+                        }
+                        let _ = file.seek(std::io::SeekFrom::Start(0));
+                        if [
+                            b"RZDE01", b"RZDP01", b"RZDJ01", b"GZ2E01", b"GZ2P01", b"GZ2J01",
+                        ]
+                        .contains(&&buf)
+                        {
+                            *in_file = Some(InFile::Dropped(f));
+                        } else if buf[..4] == [b'P', b'K', 3, 4] {
+                            *patch_file = Some(InFile::Dropped(f));
+                        }
+                    }
+                };
+            }
+        }
     }
 }
