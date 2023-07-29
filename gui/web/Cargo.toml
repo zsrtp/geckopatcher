@@ -57,5 +57,5 @@ features = [
 ]
 
 [features]
-default = ["wee_alloc", "console_error_panic_hook", "generic_patch"]
+default = ["console_error_panic_hook", "generic_patch"] # wee_alloc
 generic_patch = []

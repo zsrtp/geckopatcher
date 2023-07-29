@@ -32,6 +32,7 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
             case "run": {
                 registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) => {
                     wasm_bindgen.run_patch(patch, file, save);
+                    console.info("Done");
                     // return deleteLocalStorage(patch, file, save);
                 }).then(() => postMessage({ type: "finished" }));
                 break;

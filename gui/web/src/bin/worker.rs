@@ -1,5 +1,12 @@
-use async_std::io::prelude::ReadExt;
-use js_sys::Array;
+use std::sync::Arc;
+
+use async_std::io::prelude::{ReadExt, SeekExt};
+use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
+use async_std::sync::Mutex;
+use geckolib::iso::disc::DiscType;
+use geckolib::iso::read::DiscReader;
+use geckolib::iso::write::DiscWriter;
+use geckolib::vfs::GeckoFS;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
@@ -126,12 +133,50 @@ impl async_std::io::Write for WebFile {
     }
 }
 
+async fn reproc<R: AsyncRead + AsyncSeek + 'static, W: AsyncRead + AsyncSeek + AsyncWrite>(
+    file: R,
+    save: W,
+) -> Result<(), eyre::Error> {
+    let f = Arc::new(Mutex::new(DiscReader::new(file).await?));
+    {
+        let mut guard = f.lock_arc().await;
+        guard.seek(std::io::SeekFrom::Start(0)).await?;
+        let mut buf = vec![0u8; 0x60];
+        guard.read(&mut buf).await?;
+        log::info!(
+            "[{}] Game Title: {:02X?}",
+            String::from_utf8_lossy(&buf[..6]),
+            String::from_utf8_lossy(&buf[0x20..0x60])
+                .split_terminator('\0')
+                .find(|s| !s.is_empty())
+                .expect("This game has no title")
+        );
+    }
+    let out = {
+        let guard = f.lock_arc().await;
+        DiscWriter::new(save, guard.get_disc_info()).await?
+    };
+
+    let mut out = std::pin::pin!(out);
+    let fs = GeckoFS::parse(f).await?;
+    {
+        let mut fs_guard = fs.lock_arc().await;
+        let is_wii = out.get_type() == DiscType::Wii;
+        fs_guard.serialize(&mut out, is_wii).await?;
+        if is_wii {
+            log::info!("Encrypting the ISO");
+        }
+        out.finalize().await?;
+    }
+    <eyre::Result<()>>::Ok(())
+}
+
 #[wasm_bindgen]
 pub async extern "C" fn run_patch(
     patch: &JsValue,
     file: &JsValue,
     save: &JsValue,
-) -> Result<Array, JsValue> {
+) -> Result<(), JsValue> {
     let patch_handle: web_sys::FileSystemFileHandle = patch.clone().dyn_into()?;
     let patch_access: web_sys::FileSystemSyncAccessHandle =
         wasm_bindgen_futures::JsFuture::from(patch_handle.create_sync_access_handle())
@@ -148,25 +193,26 @@ pub async extern "C" fn run_patch(
         wasm_bindgen_futures::JsFuture::from(save_handle.create_sync_access_handle())
             .await?
             .dyn_into()?;
-    log::debug!("Patching game... {:?} {:?} {:?}", patch_access, file_access, save_access);
+    log::debug!(
+        "Patching game... {:?} {:?} {:?}",
+        patch_access,
+        file_access,
+        save_access
+    );
 
-    save_access.truncate_with_u32(0)?;
-    let mut f = WebFile {
-        handle: save_access.clone(),
-        cursor: 0,
-    };
-    let mut buf = [0u8; 6];
-    let _ = f.read_exact(&mut buf).await;
-    log::info!("{buf:X?}");
-
-    let mut f2 = WebFile {
-        handle: file_access.clone(),
-        cursor: 0,
-    };
-    let _ = f2.read_exact(&mut buf).await;
-    log::info!("{buf:X?}");
-
-    // TODO Start the process...
+    if let Err(err) = reproc(
+            WebFile {
+                cursor: 0,
+                handle: file_access.clone(),
+            },
+            WebFile {
+                cursor: 0,
+                handle: save_access.clone(),
+            },
+        )
+        .await {
+        return Err(format!("{err:?}").into());
+    }
 
     let _ = patch_access.flush();
     let _ = file_access.flush();
@@ -176,7 +222,7 @@ pub async extern "C" fn run_patch(
     file_access.close();
     save_access.close();
 
-    Ok(Array::of3(patch, file, save))
+    Ok(())
 }
 
 fn main() {
