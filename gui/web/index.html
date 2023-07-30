@@ -129,15 +129,15 @@
         /* Loading animation from https://loading.io/css/ */
         .lds-dual-ring {
             display: inline-block;
-            width: 24px;
-            height: 24px;
+            width: 27px;
+            height: 27px;
         }
 
         .lds-dual-ring:after {
             content: " ";
             display: block;
-            width: 24px;
-            height: 24px;
+            width: 20px;
+            height: 20px;
             margin: 0px;
             border-radius: 50%;
             border: 3px solid #fff;
@@ -161,6 +161,16 @@
             grid-template-rows: 1fr 1fr 1fr 1fr;
             gap: 5px 5px;
             align-items: center;
+        }
+
+        progress:after {
+            content: attr(value)'%';
+        }
+
+        label[for="progress_bar"] {
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
     </style>
 </head>

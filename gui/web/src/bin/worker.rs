@@ -231,5 +231,6 @@ pub async extern "C" fn run_patch(
 fn main() {
     console_log::init_with_level(log::Level::Debug)
         .expect("could not initialize worker's console_log");
+    web_gui_patcher::progress::init_web_progress();
     log::debug!("Starting Worker Thread");
 }

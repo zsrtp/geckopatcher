@@ -1323,8 +1323,10 @@ dependencies = [
  "async-std",
  "byteorder",
  "cbc",
+ "event-listener",
  "eyre",
  "goblin",
+ "human_bytes",
  "image",
  "lazy_static",
  "log",
@@ -1726,6 +1728,12 @@ dependencies = [
  "fnv",
  "itoa",
 ]
+
+[[package]]
+name = "human_bytes"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27e2b089f28ad15597b48d8c0a8fe94eeb1c1cb26ca99b6f66ac9582ae10c5e6"
 
 [[package]]
 name = "idna"
@@ -3680,6 +3688,7 @@ dependencies = [
  "flume",
  "geckolib",
  "js-sys",
+ "lazy_static",
  "log",
  "rayon",
  "rfd",

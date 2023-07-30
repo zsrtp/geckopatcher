@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{rc::Rc, borrow::Borrow};
 
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
 #[cfg(not(feature = "generic_patch"))]
@@ -7,6 +7,8 @@ use web_sys::{File, HtmlInputElement, Worker, MessageEvent};
 #[cfg(not(feature = "generic_patch"))]
 use web_sys::{Response, Blob};
 use yew::prelude::*;
+
+pub mod progress;
 
 #[wasm_bindgen]
 extern "C" {
@@ -25,6 +27,8 @@ extern "C" {
 pub struct App {
     worker: Rc<Worker>,
     is_patching: Rc<bool>,
+    msg: Rc<Option<String>>,
+    progress: Rc<Option<f64>>,
 }
 
 #[derive(Debug)]
@@ -32,6 +36,7 @@ pub enum Message {
     PatchIso(Patch, Iso),
     PatchError,
     PatchedIso,
+    PatchProgress(Option<String>, Option<f64>),
 }
 
 impl Component for App {
@@ -43,14 +48,15 @@ impl Component for App {
         let worker = Rc::new(Worker::new("app_worker.js").expect("Could not create the worker"));
 
         let callback: Callback<Message> = ctx.link().callback(|msg| msg);
+        let progress_callback: Callback<Message> = ctx.link().callback(|msg| msg);
         let closure = Closure::wrap(Box::new(move |event: MessageEvent| {
-            web_sys::console::info_1(&event);
             let data = event.data();
             let type_ = match js_sys::Reflect::get(&data, &"type".into()) {
                 Ok(type_) => type_,
                 Err(err) => {web_sys::console::warn_1(&err); return;},
             };
             if type_.as_string().map_or(false, |s| &s == "done") {
+                web_sys::console::info_1(&event);
                 let is_wii = match js_sys::Reflect::get(&data, &"is_wii".into()) {
                     Ok(is_wii) => is_wii.as_bool().unwrap_or(false),
                     Err(err) => {web_sys::console::warn_1(&err); return;},
@@ -62,16 +68,27 @@ impl Component for App {
                     }
                 });
             }
+            if type_.as_string().map_or(false, |s| &s == "progress") {
+                let title = match js_sys::Reflect::get(&data, &"title".into()) {
+                    Ok(title) => title.as_string(),
+                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                };
+                let pos = match js_sys::Reflect::get(&data, &"progress".into()) {
+                    Ok(pos) => pos.as_f64(),
+                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                };
+                progress_callback.emit(Message::PatchProgress(title, pos));
+            }
         }) as Box<dyn FnMut(MessageEvent)>);
         worker.set_onmessage(Some(&closure.into_js_value().dyn_into().expect("Cannot convert Closure to Function")));
 
-        Self { worker, is_patching: Rc::new(false) }
+        Self { worker, is_patching: Rc::new(false), msg: Rc::new(None), progress: Rc::new(None) }
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
-        log::info!("{:?}", msg);
         match msg {
             Message::PatchIso(patch, iso) => {
+                log::info!("PatchIso({patch:?}, {iso:?})");
                 // TODO Send the data to the Worker
                 let worker = self.worker.clone();
                 if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
@@ -118,12 +135,22 @@ impl Component for App {
                 }
                 true
             }
+            Message::PatchProgress(msg, pos) => {
+                if let Some(msg_) = Rc::get_mut(&mut self.msg) {
+                    *msg_ = msg;
+                }
+                if let Some(progress) = Rc::get_mut(&mut self.progress) {
+                    *progress = pos;
+                }
+                true
+            }
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
+        let msg = <Rc<Option<String>> as Borrow<Option<String>>>::borrow(&self.msg).as_ref().map(|msg| msg.to_owned());
         html! {
-            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching}></MainForm>
+            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching} status={msg} progress={*self.progress}></MainForm>
         }
     }
 }
@@ -264,11 +291,14 @@ pub fn IsoInput(props: &IsoInputProps) -> Html {
 pub struct MainFormProps {
     patch_callback: Callback<(Patch, Iso)>,
     is_patching: bool,
+    status: Option<String>,
+    progress: Option<f64>,
 }
 
 #[function_component]
 pub fn MainForm(props: &MainFormProps) -> Html {
     let is_patching = props.is_patching;
+    let status = props.status.clone();
     let selected_patch = use_state(|| <Option<Patch>>::None);
     let selected_iso = use_state(|| <Option<Iso>>::None);
     let callback = {
@@ -301,13 +331,14 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             <PatchInput callback={patch_input_callback} disabled={is_patching} />
             <IsoInput callback={iso_change_callback} disabled={is_patching} />
             <label/><button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
-            <StatusBar msg={if is_patching {Some("Patching...")} else {None}}/>
+            <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
         </fieldset>
     }
 }
 
 #[derive(Debug, Properties, PartialEq)]
 pub struct StatusBarProps {
+    is_patching: bool,
     msg: Option<String>,
     progress: Option<f64>,
 }
@@ -316,16 +347,23 @@ pub struct StatusBarProps {
 fn StatusBar(props: &StatusBarProps) -> Html {
     let msg = props.msg.clone();
     let progress = props.progress;
+    let is_patching = props.is_patching;
     html! {
         <>
-            if msg.is_some() || progress.is_some() {
-                if let Some(msg) = msg {
-                    <label for="progress_bar">{msg}</label>
-                }
-                if let Some(progress) = progress {
-                    <progress id="progress_bar" max="100" value={format!("{progress}")}/>
+            if is_patching {
+                if msg.is_some() || progress.is_some() {
+                    if let Some(msg) = msg {
+                        <label for="progress_bar"><div class="lds-dual-ring"></div><pre>{msg}</pre></label>
+                    } else {
+                        <label for="progress_bar"><div class="lds-dual-ring"></div></label>
+                    }
+                    if let Some(progress) = progress {
+                        <progress id="progress_bar" max="100" value={format!("{progress}")}/>
+                    } else {
+                        <progress id="progress_bar" max="100"/>
+                    }
                 } else {
-                    <progress id="progress_bar" max="100"/>
+                    <div class="lds-dual-ring"></div>
                 }
             }
         </>
