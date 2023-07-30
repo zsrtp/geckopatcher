@@ -167,6 +167,7 @@ async fn reproc<R: AsyncRead + AsyncSeek + 'static, W: AsyncRead + AsyncSeek + A
             log::info!("Encrypting the ISO");
         }
         out.finalize().await?;
+        log::info!("ISO writing done");
     }
     <eyre::Result<()>>::Ok(())
 }
@@ -213,6 +214,8 @@ pub async extern "C" fn run_patch(
         .await {
         return Err(format!("{err:?}").into());
     }
+
+    log::info!("Reproc finished");
 
     let _ = patch_access.flush();
     let _ = file_access.flush();

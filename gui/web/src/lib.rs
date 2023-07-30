@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
-use wasm_bindgen::{prelude::wasm_bindgen, JsCast, JsValue};
-use web_sys::{File, HtmlInputElement, Worker};
+use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{File, HtmlInputElement, Worker, Response, Blob, MessageEvent};
 use yew::prelude::*;
 
 #[wasm_bindgen]
@@ -14,10 +15,13 @@ extern "C" {
     pub async fn get_iso() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = "getSave", catch)]
     pub async fn get_save() -> Result<JsValue, JsValue>;
+    #[wasm_bindgen(js_name = "downloadIso", catch)]
+    pub async fn download_iso(is_wii: bool) -> Result<(), JsValue>;
 }
 
 pub struct App {
     worker: Rc<Worker>,
+    is_patching: Rc<bool>,
 }
 
 #[derive(Debug)]
@@ -31,11 +35,34 @@ impl Component for App {
     type Message = Message;
     type Properties = ();
 
-    fn create(_ctx: &Context<Self>) -> Self {
+    fn create(ctx: &Context<Self>) -> Self {
         // TODO Create a worker and send it a MessageChannel
         let worker = Rc::new(Worker::new("app_worker.js").expect("Could not create the worker"));
 
-        Self { worker }
+        let callback: Callback<Message> = ctx.link().callback(|msg| msg);
+        let closure = Closure::wrap(Box::new(move |event: MessageEvent| {
+            web_sys::console::info_1(&event);
+            let data = event.data();
+            let type_ = match js_sys::Reflect::get(&data, &"type".into()) {
+                Ok(type_) => type_,
+                Err(err) => {web_sys::console::warn_1(&err); return;},
+            };
+            if type_.as_string().map_or(false, |s| &s == "done") {
+                let is_wii = match js_sys::Reflect::get(&data, &"is_wii".into()) {
+                    Ok(is_wii) => is_wii.as_bool().unwrap_or(false),
+                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                };
+                callback.emit(Message::PatchedIso);
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Err(err) = download_iso(is_wii).await {
+                        web_sys::console::warn_1(&err);
+                    }
+                });
+            }
+        }) as Box<dyn FnMut(MessageEvent)>);
+        worker.set_onmessage(Some(&closure.into_js_value().dyn_into().expect("Cannot convert Closure to Function")));
+
+        Self { worker, is_patching: Rc::new(false) }
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -44,14 +71,25 @@ impl Component for App {
             Message::PatchIso(patch, iso) => {
                 // TODO Send the data to the Worker
                 let worker = self.worker.clone();
+                if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
+                    *is_patching = true;
+                }
                 wasm_bindgen_futures::spawn_local(async move {
                     let obj = js_sys::Object::new();
                     if js_sys::Reflect::set(&obj, &"type".into(), &"run".into()).is_err() {
                         return;
                     }
                     #[cfg(not(feature = "generic_patch"))]
-                    if js_sys::Reflect::set(&obj, &"patch".into(), &patch.uri.into()).is_err() {
-                        return;
+                    {
+                        let resp = JsFuture::from(web_sys::window().unwrap().fetch_with_str(&patch.uri)).await;
+                        let resp: Response = match resp {
+                            Ok(resp) => resp.dyn_into().unwrap(),
+                            Err(err) => {web_sys::console::warn_1(&err);return;},
+                        };
+                        let blob: Blob = JsFuture::from(resp.blob().unwrap()).await.unwrap().dyn_into().unwrap();
+                        if js_sys::Reflect::set(&obj, &"patch".into(), &blob).is_err() {
+                            return;
+                        }
                     }
                     #[cfg(feature = "generic_patch")]
                     if js_sys::Reflect::set(&obj, &"patch".into(), &patch.file).is_err() {
@@ -64,7 +102,7 @@ impl Component for App {
                         .post_message(&obj)
                         .expect("Message cannot be sent to worker");
                 });
-                false
+                true
             }
             Message::PatchError => {
                 log::info!("PatchError");
@@ -72,23 +110,18 @@ impl Component for App {
             }
             Message::PatchedIso => {
                 log::info!("PatchedIso");
+                if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
+                    *is_patching = false;
+                }
                 true
             }
         }
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        // if hasShowSaveFilePicker().is_truthy() {
-            html! {
-                <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))}></MainForm>
-            }
-        // } else {
-        //     html! {
-        //         <>
-        //         {"Sorry, but your browser doesn't seem to be supported (does not support "}<pre>{" showSaveFilePicker "}</pre>{")."}
-        //         </>
-        //     }
-        // }
+        html! {
+            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching}></MainForm>
+        }
     }
 }
 
@@ -109,6 +142,7 @@ pub struct Patch {
 #[derive(Properties, PartialEq)]
 pub struct PatchInputProps {
     pub callback: Callback<Option<Patch>>,
+    pub disabled: Option<bool>,
 }
 
 #[cfg(feature = "generic_patch")]
@@ -127,7 +161,7 @@ pub fn PatchInput(props: &PatchInputProps) -> Html {
         })
     };
     html! {
-        <><label for="patch">{"Patch File: "}</label><input type="file" id="patch" onchange={onchange}/></>
+        <><label for="patch">{"Patch File: "}</label><input type="file" accept=".patch" id="patch" disabled={props.disabled.unwrap_or(false)} onchange={onchange}/></>
     }
 }
 
@@ -139,12 +173,12 @@ pub fn PatchInput(props: &PatchInputProps) -> Html {
     let patches: Vec<Patch> = vec![
         Patch {
             name: "GC NTSCU".into(),
-            uri: "...".into(),
+            uri: "patches/0.5.0-gcn-ntscu.patch".into(),
             version: "gcn_ntscu".into(),
         },
         Patch {
             name: "Wii NTSCU 1.0".into(),
-            uri: "...".into(),
+            uri: "patches/0.5.0-wii-ntscu-10.patch".into(),
             version: "wii_ntscu_10".into(),
         },
     ];
@@ -182,7 +216,7 @@ pub fn PatchInput(props: &PatchInputProps) -> Html {
     html! {
         <>
             <label for="patch">{"Patch to Apply: "}</label>
-            <select id="patch" onchange={onchange}>
+            <select id="patch" disabled={props.disabled.unwrap_or(false)} onchange={onchange}>
                 <option disabled={true} selected={true} value={""}>{"Select Patch"}</option>
                 {patch_html}
             </select>
@@ -198,6 +232,7 @@ pub struct Iso {
 #[derive(Properties, PartialEq)]
 pub struct IsoInputProps {
     pub callback: Callback<Option<Iso>, ()>,
+    disabled: Option<bool>,
 }
 
 #[function_component]
@@ -217,7 +252,7 @@ pub fn IsoInput(props: &IsoInputProps) -> Html {
     html! {
         <>
             <label for="iso_in">{"ISO to patch: "}</label>
-            <input id="iso_in" accept=".iso" type="file" onchange={onchange}/>
+            <input id="iso_in" accept=".iso" type="file" disabled={props.disabled.unwrap_or(false)} onchange={onchange}/>
         </>
     }
 }
@@ -225,21 +260,20 @@ pub fn IsoInput(props: &IsoInputProps) -> Html {
 #[derive(Debug, Properties, PartialEq)]
 pub struct MainFormProps {
     patch_callback: Callback<(Patch, Iso)>,
+    is_patching: bool,
 }
 
 #[function_component]
 pub fn MainForm(props: &MainFormProps) -> Html {
-    let is_patching = use_state(|| false);
+    let is_patching = props.is_patching;
     let selected_patch = use_state(|| <Option<Patch>>::None);
     let selected_iso = use_state(|| <Option<Iso>>::None);
     let callback = {
-        let is_patching = is_patching.clone();
         let selected_iso = selected_iso.clone();
         let selected_patch = selected_patch.clone();
         let patch_callback = props.patch_callback.clone();
         Callback::from(move |_| {
             log::info!("Clicked the patch button");
-            is_patching.set(true);
             patch_callback.emit((
                 selected_patch.as_ref().expect("No Patch selected").clone(),
                 selected_iso.as_ref().expect("No ISO selected").clone(),
@@ -252,12 +286,6 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             selected_patch.set(patch);
         })
     };
-    let reset_callback = {
-        let is_patching = is_patching.clone();
-        Callback::from(move |_| {
-            is_patching.set(false);
-        })
-    };
     let iso_change_callback = {
         let selected_iso = selected_iso.clone();
         Callback::from(move |iso| {
@@ -267,10 +295,36 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     html! {
         <fieldset id="main_form">
             <legend>{"ISO Patcher"}</legend>
-            <PatchInput callback={patch_input_callback} />
-            <IsoInput callback={iso_change_callback}/>
-            <label/><button disabled={*is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
-            <label></label><button onclick={reset_callback}>{"Reset"}</button>
+            <PatchInput callback={patch_input_callback} disabled={is_patching} />
+            <IsoInput callback={iso_change_callback} disabled={is_patching} />
+            <label/><button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
+            <StatusBar msg={if is_patching {Some("Patching...")} else {None}}/>
         </fieldset>
+    }
+}
+
+#[derive(Debug, Properties, PartialEq)]
+pub struct StatusBarProps {
+    msg: Option<String>,
+    progress: Option<f64>,
+}
+
+#[function_component]
+fn StatusBar(props: &StatusBarProps) -> Html {
+    let msg = props.msg.clone();
+    let progress = props.progress;
+    html! {
+        <>
+            if msg.is_some() || progress.is_some() {
+                if let Some(msg) = msg {
+                    <label for="progress_bar">{msg}</label>
+                }
+                if let Some(progress) = progress {
+                    <progress id="progress_bar" max="100" value={format!("{progress}")}/>
+                } else {
+                    <progress id="progress_bar" max="100"/>
+                }
+            }
+        </>
     }
 }

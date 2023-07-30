@@ -342,7 +342,7 @@ where
 
     fn poll_close_disc(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.project();
-        let mut part = &mut this.disc.partitions.partitions[this.disc.partitions.data_idx];
+        let part = &mut this.disc.partitions.partitions[this.disc.partitions.data_idx];
         let finalize_state = std::mem::take(this.finalize_state);
         #[cfg(feature = "progress")]
         {
