@@ -8,11 +8,14 @@ use async_std::{
 };
 use geckolib::iso::read::DiscReader;
 use geckolib::vfs::GeckoFS;
+use romhack::progress::init_cli_progress;
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
     #[cfg(feature = "log")]
     env_logger::init();
+    #[cfg(feature = "progress")]
+    init_cli_progress();
 
     task::block_on(async {
         let f = BufReader::with_capacity(

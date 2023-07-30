@@ -6,6 +6,8 @@ mod progress;
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
+    #[cfg(feature = "progress")]
+    progress::init_cli_progress();
     #[cfg(feature = "log")]
     {
         let mut logger = env_logger::Builder::from_default_env();

@@ -20,6 +20,7 @@ futures = "^0.3"
 toml = "^0.7"
 indicatif = "^0.17"
 num = "^0.4"
+lazy_static = "^1.4"
 
 [build-dependencies]
 

@@ -1,45 +1,72 @@
-use num::Unsigned;
-
-/// A trait implemented for 
-pub trait Update {
-    #[doc = "test"]
-    type Error: std::error::Error;
-
-    fn init(&self) -> Result<(), Self::Error>;
-    fn prepare(&self) -> Result<(), Self::Error>;
-    fn increment(&self, n: impl Unsigned) -> Result<(), Self::Error>;
-    fn tick(&self);
-    fn finish(&self) -> Result<(), Self::Error>;
-    fn reset(&self) -> Result<(), Self::Error>;
-
-    fn set_message(&self, message: impl Into<String>) -> Result<(), Self::Error>;
-    fn set_title(&self, title: impl Into<String>) -> Result<(), Self::Error>;
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Default)]
+pub enum UpdaterType {
+    #[default]
+    Spinner,
+    Progress,
 }
 
-pub trait UpdateMut: Update {
-    fn init(&mut self) -> Result<(), <Self as Update>::Error> {
-        <Self as Update>::init(self)
+pub type InitCallback<E, U> = fn(Option<U>) -> Result<(), E>;
+pub type DefaultCallback<E> = fn() -> Result<(), E>;
+pub type StringCallback<E> = fn(String) -> Result<(), E>;
+pub type TypeCallback<E> = fn(UpdaterType) -> Result<(), E>;
+pub type IncCallback<E, U> = fn(U) -> Result<(), E>;
+
+#[derive(Debug)]
+pub struct Updater<E, U: num::Unsigned = usize> {
+    pub(crate) init_cb: Option<InitCallback<E, U>>,
+    pub(crate) prepare_cb: Option<DefaultCallback<E>>,
+    pub(crate) inc_cb: Option<IncCallback<E, U>>,
+    pub(crate) tick_cb: Option<fn()>,
+    pub(crate) finish_cb: Option<DefaultCallback<E>>,
+    pub(crate) reset_cb: Option<DefaultCallback<E>>,
+
+    pub(crate) on_msg_cb: Option<StringCallback<E>>,
+    pub(crate) on_type_cb: Option<TypeCallback<E>>,
+    pub(crate) on_title_cb: Option<StringCallback<E>>,
+}
+
+impl<E, U: num::Unsigned> Default for Updater<E, U> {
+    fn default() -> Self {
+        Self { init_cb: Default::default(), prepare_cb: Default::default(), inc_cb: Default::default(), tick_cb: Default::default(), finish_cb: Default::default(), reset_cb: Default::default(), on_msg_cb: Default::default(), on_type_cb: Default::default(), on_title_cb: Default::default() }
     }
-    fn prepare(&mut self) -> Result<(), Self::Error> {
-        <Self as Update>::prepare(self)
+}
+
+impl<E, U: num::Unsigned> Updater<E, U> {
+    pub fn init(&mut self, init_cb: Option<InitCallback<E, U>>) -> &mut Self {
+        self.init_cb = init_cb;
+        self
     }
-    fn increment(&mut self, n: impl Unsigned) -> Result<(), Self::Error> {
-        <Self as Update>::increment(self, n)
+    pub fn prepare(&mut self, prepare_cb: Option<DefaultCallback<E>>) -> &mut Self {
+        self.prepare_cb = prepare_cb;
+        self
     }
-    fn tick(&self) {
-        <Self as Update>::tick(self)
+    pub fn increment(&mut self, inc_cb: Option<fn(U) -> Result<(), E>>) -> &mut Self {
+        self.inc_cb = inc_cb;
+        self
     }
-    fn finish(&mut self) -> Result<(), Self::Error> {
-        <Self as Update>::finish(self)
+    pub fn tick(&mut self, tick_cb: Option<fn()>) -> &mut Self {
+        self.tick_cb = tick_cb;
+        self
     }
-    fn reset(&mut self) -> Result<(), Self::Error> {
-        <Self as Update>::reset(self)
+    pub fn finish(&mut self, finish_cb: Option<DefaultCallback<E>>) -> &mut Self {
+        self.finish_cb = finish_cb;
+        self
+    }
+    pub fn reset(&mut self, reset_cb: Option<DefaultCallback<E>>) -> &mut Self {
+        self.reset_cb = reset_cb;
+        self
     }
 
-    fn set_message(&self, message: impl Into<String>) -> Result<(), Self::Error> {
-        <Self as Update>::set_message(self, message)
+    pub fn set_message(&mut self, on_msg_cb: Option<fn(String) -> Result<(), E>>) -> &mut Self {
+        self.on_msg_cb = on_msg_cb;
+        self
     }
-    fn set_title(&self, title: impl Into<String>) -> Result<(), Self::Error> {
-        <Self as Update>::set_title(self, title)
+    pub fn set_type(&mut self, on_type_cb: Option<fn(UpdaterType) -> Result<(), E>>) -> &mut Self {
+        self.on_type_cb = on_type_cb;
+        self
+    }
+    pub fn set_title(&mut self, on_title_cb: Option<fn(String) -> Result<(), E>>) -> &mut Self {
+        self.on_title_cb = on_title_cb;
+        self
     }
 }

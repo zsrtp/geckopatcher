@@ -1323,10 +1323,11 @@ dependencies = [
  "async-std",
  "byteorder",
  "cbc",
+ "event-listener",
  "eyre",
  "goblin",
+ "human_bytes",
  "image",
- "indicatif",
  "lazy_static",
  "log",
  "num",
@@ -1562,6 +1563,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "human_bytes"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27e2b089f28ad15597b48d8c0a8fe94eeb1c1cb26ca99b6f66ac9582ae10c5e6"
+
+[[package]]
 name = "humantime"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1622,7 +1629,6 @@ dependencies = [
  "instant",
  "number_prefix",
  "portable-atomic",
- "rayon",
  "unicode-width",
 ]
 
@@ -2532,6 +2538,7 @@ dependencies = [
  "futures",
  "geckolib",
  "indicatif",
+ "lazy_static",
  "log",
  "num",
  "toml",

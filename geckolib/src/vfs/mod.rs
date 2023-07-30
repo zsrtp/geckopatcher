@@ -9,9 +9,9 @@ use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 #[cfg(feature = "progress")]
-use indicatif::{ProgressBar, ProgressStyle, HumanBytes};
+use human_bytes::human_bytes;
 #[cfg(feature = "progress")]
-use std::time::Duration;
+use crate::UPDATER;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
 use std::task::{Context, Poll};
@@ -494,19 +494,24 @@ where
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
-        let bar = ProgressBar::new(write_total_size).with_message("Writing virtual FileSystem");
-        #[cfg(feature = "progress")]
-        {
-            let style = ProgressStyle::with_template("{spinner:.bold.dim} {msg} {wide_bar} {percent}%")?;
-            bar.enable_steady_tick(Duration::from_millis(200));
-            bar.println("Writing virtual FileSystem");
-            bar.set_style(style);
+        if let Ok(updater) = UPDATER.lock() {
+            if let Some(on_type_cb) = updater.on_type_cb {
+                on_type_cb(crate::update::UpdaterType::Progress)?;
+            }
+            if let Some(init_cb) = updater.init_cb {
+                init_cb(Some(write_total_size as usize))?;
+            }
+            if let Some(on_title_cb) = updater.on_title_cb {
+                on_title_cb("Writing virtual FileSystem".to_string())?;
+            }
         }
         let mut offset = writer.seek(SeekFrom::Current(0)).await? as usize;
         for file in self.root.iter_recurse_mut() {
             #[cfg(feature = "progress")]
-            {
-                bar.set_message(format!("{:<32.32} ({:<3.1})", file.name(), HumanBytes(file.len() as u64)));
+            if let Ok(updater) = UPDATER.lock() {
+                if let Some(on_msg_cb) = updater.on_msg_cb {
+                    on_msg_cb(format!("{:<32.32} ({:<})", file.name(), human_bytes(file.len() as f64)))?;
+                }
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
@@ -515,13 +520,17 @@ where
             writer.write_all(&buf).await?;
             offset += file.len();
             #[cfg(feature = "progress")]
-            {
-                bar.inc(file.len() as u64);
+            if let Ok(updater) = UPDATER.lock() {
+                if let Some(inc_cb) = updater.inc_cb {
+                    inc_cb(file.len())?;
+                }
             }
         }
         #[cfg(feature = "progress")]
-        {
-            bar.finish_and_clear();
+        if let Ok(updater) = UPDATER.lock() {
+            if let Some(finish_cb) = updater.finish_cb {
+                finish_cb()?;
+            }
         }
 
         Ok(())

@@ -11,14 +11,13 @@ extern crate cbc;
 extern crate eyre;
 extern crate serde;
 extern crate sha1_smol;
-#[cfg(all(feature = "progress"))]
-extern crate indicatif;
 
 pub mod config;
 pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
 pub mod vfs;
+#[cfg(feature = "progress")]
 pub mod update;
 
 use config::Config;
@@ -34,6 +33,11 @@ use std::path::PathBuf;
 use std::{fs::File, io::BufWriter};
 #[cfg(not(feature = "web"))]
 use zip::{write::FileOptions, ZipWriter};
+
+#[cfg(feature = "progress")]
+lazy_static! {
+    pub static ref UPDATER: std::sync::Arc<std::sync::Mutex<update::Updater<eyre::Report, usize>>> = std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
+}
 
 pub enum IsoBuilder {
     Raw { config: Config },

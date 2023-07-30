@@ -6,12 +6,15 @@ use geckolib::{
     iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
 };
+use romhack::progress;
 
 // Reprocesses a given iso (load iso in to a FileSystem, then save it back into an other iso)
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
     #[cfg(feature = "log")]
     env_logger::init();
+    #[cfg(feature = "progress")]
+    progress::init_cli_progress();
 
     async_std::task::block_on(async {
         let f = BufReader::with_capacity(

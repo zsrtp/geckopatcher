@@ -1,11 +1,11 @@
+#[cfg(feature = "progress")]
+use crate::UPDATER;
 use async_std::{
     io::{self, prelude::*, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite},
     task::ready,
 };
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
-#[cfg(feature = "progress")]
-use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use pin_project::pin_project;
 #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
 use rayon::{prelude::ParallelIterator, slice::ParallelSliceMut};
@@ -131,8 +131,6 @@ pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
     finalize_state: WiiDiscWriterFinalizeState,
     #[pin]
     writer: W,
-    #[cfg(feature = "progress")]
-    bar: ProgressBar,
 }
 
 fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
@@ -251,8 +249,6 @@ where
             finalize_state: WiiDiscWriterFinalizeState::default(),
             hashes: Vec::new(),
             writer,
-            #[cfg(feature = "progress")]
-            bar: ProgressBar::hidden(),
         };
 
         // Write ISO header
@@ -345,9 +341,9 @@ where
         let part = &mut this.disc.partitions.partitions[this.disc.partitions.data_idx];
         let finalize_state = std::mem::take(this.finalize_state);
         #[cfg(feature = "progress")]
-        {
-            if !this.bar.is_hidden() {
-                this.bar.tick();
+        if let Ok(updater) = UPDATER.lock() {
+            if let Some(tick_cb) = updater.tick_cb {
+                tick_cb();
             }
         }
         match finalize_state {
@@ -365,18 +361,19 @@ where
                 };
                 let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
                 #[cfg(feature = "progress")]
-                {
-                    this.bar.reset();
-                    this.bar.set_draw_target(ProgressDrawTarget::stderr());
-                    this.bar.set_length(n_group * 2);
-                    this.bar.set_style(
-                        ProgressStyle::with_template(
-                            "{prefix:.bold.dim} {msg} {wide_bar} {percent}% {pos}/{len:6}",
-                        )
-                        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
-                    );
-                    this.bar.set_prefix("[1/2]");
-                    this.bar.set_message("Building hash table");
+                if let Ok(updater) = UPDATER.lock() {
+                    if let Some(on_type_cb) = updater.on_type_cb {
+                        let _ = on_type_cb(crate::update::UpdaterType::Progress);
+                    }
+                    if let Some(init_cb) = updater.init_cb {
+                        let _ = init_cb(Some(n_group as usize));
+                    }
+                    if let Some(on_title_cb) = updater.on_title_cb {
+                        let _ = on_title_cb("Building hash table".to_string());
+                    }
+                    if let Some(on_msg_cb) = updater.on_msg_cb {
+                        let _ = on_msg_cb("Building hash table".to_string());
+                    }
                 }
                 this.hashes.clear();
                 this.hashes
@@ -531,15 +528,19 @@ where
                             vec![0u8; consts::WII_SECTOR_SIZE * 64],
                         );
                         #[cfg(feature = "progress")]
-                        {
-                            this.bar.inc(1);
+                        if let Ok(updater) = UPDATER.lock() {
+                            if let Some(inc_cb) = updater.inc_cb {
+                                let _ = inc_cb(1);
+                            }
                         }
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     } else if part_key.is_some() {
                         #[cfg(feature = "progress")]
-                        {
-                            this.bar.finish_and_clear();
+                        if let Ok(updater) = UPDATER.lock() {
+                            if let Some(finish_cb) = updater.finish_cb {
+                                let _ = finish_cb();
+                            }
                         }
                         *this.finalize_state = WiiDiscWriterFinalizeState::Done;
                         Poll::Ready(Ok(()))
@@ -597,9 +598,16 @@ where
                                 )
                             } else {
                                 #[cfg(feature = "progress")]
-                                {
-                                    this.bar.set_prefix("[2/2]");
-                                    this.bar.set_message("Encrypting partition");
+                                if let Ok(updater) = UPDATER.lock() {
+                                    if let Some(on_title_cb) = updater.on_title_cb {
+                                        let _ = on_title_cb("Encrypting partition".to_string());
+                                    }
+                                    if let Some(init_cb) = updater.init_cb {
+                                        let _ = init_cb(None);
+                                    }
+                                    if let Some(on_msg_cb) = updater.on_msg_cb {
+                                        let _ = on_msg_cb("Encrypting partition".to_string());
+                                    }
                                 }
                                 WiiDiscWriterFinalizeState::SeekToStart(Some(part_key))
                             };
@@ -657,8 +665,6 @@ where
             finalize_state: self.finalize_state.clone(),
             hashes: self.hashes.clone(),
             writer: self.writer.clone(),
-            #[cfg(feature = "progress")]
-            bar: ProgressBar::hidden(),
         }
     }
 }
