@@ -1,8 +1,11 @@
 use std::rc::Rc;
 
 use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
+#[cfg(not(feature = "generic_patch"))]
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{File, HtmlInputElement, Worker, Response, Blob, MessageEvent};
+use web_sys::{File, HtmlInputElement, Worker, MessageEvent};
+#[cfg(not(feature = "generic_patch"))]
+use web_sys::{Response, Blob};
 use yew::prelude::*;
 
 #[wasm_bindgen]
