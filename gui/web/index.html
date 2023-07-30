@@ -100,7 +100,7 @@
         body {
             /* Light mode background color for what is not covered by the egui canvas,
             or where the egui canvas is translucent. */
-            background: #c0c0c0;
+            background: #fff;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -163,14 +163,23 @@
             align-items: center;
         }
 
-        progress:after {
-            content: attr(value)'%';
+        .spinner {
+            display: flex;
+            justify-content: center;
+            overflow-y: hidden;
+            align-content: center;
+
         }
 
-        label[for="progress_bar"] {
-            display: flex;
-            align-items: center;
+        progress {
+            height: 1.5em;
+            width: 100%;
+        }
+
+        .progress-container {
+            display: inline-flex;
             justify-content: center;
+            align-items: center;
         }
     </style>
 </head>
