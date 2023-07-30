@@ -83,6 +83,7 @@ fn tick_cb() {
 fn finish_cb() -> color_eyre::Result<()> {
     match BAR.lock() {
         Ok(progress) => {
+            progress.bar.set_message("".to_string());
             progress.bar.finish_and_clear();
             Ok(())
         }
@@ -104,7 +105,7 @@ fn reset_cb() -> color_eyre::Result<()> {
 fn on_msg_cb(message: String) -> color_eyre::Result<()> {
     match BAR.lock() {
         Ok(progress) => {
-            progress.bar.set_message(message.to_string());
+            progress.bar.set_message(message);
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),

@@ -362,6 +362,9 @@ where
                 let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
                 #[cfg(feature = "progress")]
                 if let Ok(updater) = UPDATER.lock() {
+                    if let Some(finish_cb) = updater.finish_cb {
+                        let _ = finish_cb();
+                    }
                     if let Some(on_type_cb) = updater.on_type_cb {
                         let _ = on_type_cb(crate::update::UpdaterType::Progress);
                     }
