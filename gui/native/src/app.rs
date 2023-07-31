@@ -100,6 +100,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
     let save = fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .create(true)
         .truncate(true)
         .open(save_path)
         .await
