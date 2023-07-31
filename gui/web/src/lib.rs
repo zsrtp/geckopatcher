@@ -364,7 +364,7 @@ fn StatusBar(props: &StatusBarProps) -> Html {
                     }
                     <span class="progress-container">
                     if let Some(progress) = progress {
-                        <progress id="progress_bar" max="100" value={format!("{progress:<3.1}")}></progress>{format!("{progress:<3.1}%")}
+                        <progress id="progress_bar" max="100" value={format!("{progress}")}></progress>{format!("{progress:<3.1}%")}
                     } else {
                         <progress id="progress_bar" max="100"/>
                     }
