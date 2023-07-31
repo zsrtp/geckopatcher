@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 mod app;
+pub mod progress;
 pub use app::PatcherApp;
 
 const ICON: &[u8; 0x47D11] = include_bytes!("../assets/icon.png");
