@@ -133,12 +133,14 @@ pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
     writer: W,
 }
 
+#[cfg(feature="parallel")]
 fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl ParallelIterator<Item = &mut [u8]> {
-    #[cfg(feature = "parallel")]
-    let data_pool = data.par_chunks_exact_mut(chunk_size);
-    #[cfg(not(feature = "parallel"))]
-    let data_pool = data.chunks_exact_mut(chunk_size);
-    data_pool
+    data.par_chunks_exact_mut(chunk_size)
+}
+
+#[cfg(not(feature="parallel"))]
+fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl Iterator<Item = &mut [u8]> {
+    data.chunks_exact_mut(chunk_size)
 }
 
 fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
