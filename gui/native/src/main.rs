@@ -4,6 +4,7 @@
 mod app;
 pub mod progress;
 pub use app::PatcherApp;
+use egui::Vec2;
 
 const ICON: &[u8; 0x47D11] = include_bytes!("../assets/icon.png");
 
@@ -16,7 +17,7 @@ pub(crate) fn load_icon() -> eframe::IconData {
         let rgba = image.into_raw();
         (rgba, width, height)
     };
-    
+
     eframe::IconData {
         rgba: icon_rgba,
         width: icon_width,
@@ -32,10 +33,14 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         icon_data: Some(load_icon()),
         drag_and_drop_support: true,
+        centered: true,
+        follow_system_theme: true,
+        initial_window_size: Some(Vec2::new(300., 200.)),
+        min_window_size: Some(Vec2::new(280., 220.)),
         ..Default::default()
     };
     eframe::run_native(
-        "Web Romhack Patcher",
+        "Romhack Patcher",
         native_options,
         Box::new(|cc| Box::new(app::PatcherApp::new(cc))),
     )

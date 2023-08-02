@@ -6,7 +6,7 @@ use async_std::task::ready;
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 use pin_project::pin_project;
-#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::SeekFrom;
 use std::pin::Pin;
@@ -113,18 +113,19 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
         ret_vec.push(part);
     }
     crate::debug!("{:} partitions found", ret_vec.len());
+    ret_vec.iter().enumerate().for_each(|(i, p)| crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset));
     if !ret_vec.is_empty() {
         if let Some(data_idx) = data_idx {
             crate::trace!(
-                "(cert_offset: {:08X})",
+                "(cert_offset: {:#08X})",
                 ret_vec[data_idx].header.cert_offset
             );
             crate::trace!(
-                "(data_offset: {:08X})",
+                "(data_offset: {:#08X})",
                 ret_vec[data_idx].header.data_offset
             );
             crate::trace!(
-                "(data_size: {:08X}; decrypted size: {:08X})",
+                "(data_size: {:#08X}; decrypted size: {:#08X})",
                 ret_vec[data_idx].header.data_size,
                 to_decrypted_addr(ret_vec[data_idx].header.data_size)
             );
@@ -291,10 +292,10 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                 crate::trace!("Reading successful");
                 let part_key = decrypt_title_key(&part.header.ticket);
                 crate::trace!("Partition key: {:?}", part_key);
-                #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+                #[cfg(feature = "parallel")]
                 let mut data_pool: Vec<&mut [u8]> =
                     buf2.par_chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
-                #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
+                #[cfg(not(feature = "parallel"))]
                 let mut data_pool: Vec<&mut [u8]> =
                     buf2.chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
                 crate::trace!("data_pool size: {}", data_pool.len());
@@ -319,9 +320,9 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
                     crate::trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
                 };
                 crate::trace!("Decrypting blocks");
-                #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+                #[cfg(feature = "parallel")]
                 data_pool.par_iter_mut().for_each(decrypt_process);
-                #[cfg(any(target_arch = "wasm32", not(feature = "parallel")))]
+                #[cfg(not(feature = "parallel"))]
                 data_pool.iter_mut().for_each(decrypt_process);
                 crate::trace!("Decryption done");
                 for (i, block) in data_pool.iter().enumerate() {

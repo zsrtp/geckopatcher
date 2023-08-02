@@ -241,11 +241,17 @@ impl PatcherApp {
                                                 .await
                                                 .is_err()
                                             {
-                                                log::error!("could not send NoSaveOpened (error in reproc)");
+                                                log::error!(
+                                                    "could not send NoSaveOpened (error in reproc)"
+                                                );
                                                 return;
                                             }
                                         }
-                                        if snd_app.send_async(FromAppMsg::Progress(None, None)).await.is_err() {
+                                        if snd_app
+                                            .send_async(FromAppMsg::Progress(None, None))
+                                            .await
+                                            .is_err()
+                                        {
                                             log::trace!("could not send Progress");
                                         }
                                         log::info!("reproc done");
@@ -331,87 +337,106 @@ impl eframe::App for PatcherApp {
             });
         });
 
+        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+            if status.is_some() || progress.is_some() {
+                ui.horizontal(|ui| {
+                    if let Some(status) = status {
+                        ui.label(status.clone());
+                    }
+                    if let Some(progress) = progress {
+                        ui.add(
+                            egui::ProgressBar::new(*progress)
+                                .text("Loading...")
+                                .show_percentage()
+                                .animate(true),
+                        );
+                    }
+                });
+            }
+        });
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("ISO Patching");
-
-            ui.group(|ui| {
-                egui::Grid::new("files_grid").show(ui, |ui| {
-                    ui.label("Patch File:");
-                    let patch_button_text = {
-                        if let Some(f) = patch_file {
-                            f.name()
-                        } else {
-                            "Open Patch...".into()
+            ui.vertical_centered_justified(|ui| {
+                ui.group(|ui| {
+                    ui.heading("ISO Patching");
+                    egui::Grid::new("files_grid").show(ui, |ui| {
+                        ui.label("Patch File:");
+                        let patch_button_text = {
+                            if let Some(f) = patch_file {
+                                f.name()
+                            } else {
+                                "Open Patch...".into()
+                            }
+                        };
+                        let patch_button = ui.add_enabled(
+                            *picked_patch != OpenFileState::Opening && !*is_patching,
+                            egui::Button::new(patch_button_text),
+                        );
+                        if patch_button.clicked() {
+                            match channels.sender.try_send(ToAppMsg::GetPatchFile) {
+                                Ok(_) => {
+                                    *picked_patch = OpenFileState::Opening;
+                                }
+                                Err(TrySendError::Full(_)) => {
+                                    *picked_patch = OpenFileState::None;
+                                }
+                                Err(TrySendError::Disconnected(_)) => {
+                                    _frame.close();
+                                }
+                            };
                         }
-                    };
-                    let patch_button = ui.add_enabled(
-                        *picked_patch != OpenFileState::Opening && !*is_patching,
-                        egui::Button::new(patch_button_text),
-                    );
-                    if patch_button.clicked() {
-                        match channels.sender.try_send(ToAppMsg::GetPatchFile) {
-                            Ok(_) => {
-                                *picked_patch = OpenFileState::Opening;
-                            }
-                            Err(TrySendError::Full(_)) => {
-                                *picked_patch = OpenFileState::None;
-                            }
-                            Err(TrySendError::Disconnected(_)) => {
-                                _frame.close();
+                        ui.end_row();
+
+                        ui.label("ISO File:");
+                        let file_button_text = {
+                            if let Some(f) = in_file {
+                                f.name()
+                            } else {
+                                "Open File...".into()
                             }
                         };
-                    }
-                    ui.end_row();
-
-                    ui.label("ISO File:");
-                    let file_button_text = {
-                        if let Some(f) = in_file {
-                            f.name()
-                        } else {
-                            "Open File...".into()
+                        if ui
+                            .add_enabled(
+                                *picked_file != OpenFileState::Opening && !*is_patching,
+                                egui::Button::new(file_button_text),
+                            )
+                            .clicked()
+                        {
+                            match channels.sender.try_send(ToAppMsg::GetOpenFile) {
+                                Ok(_) => {
+                                    *picked_file = OpenFileState::Opening;
+                                }
+                                Err(TrySendError::Full(_)) => {
+                                    *picked_file = OpenFileState::None;
+                                }
+                                Err(TrySendError::Disconnected(_)) => {
+                                    _frame.close();
+                                }
+                            };
                         }
-                    };
-                    if ui
-                        .add_enabled(
-                            *picked_file != OpenFileState::Opening && !*is_patching,
-                            egui::Button::new(file_button_text),
-                        )
-                        .clicked()
-                    {
-                        match channels.sender.try_send(ToAppMsg::GetOpenFile) {
-                            Ok(_) => {
-                                *picked_file = OpenFileState::Opening;
-                            }
-                            Err(TrySendError::Full(_)) => {
-                                *picked_file = OpenFileState::None;
-                            }
-                            Err(TrySendError::Disconnected(_)) => {
-                                _frame.close();
-                            }
-                        };
-                    }
-                    ui.end_row();
+                        ui.end_row();
 
-                    if ui
-                        .add_enabled(
-                            in_file.is_some() && patch_file.is_some() && !*is_patching,
-                            egui::Button::new("Patch ISO"),
-                        )
-                        .clicked()
-                    {
-                        match channels.sender.try_send(ToAppMsg::GetSaveFileAndLaunch(
-                            patch_file.as_ref().unwrap().path(),
-                            in_file.as_ref().unwrap().path(),
-                        )) {
-                            Ok(_) => {
-                                *is_patching = true;
-                            }
-                            Err(TrySendError::Full(_)) => {}
-                            Err(TrySendError::Disconnected(_)) => {
-                                _frame.close();
-                            }
-                        };
-                    }
+                        if ui
+                            .add_enabled(
+                                in_file.is_some() && patch_file.is_some() && !*is_patching,
+                                egui::Button::new("Patch ISO"),
+                            )
+                            .clicked()
+                        {
+                            match channels.sender.try_send(ToAppMsg::GetSaveFileAndLaunch(
+                                patch_file.as_ref().unwrap().path(),
+                                in_file.as_ref().unwrap().path(),
+                            )) {
+                                Ok(_) => {
+                                    *is_patching = true;
+                                }
+                                Err(TrySendError::Full(_)) => {}
+                                Err(TrySendError::Disconnected(_)) => {
+                                    _frame.close();
+                                }
+                            };
+                        }
+                    });
                 });
             });
 
@@ -432,24 +457,6 @@ impl eframe::App for PatcherApp {
                 });
                 egui::warn_if_debug_build(ui);
             });
-        });
-
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            if status.is_some() || progress.is_some() {
-                ui.horizontal(|ui| {
-                    if let Some(status) = status {
-                        ui.label(status.clone());
-                    }
-                    if let Some(progress) = progress {
-                        ui.add(
-                            egui::ProgressBar::new(*progress)
-                                .text("Loading...")
-                                .show_percentage()
-                                .animate(true),
-                        );
-                    }
-                });
-            }
         });
 
         match channels.receiver.try_recv() {
@@ -482,7 +489,7 @@ impl eframe::App for PatcherApp {
             Ok(FromAppMsg::Progress(status_, progress_)) => {
                 *status = status_;
                 *progress = progress_;
-            },
+            }
             Err(TryRecvError::Disconnected) => _frame.close(),
             Err(TryRecvError::Empty) => {}
         };

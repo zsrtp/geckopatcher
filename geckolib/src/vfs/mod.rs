@@ -362,7 +362,7 @@ where
                 fst_name_bank.push(0);
 
                 *offset += file.len() as u64;
-                *offset = align_addr(*offset, 5);
+                *offset = align_addr(*offset, 2);
 
                 file.fst = fst_entry.clone();
                 output_fst.push(fst_entry);
@@ -515,6 +515,7 @@ where
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
+            // async_std::io::copy(file, writer).await?; // way too slow
             let mut buf = Vec::with_capacity(file.len());
             file.read_to_end(&mut buf).await?;
             writer.write_all(&buf).await?;

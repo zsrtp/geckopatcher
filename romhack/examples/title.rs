@@ -8,6 +8,7 @@ use async_std::{
 };
 use geckolib::iso::read::DiscReader;
 use geckolib::vfs::GeckoFS;
+#[cfg(feature = "progress")]
 use romhack::progress::init_cli_progress;
 
 fn main() -> color_eyre::eyre::Result<()> {

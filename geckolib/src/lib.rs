@@ -1,6 +1,6 @@
 #[cfg(feature = "log")]
 extern crate log;
-#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+#[cfg(feature = "parallel")]
 extern crate rayon;
 extern crate thiserror;
 #[macro_use]
@@ -11,6 +11,8 @@ extern crate cbc;
 extern crate eyre;
 extern crate serde;
 extern crate sha1_smol;
+#[macro_use]
+extern crate static_assertions;
 
 pub mod config;
 pub mod crypto;

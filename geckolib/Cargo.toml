@@ -40,6 +40,7 @@ pin-project = "^1.1"
 rayon = { version = "^1.7", optional = true }
 event-listener = { version = "^2.5", optional = true }
 human_bytes = { version = "^0.4", optional = true, default-features = false }
+static_assertions = "^1.1"
 
 [features]
 default = ["parallel", "log"]

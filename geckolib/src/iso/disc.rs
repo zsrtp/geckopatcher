@@ -5,13 +5,8 @@ use async_std::io::prelude::SeekExt;
 use async_std::io::ReadExt;
 use eyre::Result;
 use num::Unsigned;
-#[cfg(disabled)]
-#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
-use rayon::prelude::*;
 
 use crate::crypto::aes_decrypt_inplace;
-#[cfg(disabled)]
-use crate::crypto::aes_encrypt_inplace;
 use crate::crypto::AesKey;
 use crate::crypto::WiiCryptoError;
 use crate::crypto::COMMON_KEY;
@@ -285,12 +280,21 @@ impl From<u32> for PartitionType {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Ticket {
+pub struct SignatureRSA2048 {
     pub sig_type: u32,
     pub sig: [u8; 0x100],
     pub sig_padding: [u8; 0x3C],
     pub sig_issuer: [u8; 0x40],
-    pub unk1: [u8; 0x3F],
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Ticket {
+    pub sig: SignatureRSA2048,
+    pub server_public_key: [u8; 0x3C],
+    pub version: u8,
+    pub ca_crl_version: u8,
+    pub signer_crl_version: u8,
     pub title_key: [u8; 0x10],
     pub unk2: u8,
     pub ticket_id: [u8; 8],
@@ -306,6 +310,7 @@ pub struct Ticket {
     pub time_limit: u32,
     pub fake_sign: [u8; 0x58],
 }
+assert_eq_size!(Ticket, [u8; Ticket::BLOCK_SIZE]);
 declare_tryfrom!(Ticket);
 
 impl Unpackable for Ticket {
@@ -313,39 +318,40 @@ impl Unpackable for Ticket {
 }
 
 impl Ticket {
-    pub fn fake_sign(&mut self) {
+    pub fn fake_sign(&mut self) -> Result<(), eyre::Report> {
         let mut tik_buf = [0u8; Ticket::BLOCK_SIZE];
-        self.sig.copy_from_slice(&[0u8; 0x100]);
-        self.sig_padding.copy_from_slice(&[0u8; 0x3c]);
-        self.fake_sign.copy_from_slice(&[0u8; 0x58]);
+        self.sig.sig.fill(0);
+        self.sig.sig_padding.fill(0);
+        self.fake_sign.fill(0);
         tik_buf[..Ticket::BLOCK_SIZE]
-            .copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(self as &Ticket));
+            .copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&*self));
         // start brute force
         crate::trace!("Ticket fake signing; starting brute force...");
         let mut val = 0u32;
-        let mut hash = [0u8; consts::WII_HASH_SIZE];
+        let mut hash_0;
+        let mut sha1 = Sha1::new();
         loop {
             BE::write_u32(&mut tik_buf[0x248..][..4], val);
-            hash.copy_from_slice(
-                &Sha1::from(&tik_buf[0x140..][..Ticket::BLOCK_SIZE - 0x140])
-                    .digest()
-                    .bytes()[..],
-            );
-            if hash[0] == 0 {
+            sha1.reset();
+            sha1.update(&tik_buf[0x140..]);
+            hash_0 = sha1.digest().bytes()[0];
+            if hash_0 == 0 {
                 break;
             }
 
             if val == std::u32::MAX {
-                break;
+                return Err(eyre::eyre!("Could not re-sign the partition ticket"));
             }
             val += 1;
         }
         self.time_limit = val;
         crate::debug!(
-            "Ticket fake signing status: hash[0]={}, attempt(s)={}",
-            hash[0],
-            val
+            "Ticket ({}) fake signing status: hash[0]={}, attempt(s)={}",
+            if self.version == 1 { "v1" } else { "v0" },
+            hash_0,
+            self.time_limit
         );
+        Ok(())
     }
 }
 
@@ -354,7 +360,7 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
         let mut sig = [0_u8; 0x100];
         let mut sig_padding = [0_u8; 0x3C];
         let mut sig_issuer = [0_u8; 0x40];
-        let mut unk1 = [0_u8; 0x3F];
+        let mut server_public_key = [0_u8; 60];
         let mut title_key = [0_u8; 0x10];
         let mut ticket_id = [0_u8; 0x08];
         let mut title_id = [0_u8; 0x08];
@@ -364,7 +370,7 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
         sig.copy_from_slice(&buf[0x4..0x104]);
         sig_padding.copy_from_slice(&buf[0x104..0x140]);
         sig_issuer.copy_from_slice(&buf[0x140..0x180]);
-        unk1.copy_from_slice(&buf[0x180..0x1BF]);
+        server_public_key.copy_from_slice(&buf[0x180..0x1BC]);
         title_key.copy_from_slice(&buf[0x1BF..0x1CF]);
         ticket_id.copy_from_slice(&buf[0x1D0..0x1D8]);
         title_id.copy_from_slice(&buf[0x1DC..0x1E4]);
@@ -372,11 +378,11 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
         unk5.copy_from_slice(&buf[0x1F2..0x242]);
         fake_sign.copy_from_slice(&buf[0x24C..0x2A4]);
         Ticket {
-            sig_type: BE::read_u32(&buf[0x00..]),
-            sig,
-            sig_padding,
-            sig_issuer,
-            unk1,
+            sig: SignatureRSA2048 { sig_type: BE::read_u32(&buf[0x00..]), sig, sig_padding, sig_issuer },
+            server_public_key,
+            version: buf[0x1BC],
+            ca_crl_version: buf[0x1BD],
+            signer_crl_version: buf[0x1BE],
             title_key,
             unk2: buf[0x1CF],
             ticket_id,
@@ -399,11 +405,14 @@ impl From<&Ticket> for [u8; Ticket::BLOCK_SIZE] {
     fn from(t: &Ticket) -> Self {
         let mut buf = [0_u8; Ticket::BLOCK_SIZE];
 
-        BE::write_u32(&mut buf[0x00..], t.sig_type);
-        buf[0x04..0x104].copy_from_slice(&t.sig[..]);
-        buf[0x104..0x140].copy_from_slice(&t.sig_padding[..]);
-        buf[0x140..0x180].copy_from_slice(&t.sig_issuer[..]);
-        buf[0x180..0x1BF].copy_from_slice(&t.unk1[..]);
+        BE::write_u32(&mut buf[0x00..], t.sig.sig_type);
+        buf[0x04..0x104].copy_from_slice(&t.sig.sig[..]);
+        buf[0x104..0x140].copy_from_slice(&t.sig.sig_padding[..]);
+        buf[0x140..0x180].copy_from_slice(&t.sig.sig_issuer[..]);
+        buf[0x180..0x1BC].copy_from_slice(&t.server_public_key[..]);
+        buf[0x1BC] = t.version;
+        buf[0x1BD] = t.ca_crl_version;
+        buf[0x1BE] = t.signer_crl_version;
         buf[0x1BF..0x1CF].copy_from_slice(&t.title_key[..]);
         buf[0x1CF] = t.unk2;
         buf[0x1D0..0x1D8].copy_from_slice(&t.ticket_id[..]);
@@ -463,7 +472,7 @@ impl From<&[u8; PartHeader::BLOCK_SIZE]> for PartHeader {
 impl From<&PartHeader> for [u8; PartHeader::BLOCK_SIZE] {
     fn from(ph: &PartHeader) -> Self {
         let mut buf = [0_u8; PartHeader::BLOCK_SIZE];
-        buf[..0x2A4].copy_from_slice(&<[u8; 0x2A4]>::from(&ph.ticket));
+        buf[..0x2A4].copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&ph.ticket));
         BE::write_u32(&mut buf[0x2A4..], ph.tmd_size as u32);
         BE::write_u32(&mut buf[0x2A8..], (ph.tmd_offset >> 2) as u32);
         BE::write_u32(&mut buf[0x2AC..], ph.cert_size as u32);
@@ -607,36 +616,38 @@ impl TitleMetaData {
         }
     }
 
-    pub fn fake_sign(&mut self) {
+    pub fn fake_sign(&mut self) -> Result<(), eyre::Report> {
         let mut tmd_buf = vec![0u8; self.get_size()];
-        self.signature.copy_from_slice(&[0u8; 0x100]);
-        self.padding.copy_from_slice(&[0u8; 60]);
-        self.fake_sign.copy_from_slice(&[0u8; 0x3e]);
+        self.signature.fill(0);
+        self.padding.fill(0);
+        self.fake_sign.fill(0);
         let tmd_size = self.get_size();
         TitleMetaData::set_partition(&mut tmd_buf, 0, self);
         // start brute force
-        crate::trace!("TMD fake signing; starting brute force...");
+        crate::debug!("TMD fake signing; starting brute force...");
         let mut val = 0u32;
-        let mut hash = [0u8; consts::WII_HASH_SIZE];
+        let mut hash_0;
         loop {
             BE::write_u32(&mut tmd_buf[0x19a..][..4], val);
-            hash.copy_from_slice(
-                &Sha1::from(&tmd_buf[0x140..][..tmd_size - 0x140])
-                    .digest()
-                    .bytes()[..],
-            );
-            if hash[0] == 0 {
+            hash_0 = Sha1::from(&tmd_buf[0x140..][..tmd_size - 0x140])
+                    .digest().bytes()[0];
+            if hash_0 == 0 {
                 break;
             }
 
             if val == std::u32::MAX {
-                break;
+                return Err(eyre::eyre!("Could not re-sign the partition's TMD"));
             }
             val += 1;
         }
         *self = TitleMetaData::from_partition(&tmd_buf, 0);
         // BE::write_u32(&mut self.fake_sign, val);
-        crate::debug!("TMD fake signing status: hash[0]={}, attempt(s)={}", hash[0], val);
+        crate::debug!(
+            "TMD fake signing status: hash[0]={}, attempt(s)={}",
+            hash_0,
+            val
+        );
+        Ok(())
     }
 }
 

@@ -6,6 +6,7 @@ use geckolib::{
     iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
 };
+#[cfg(feature = "progress")]
 use romhack::progress;
 
 // Reprocesses a given iso (load iso in to a FileSystem, then save it back into an other iso)

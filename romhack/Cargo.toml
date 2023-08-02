@@ -27,7 +27,7 @@ lazy_static = "^1.4"
 [dev-dependencies]
 
 [features]
-default = ["parallel", "log", "progress"]
+default = ["parallel", "log"]
 log = [
     "geckolib/log",
     "dep:env_logger",

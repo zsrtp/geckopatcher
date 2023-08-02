@@ -12,9 +12,10 @@ pub mod consts {
     // there was no observed benefit of setting them higher, however lower
     // values were not tested.
 
-    pub const WII_HASH_SIZE: usize = 20;
+    pub const WII_HASH_SIZE: usize = 160 / 8; // 160 bits with 8 bits per byte
     pub const WII_KEY_SIZE: usize = 16;
     pub const WII_CKEY_AMNT: usize = 3;
+    pub const WII_H3_OFFSET: usize = 0x8000;
     pub const WII_H3_SIZE: usize = 0x18000;
     pub const WII_HX_OFFSETS: [usize; 3] = [0, 0x280, 0x340];
     pub const WII_SECTOR_HASH_SIZE: usize = 0x400;
@@ -22,6 +23,9 @@ pub mod consts {
     pub const WII_SECTOR_DATA_SIZE: usize = WII_SECTOR_SIZE - WII_SECTOR_HASH_SIZE;
     pub const WII_SECTOR_IV_OFF: usize = 0x3D0;
     pub const WII_PARTITION_INFO_OFF: usize = 0x40000;
+    pub const WII_SECTOR_DATA_HASH_SIZE: usize = 0x400; // Size of chunks of data hashed together for h0
+    /// Number of chunks of data which are hashed for h0.
+    pub const WII_SECTOR_DATA_HASH_COUNT: usize = WII_SECTOR_DATA_SIZE / WII_SECTOR_DATA_HASH_SIZE;
 }
 
 const COMMON_KEY_: [[u8; consts::WII_KEY_SIZE]; consts::WII_CKEY_AMNT] = [
@@ -148,6 +152,26 @@ impl Default for DecryptedBlock {
         DecryptedBlock::from([0u8; 0x7C00])
     }
 }
+pub type Sha1Digest = [u8; consts::WII_HASH_SIZE];
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed(1))]
+pub struct HashBlockStruct {
+    pub h0: [Sha1Digest; 31],
+    pub padding_0: [u8; 20],
+    pub h1: [Sha1Digest; 8],
+    pub padding_1: [u8; 32],
+    pub h2: [Sha1Digest; 8],
+    pub padding_2: [u8; 32],
+}
+assert_eq_size!(HashBlockStruct, [u8; consts::WII_SECTOR_HASH_SIZE]);
+
+#[repr(C, packed(1))]
+pub union HashBlock {
+    pub s: HashBlockStruct,
+    pub array: [u8; consts::WII_SECTOR_HASH_SIZE],
+}
+assert_eq_size!(HashBlock, [u8; consts::WII_SECTOR_HASH_SIZE]);
 
 #[derive(Error, Debug)]
 pub enum WiiCryptoError {
@@ -161,6 +185,12 @@ pub enum WiiCryptoError {
     AesEncryptError,
     #[error("The provided slice is too small to be converted into a {name}.")]
     ConvertError { name: String },
+}
+
+impl From<WiiCryptoError> for std::io::Error {
+    fn from(value: WiiCryptoError) -> Self {
+        std::io::Error::new(std::io::ErrorKind::Other, value)
+    }
 }
 
 pub trait Unpackable {

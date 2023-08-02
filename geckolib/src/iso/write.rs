@@ -7,7 +7,7 @@ use async_std::{
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 use pin_project::pin_project;
-#[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+#[cfg(feature = "parallel")]
 use rayon::{prelude::ParallelIterator, slice::ParallelSliceMut};
 use sha1_smol::Sha1;
 use std::task::Poll;
@@ -133,18 +133,24 @@ pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
     writer: W,
 }
 
+fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl ParallelIterator<Item = &mut [u8]> {
+    #[cfg(feature = "parallel")]
+    let data_pool = data.par_chunks_exact_mut(chunk_size);
+    #[cfg(not(feature = "parallel"))]
+    let data_pool = data.chunks_exact_mut(chunk_size);
+    data_pool
+}
+
 fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     // h0
-    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
-    let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE);
-    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
-    let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE);
+    let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE);
     fn h0_process(data: &mut [u8]) {
         let (hash, data) = data.split_at_mut(consts::WII_SECTOR_HASH_SIZE);
-        for j in 0..31 {
-            hash[j * 20..(j + 1) * 20].copy_from_slice(
+        for j in 0..consts::WII_SECTOR_DATA_HASH_COUNT {
+            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
                 &Sha1::from(
-                    &data[j * consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_HASH_SIZE],
+                    &data[j * consts::WII_SECTOR_DATA_HASH_SIZE
+                        ..(j + 1) * consts::WII_SECTOR_DATA_HASH_SIZE],
                 )
                 .digest()
                 .bytes(),
@@ -153,46 +159,50 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     }
     data_pool.for_each(h0_process);
     // h1
-    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
-    let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE * 8);
-    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
-    let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE * 8);
-    fn h1_process(data: &mut [u8]) {
+    let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE * 8);
+    data_pool.for_each(|data| {
         let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
         for j in 0..8 {
             hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(&data[j * consts::WII_SECTOR_SIZE..][..0x26c])
-                    .digest()
-                    .bytes()[..],
+                &Sha1::from(
+                    &data[j * consts::WII_SECTOR_SIZE..]
+                        [..consts::WII_HASH_SIZE * (consts::WII_SECTOR_DATA_HASH_COUNT)],
+                )
+                .digest()
+                .bytes()[..],
             );
-        }
+        };
         for j in 0..8 {
-            data[j * consts::WII_SECTOR_SIZE + 0x280..][..0xa0].copy_from_slice(&hash);
+            data[j * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8]
+                .copy_from_slice(&hash);
         }
-    }
-    data_pool.for_each(h1_process);
+    });
     // h2
-    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
-    let data_pool = buf.par_chunks_exact_mut(consts::WII_SECTOR_SIZE * 64);
-    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
-    let data_pool = buf.chunks_exact_mut(consts::WII_SECTOR_SIZE * 64);
+    let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE * 8 * 8);
     fn h2_process(h: &mut [u8]) {
         let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
         for i in 0..8 {
             hash[i * consts::WII_HASH_SIZE..(i + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(&h[i * 8 * consts::WII_SECTOR_SIZE + 0x280..][..0xa0])
-                    .digest()
-                    .bytes()[..],
+                &Sha1::from(
+                    &h[i * 8 * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8],
+                )
+                .digest()
+                .bytes()[..],
             );
         }
-        for i in 0..64 {
-            h[i * consts::WII_SECTOR_SIZE + 0x340..][..0xa0].copy_from_slice(&hash);
+        for i in 0..8 * 8 {
+            h[i * consts::WII_SECTOR_SIZE + 0x340..][..consts::WII_HASH_SIZE * 8]
+                .copy_from_slice(&hash);
         }
     }
     data_pool.for_each(h2_process);
     // single H3
     let mut ret_buf = [0u8; consts::WII_HASH_SIZE];
-    ret_buf.copy_from_slice(&Sha1::from(&buf[0x340 + 1..][..0xa0]).digest().bytes());
+    ret_buf.copy_from_slice(
+        &Sha1::from(&buf[0x340..][..consts::WII_HASH_SIZE * 8])
+            .digest()
+            .bytes(),
+    );
     ret_buf
 }
 
@@ -212,15 +222,15 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
         .copy_from_slice(&Sha1::from(&hashes_).digest().bytes());
 
     // Fake sign tmd
-    part.tmd.fake_sign();
-    part.header.ticket.fake_sign();
+    let _ = part.tmd.fake_sign();
+    let _ = part.header.ticket.fake_sign();
 }
 
 fn encrypt_group(group: &mut [u8], part_key: AesKey) {
     crate::trace!("Encrypting group");
-    #[cfg(all(not(target_family = "wasm"), feature = "parallel"))]
+    #[cfg(feature = "parallel")]
     let data_pool = group.par_chunks_exact_mut(consts::WII_SECTOR_SIZE);
-    #[cfg(any(target_family = "wasm", not(feature = "parallel")))]
+    #[cfg(not(feature = "parallel"))]
     let data_pool = group.chunks_exact_mut(consts::WII_SECTOR_SIZE);
     let encrypt_process = |data: &mut [u8]| {
         let mut iv = [0u8; consts::WII_KEY_SIZE];
@@ -314,7 +324,10 @@ where
         part.header.tmd_size = part.tmd.get_size();
         part.header.tmd_offset = PartHeader::BLOCK_SIZE as u64;
         part.header.cert_offset = part.header.tmd_offset + part.header.tmd_size as u64;
-        part.header.h3_offset = part.header.cert_offset + part.header.cert_size as u64;
+        part.header.h3_offset = std::cmp::max(
+            consts::WII_H3_OFFSET as u64,
+            part.header.cert_offset + part.header.cert_size as u64,
+        );
         part.header.data_offset =
             align_addr(part.header.cert_offset + part.header.cert_size as u64, 17);
         let buf = <[u8; PartHeader::BLOCK_SIZE]>::from(&part.header);
@@ -550,13 +563,17 @@ where
                     } else {
                         // Hash the whole table and store the partition header again
                         fake_sign(part, this.hashes);
+                        let part_offset = part.part_offset;
+                        crate::debug!("Partition offset: 0x{part_offset:08X?}");
                         crate::trace!("Partition Header: {:?}", part.header);
                         let mut buf = Vec::with_capacity(
-                            PartHeader::BLOCK_SIZE + part.tmd.get_size() + consts::WII_H3_SIZE,
+                            part.header.h3_offset as usize + consts::WII_H3_SIZE,
                         );
+                        let h3_padding = part.header.h3_offset as usize
+                            - (PartHeader::BLOCK_SIZE + part.tmd.get_size());
                         //let mut buf = vec![0u8; PartHeader::BLOCK_SIZE + part.tmd.get_size()];
                         buf.extend_from_slice(&<[u8; PartHeader::BLOCK_SIZE]>::from(&part.header));
-                        buf.extend(std::iter::repeat(0).take(part.tmd.get_size()));
+                        buf.extend(std::iter::repeat(0).take(part.tmd.get_size() + h3_padding));
                         buf.extend(this.hashes.iter().flatten());
                         buf.extend(
                             std::iter::repeat(0).take(
