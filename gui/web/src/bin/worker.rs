@@ -10,11 +10,9 @@ use geckolib::vfs::GeckoFS;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 
-// When the `wee_alloc` feature is enabled, use `wee_alloc` as the global
-// allocator.
-#[cfg(feature = "wee_alloc")]
+#[cfg(feature = "debug_alloc")]
 #[global_allocator]
-static ALLOC: wee_alloc::WeeAlloc<'_> = wee_alloc::WeeAlloc::INIT;
+static ALLOC: wasm_tracing_allocator::WasmTracingAllocator<std::alloc::System> = wasm_tracing_allocator::WasmTracingAllocator(std::alloc::System);
 
 #[derive(Debug)]
 struct WebFile {
@@ -229,7 +227,11 @@ pub async extern "C" fn run_patch(
 }
 
 fn main() {
+    #[cfg(debug_assertions)]
     console_log::init_with_level(log::Level::Debug)
+        .expect("could not initialize worker's console_log");
+    #[cfg(not(debug_assertions))]
+    console_log::init_with_level(log::Level::Info)
         .expect("could not initialize worker's console_log");
     web_gui_patcher::progress::init_web_progress();
     log::debug!("Starting Worker Thread");

@@ -34,7 +34,6 @@ js-sys = "^0.3"
 wasm-bindgen = "^0.2"
 wasm-bindgen-futures = "^0.4"
 serde-wasm-bindgen = "^0.5"
-wee_alloc = { version = "^0.4", optional = true }
 console_error_panic_hook = { version = "^0.1", optional = true }
 async-std = "^1.12"
 wasm-tracing-allocator = { version = "0.1.1", optional = true }
@@ -42,6 +41,7 @@ wasm-mt-pool = { version = "^0.1", optional = true }
 rayon = { version = "^1.7", optional = true }
 serde_closure = { version = "^0.3", optional = true }
 lazy_static = { version = "^1.4" }
+heapless = { version = "^0.7" }
 
 [dependencies.web-sys]
 version = "^0.3"
@@ -75,7 +75,7 @@ features = [
 ]
 
 [features]
-default = ["console_error_panic_hook"]    # wee_alloc
+default = ["console_error_panic_hook"]
 debug_alloc = ["wasm-tracing-allocator"]
 generic_patch = []
 parallel = ["geckolib/parallel", "rayon", "wasm-mt-pool", "serde_closure"]
