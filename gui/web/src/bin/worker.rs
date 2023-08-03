@@ -210,6 +210,7 @@ pub async extern "C" fn run_patch(
             },
         )
         .await {
+        web_sys::console::error_1(&format!("{err:?}").into());
         return Err(format!("{err:?}").into());
     }
 

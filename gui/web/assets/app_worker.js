@@ -4,12 +4,20 @@ async function registerLocalStorage(patch, iso) {
     const root = await navigator.storage.getDirectory();
     let patch_ = await root.getFileHandle("in.patch", { create: true });
     let patchWritable = patch_.createWritable();
-    let patchRet = patchWritable.then((patchWritable_) => patchWritable_.truncate(0)).then(() => patchWritable).then((patchWritable_) => patch.stream().pipeTo(patchWritable_)).then(() => patch_);
+    let patchRet = patchWritable
+        .then((patchWritable_) => patchWritable_.truncate(0))
+        .then(() => patchWritable)
+        .then((patchWritable_) => patch.stream().pipeTo(patchWritable_))
+        .then(() => patch_);
     let iso_ = await root.getFileHandle("in.iso", { create: true });
     let isoWritable = iso_.createWritable();
-    let isoRet = isoWritable.then((isoWritable_) => isoWritable_.truncate(0)).then(() => isoWritable).then((isoWritable_) => iso.stream().pipeTo(isoWritable_)).then(() => iso_);
+    let isoRet = isoWritable
+        .then((isoWritable_) => isoWritable_.truncate(0))
+        .then(() => isoWritable)
+        .then((isoWritable_) => iso.stream().pipeTo(isoWritable_))
+        .then(() => iso_);
     const fileHandle = root.getFileHandle("tpgz.iso", { create: true });
-    return Promise.all([patchRet, isoRet, fileHandle]);
+    return await Promise.all([patchRet, isoRet, fileHandle]);
 }
 
 async function deleteLocalStorage(patch, iso) {
@@ -21,7 +29,7 @@ async function deleteLocalStorage(patch, iso) {
         await isoWritable.truncate(0);
         return isoWritable.close();
     });
-    return Promise.all([patchPromise, isoPromise]);
+    return await Promise.all([patchPromise, isoPromise]);
 }
 
 let is_running = false;
@@ -32,6 +40,7 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
             case "run": {
                 if (!is_running) {
                     is_running = true;
+                    globalThis.postMessage({ type: "progress", title: "Loading Files..." });
                     registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) =>
                         wasm_bindgen.run_patch(patch, file, save).then(() => [patch, file, save])
                     )
@@ -39,11 +48,14 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                             let f = await file.getFile();
                             return Promise.all([f.slice(0, 6).text(), deleteLocalStorage(patch, file)]);
                         })
-                        .then(([gameCode, ]) => {
+                        .then(([gameCode,]) => {
                             console.debug("Done", gameCode);
-                            postMessage({ type: "done", is_wii: gameCode.startsWith("RZD") });
+                            globalThis.postMessage({ type: "done", is_wii: gameCode.startsWith("RZD") });
                         })
-                        .finally(() => { is_running = false; });
+                        .catch((err) => { globalThis.postMessage({ type: "cancelled" }); throw err; })
+                        .finally(() => {
+                            is_running = false;
+                        });
                 }
                 break;
             }

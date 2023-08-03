@@ -55,6 +55,9 @@ impl Component for App {
                 Ok(type_) => type_,
                 Err(err) => {web_sys::console::warn_1(&err); return;},
             };
+            if type_.as_string().map_or(false, |s| &s == "cancelled") {
+                callback.emit(Message::PatchError);
+            }
             if type_.as_string().map_or(false, |s| &s == "done") {
                 web_sys::console::info_1(&event);
                 let is_wii = match js_sys::Reflect::get(&data, &"is_wii".into()) {
@@ -81,6 +84,7 @@ impl Component for App {
             }
         }) as Box<dyn FnMut(MessageEvent)>);
         worker.set_onmessage(Some(&closure.into_js_value().dyn_into().expect("Cannot convert Closure to Function")));
+        web_sys::console::info_1(&"Registered worker message listener".into());
 
         Self { worker, is_patching: Rc::new(false), msg: Rc::new(None), progress: Rc::new(None) }
     }
@@ -126,6 +130,9 @@ impl Component for App {
             }
             Message::PatchError => {
                 log::info!("PatchError");
+                if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
+                    *is_patching = false;
+                }
                 true
             }
             Message::PatchedIso => {
