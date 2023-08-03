@@ -22,14 +22,14 @@ struct WebFile {
 
 impl async_std::io::Read for WebFile {
     fn poll_read(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let mut options = web_sys::FileSystemReadWriteOptions::new();
         options.at(self.cursor as f64);
         match self.handle.read_with_u8_array_and_options(buf, &options) {
-            Ok(n) => std::task::Poll::Ready(Ok(n as usize)),
+            Ok(n) => {self.cursor += n as u64; std::task::Poll::Ready(Ok(n as usize))},
             Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("{err:?}"),
@@ -90,7 +90,7 @@ impl async_std::io::Seek for WebFile {
 
 impl async_std::io::Write for WebFile {
     fn poll_write(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -101,7 +101,7 @@ impl async_std::io::Write for WebFile {
             .handle
             .write_with_u8_array_and_options(&mut b, &options)
         {
-            Ok(n) => std::task::Poll::Ready(Ok(n as usize)),
+            Ok(n) => {self.cursor += n as u64; std::task::Poll::Ready(Ok(n as usize))},
             Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 format!("{err:?}"),
