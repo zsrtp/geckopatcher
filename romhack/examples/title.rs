@@ -1,4 +1,3 @@
-
 use std::io::SeekFrom;
 
 use async_std::sync::{Arc, Mutex};
@@ -55,7 +54,10 @@ fn main() -> color_eyre::eyre::Result<()> {
                     .collect::<Vec<String>>()
                     .join("")
             );
-            log::info!("Has banner: {:?}", guard.root_mut().get_file("opening.bnr").is_ok());
+            log::info!(
+                "Has banner: {:?}",
+                guard.root_mut().get_file("opening.bnr").is_ok()
+            );
         }
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;

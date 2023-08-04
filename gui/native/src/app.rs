@@ -512,7 +512,8 @@ impl eframe::App for PatcherApp {
                         let _ = file.seek(std::io::SeekFrom::Start(0));
                         let re = regex::Regex::new(
                             "^((([RSGUDP0124])([A-Z0-9]{2})([DEFIJKPRSTU]))([A-Z0-9]{2}))",
-                        ).expect("Couldn't parse the GameCode RegEx");
+                        )
+                        .expect("Couldn't parse the GameCode RegEx");
                         let is_game = re.is_match(&String::from_utf8_lossy(&buf));
                         if is_game {
                             *in_file = Some(InFile::Dropped(f));

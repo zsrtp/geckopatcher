@@ -37,7 +37,14 @@ impl GuiProgressBar {
 
 fn send_progress(sender: &Option<Sender<FromAppMsg>>, title: &str, progress: Option<f64>) {
     if let Some(sender) = sender {
-        let _ = sender.send(FromAppMsg::Progress(if !title.is_empty() {Some(title.to_string())} else {None}, progress.map(|x| x as f32)));
+        let _ = sender.send(FromAppMsg::Progress(
+            if !title.is_empty() {
+                Some(title.to_string())
+            } else {
+                None
+            },
+            progress.map(|x| x as f32),
+        ));
     }
 }
 
@@ -48,7 +55,15 @@ fn init_cb(len: Option<usize>) -> eyre::Result<()> {
             if let Some(len) = len {
                 progress.len = len;
             }
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),
@@ -59,7 +74,15 @@ fn inc_cb(n: usize) -> eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
             progress.pos += n;
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),
@@ -71,7 +94,15 @@ fn finish_cb() -> eyre::Result<()> {
         Ok(mut progress) => {
             progress.status = "".to_string();
             progress.pos = 0;
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),
@@ -83,7 +114,15 @@ fn reset_cb() -> eyre::Result<()> {
         Ok(mut progress) => {
             progress.status = "".to_string();
             progress.pos = 0;
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),
@@ -94,7 +133,15 @@ fn on_title_cb(title: String) -> eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
             progress.status = title;
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),
@@ -105,7 +152,15 @@ fn on_type_cb(type_: UpdaterType) -> eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
             progress.type_ = type_;
-            send_progress(&progress.sender, &progress.status, if progress.type_ == UpdaterType::Progress {Some(progress.pos as f64 / progress.len as f64)} else {None});
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
             Ok(())
         }
         Err(err) => Err(eyre::eyre!("{:?}", err)),

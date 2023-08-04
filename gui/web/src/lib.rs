@@ -1,11 +1,14 @@
-use std::{rc::Rc, borrow::Borrow};
+use std::{borrow::Borrow, rc::Rc};
 
-use wasm_bindgen::{prelude::{wasm_bindgen, Closure}, JsCast, JsValue};
+use wasm_bindgen::{
+    prelude::{wasm_bindgen, Closure},
+    JsCast, JsValue,
+};
 #[cfg(not(feature = "generic_patch"))]
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{File, HtmlInputElement, Worker, MessageEvent};
 #[cfg(not(feature = "generic_patch"))]
-use web_sys::{Response, Blob};
+use web_sys::{Blob, Response};
+use web_sys::{File, HtmlInputElement, MessageEvent, Worker};
 use yew::prelude::*;
 
 pub mod progress;
@@ -53,7 +56,10 @@ impl Component for App {
             let data = event.data();
             let type_ = match js_sys::Reflect::get(&data, &"type".into()) {
                 Ok(type_) => type_,
-                Err(err) => {web_sys::console::warn_1(&err); return;},
+                Err(err) => {
+                    web_sys::console::warn_1(&err);
+                    return;
+                }
             };
             if type_.as_string().map_or(false, |s| &s == "cancelled") {
                 callback.emit(Message::PatchError);
@@ -62,7 +68,10 @@ impl Component for App {
                 web_sys::console::info_1(&event);
                 let is_wii = match js_sys::Reflect::get(&data, &"is_wii".into()) {
                     Ok(is_wii) => is_wii.as_bool().unwrap_or(false),
-                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                    Err(err) => {
+                        web_sys::console::warn_1(&err);
+                        return;
+                    }
                 };
                 callback.emit(Message::PatchedIso);
                 wasm_bindgen_futures::spawn_local(async move {
@@ -74,19 +83,35 @@ impl Component for App {
             if type_.as_string().map_or(false, |s| &s == "progress") {
                 let title = match js_sys::Reflect::get(&data, &"title".into()) {
                     Ok(title) => title.as_string(),
-                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                    Err(err) => {
+                        web_sys::console::warn_1(&err);
+                        return;
+                    }
                 };
                 let pos = match js_sys::Reflect::get(&data, &"progress".into()) {
                     Ok(pos) => pos.as_f64(),
-                    Err(err) => {web_sys::console::warn_1(&err); return;},
+                    Err(err) => {
+                        web_sys::console::warn_1(&err);
+                        return;
+                    }
                 };
                 progress_callback.emit(Message::PatchProgress(title, pos));
             }
         }) as Box<dyn FnMut(MessageEvent)>);
-        worker.set_onmessage(Some(&closure.into_js_value().dyn_into().expect("Cannot convert Closure to Function")));
+        worker.set_onmessage(Some(
+            &closure
+                .into_js_value()
+                .dyn_into()
+                .expect("Cannot convert Closure to Function"),
+        ));
         web_sys::console::info_1(&"Registered worker message listener".into());
 
-        Self { worker, is_patching: Rc::new(false), msg: Rc::new(None), progress: Rc::new(None) }
+        Self {
+            worker,
+            is_patching: Rc::new(false),
+            msg: Rc::new(None),
+            progress: Rc::new(None),
+        }
     }
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
@@ -105,12 +130,21 @@ impl Component for App {
                     }
                     #[cfg(not(feature = "generic_patch"))]
                     {
-                        let resp = JsFuture::from(web_sys::window().unwrap().fetch_with_str(&patch.uri)).await;
+                        let resp =
+                            JsFuture::from(web_sys::window().unwrap().fetch_with_str(&patch.uri))
+                                .await;
                         let resp: Response = match resp {
                             Ok(resp) => resp.dyn_into().unwrap(),
-                            Err(err) => {web_sys::console::warn_1(&err);return;},
+                            Err(err) => {
+                                web_sys::console::warn_1(&err);
+                                return;
+                            }
                         };
-                        let blob: Blob = JsFuture::from(resp.blob().unwrap()).await.unwrap().dyn_into().unwrap();
+                        let blob: Blob = JsFuture::from(resp.blob().unwrap())
+                            .await
+                            .unwrap()
+                            .dyn_into()
+                            .unwrap();
                         if js_sys::Reflect::set(&obj, &"patch".into(), &blob).is_err() {
                             return;
                         }
@@ -155,7 +189,9 @@ impl Component for App {
     }
 
     fn view(&self, ctx: &Context<Self>) -> Html {
-        let msg = <Rc<Option<String>> as Borrow<Option<String>>>::borrow(&self.msg).as_ref().map(|msg| msg.to_owned());
+        let msg = <Rc<Option<String>> as Borrow<Option<String>>>::borrow(&self.msg)
+            .as_ref()
+            .map(|msg| msg.to_owned());
         html! {
             <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching} status={msg} progress={*self.progress}></MainForm>
         }

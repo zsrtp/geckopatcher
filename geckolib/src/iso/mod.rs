@@ -38,7 +38,10 @@ impl TryFrom<u8> for FstNodeType {
         match value {
             0 => Ok(FstNodeType::File),
             1 => Ok(FstNodeType::Directory),
-            n => Err(eyre::eyre!("Out of range value for FstNodeType [value = {}]", n)),
+            n => Err(eyre::eyre!(
+                "Out of range value for FstNodeType [value = {}]",
+                n
+            )),
         }
     }
 }

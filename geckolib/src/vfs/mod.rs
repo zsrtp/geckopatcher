@@ -3,6 +3,8 @@ use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNodeType};
+#[cfg(feature = "progress")]
+use crate::UPDATER;
 use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
 use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
 use async_std::sync::{Arc, Mutex};
@@ -10,8 +12,6 @@ use byteorder::{ByteOrder, BE};
 use eyre::Result;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
-#[cfg(feature = "progress")]
-use crate::UPDATER;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
 use std::task::{Context, Poll};
@@ -474,7 +474,13 @@ where
         #[cfg(feature = "progress")]
         let write_total_size = output_fst
             .iter()
-            .filter_map(|f| if f.kind == FstNodeType::File {Some(f.file_size_next_dir_index as u64)} else {None})
+            .filter_map(|f| {
+                if f.kind == FstNodeType::File {
+                    Some(f.file_size_next_dir_index as u64)
+                } else {
+                    None
+                }
+            })
             .sum::<u64>();
 
         for entry in output_fst {
@@ -510,7 +516,11 @@ where
             #[cfg(feature = "progress")]
             if let Ok(updater) = UPDATER.lock() {
                 if let Some(on_msg_cb) = updater.on_msg_cb {
-                    on_msg_cb(format!("{:<32.32} ({:<})", file.name(), human_bytes(file.len() as f64)))?;
+                    on_msg_cb(format!(
+                        "{:<32.32} ({:<})",
+                        file.name(),
+                        human_bytes(file.len() as f64)
+                    ))?;
                 }
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;

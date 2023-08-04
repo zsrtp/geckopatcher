@@ -52,51 +52,51 @@ macro_rules! trace {
 #[macro_export]
 macro_rules! log {
     // log!(target: "my_target", Level::Info, key1 = 42, key2 = true; "a {} event", "log");
-    (target: $target:expr, $lvl:expr, $($key:tt = $value:expr),+; $($arg:tt)+) => ();
+    (target: $target:expr, $lvl:expr, $($key:tt = $value:expr),+; $($arg:tt)+) => {};
 
     // log!(target: "my_target", Level::Info, "a {} event", "log");
-    (target: $target:expr, $lvl:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $lvl:expr, $($arg:tt)+) => {};
 
     // log!(Level::Info, "a log event")
-    ($lvl:expr, $($arg:tt)+) => ();
+    ($lvl:expr, $($arg:tt)+) => {};
 }
 
 #[cfg(not(feature = "log"))]
 #[macro_export]
 macro_rules! error {
-    (target: $target:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $($arg:tt)+) => {};
 
-    ($($arg:tt)+) => ();
+    ($($arg:tt)+) => {};
 }
 
 #[cfg(not(feature = "log"))]
 #[macro_export]
 macro_rules! warn {
-    (target: $target:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $($arg:tt)+) => {};
 
-    ($($arg:tt)+) => ();
+    ($($arg:tt)+) => {};
 }
 
 #[cfg(not(feature = "log"))]
 #[macro_export]
 macro_rules! info {
-    (target: $target:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $($arg:tt)+) => {};
 
-    ($($arg:tt)+) => ();
+    ($($arg:tt)+) => {};
 }
 
 #[cfg(not(feature = "log"))]
 #[macro_export]
 macro_rules! debug {
-    (target: $target:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $($arg:tt)+) => {};
 
-    ($($arg:tt)+) => ();
+    ($($arg:tt)+) => {};
 }
 
 #[cfg(not(feature = "log"))]
 #[macro_export]
 macro_rules! trace {
-    (target: $target:expr, $($arg:tt)+) => ();
+    (target: $target:expr, $($arg:tt)+) => {};
 
-    ($($arg:tt)+) => ();
+    ($($arg:tt)+) => {};
 }

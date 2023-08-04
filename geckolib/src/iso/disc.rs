@@ -323,8 +323,7 @@ impl Ticket {
         self.sig.sig.fill(0);
         self.sig.sig_padding.fill(0);
         self.fake_sign.fill(0);
-        tik_buf[..Ticket::BLOCK_SIZE]
-            .copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&*self));
+        tik_buf[..Ticket::BLOCK_SIZE].copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&*self));
         // start brute force
         crate::trace!("Ticket fake signing; starting brute force...");
         let mut val = 0u32;
@@ -378,7 +377,12 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
         unk5.copy_from_slice(&buf[0x1F2..0x242]);
         fake_sign.copy_from_slice(&buf[0x24C..0x2A4]);
         Ticket {
-            sig: SignatureRSA2048 { sig_type: BE::read_u32(&buf[0x00..]), sig, sig_padding, sig_issuer },
+            sig: SignatureRSA2048 {
+                sig_type: BE::read_u32(&buf[0x00..]),
+                sig,
+                sig_padding,
+                sig_issuer,
+            },
             server_public_key,
             version: buf[0x1BC],
             ca_crl_version: buf[0x1BD],
@@ -630,7 +634,8 @@ impl TitleMetaData {
         loop {
             BE::write_u32(&mut tmd_buf[0x19a..][..4], val);
             hash_0 = Sha1::from(&tmd_buf[0x140..][..tmd_size - 0x140])
-                    .digest().bytes()[0];
+                .digest()
+                .bytes()[0];
             if hash_0 == 0 {
                 break;
             }

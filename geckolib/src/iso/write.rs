@@ -133,12 +133,12 @@ pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
     writer: W,
 }
 
-#[cfg(feature="parallel")]
+#[cfg(feature = "parallel")]
 fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl ParallelIterator<Item = &mut [u8]> {
     data.par_chunks_exact_mut(chunk_size)
 }
 
-#[cfg(not(feature="parallel"))]
+#[cfg(not(feature = "parallel"))]
 fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl Iterator<Item = &mut [u8]> {
     data.chunks_exact_mut(chunk_size)
 }
@@ -173,7 +173,7 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
                 .digest()
                 .bytes()[..],
             );
-        };
+        }
         for j in 0..8 {
             data[j * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8]
                 .copy_from_slice(&hash);
@@ -623,6 +623,9 @@ where
                                 if let Ok(updater) = UPDATER.lock() {
                                     if let Some(on_title_cb) = updater.on_title_cb {
                                         let _ = on_title_cb("Encrypting partition".to_string());
+                                    }
+                                    if let Some(finish_cb) = updater.finish_cb {
+                                        let _ = finish_cb();
                                     }
                                     if let Some(init_cb) = updater.init_cb {
                                         let _ = init_cb(None);

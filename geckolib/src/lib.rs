@@ -6,9 +6,9 @@ extern crate thiserror;
 #[macro_use]
 extern crate lazy_static;
 extern crate async_std;
-extern crate num;
 extern crate cbc;
 extern crate eyre;
+extern crate num;
 extern crate serde;
 extern crate sha1_smol;
 #[macro_use]
@@ -18,13 +18,17 @@ pub mod config;
 pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
-pub mod vfs;
 #[cfg(feature = "progress")]
 pub mod update;
+pub mod vfs;
 
-use config::Config;
-#[cfg(all(not(feature = "web"), not(target_family = "wasm"), not(target_os = "unknown")))]
+#[cfg(all(
+    not(feature = "web"),
+    not(target_family = "wasm"),
+    not(target_os = "unknown")
+))]
 use async_std::fs::read;
+use config::Config;
 #[cfg(not(feature = "web"))]
 use std::collections::HashMap;
 #[cfg(not(feature = "web"))]
@@ -38,7 +42,8 @@ use zip::{write::FileOptions, ZipWriter};
 
 #[cfg(feature = "progress")]
 lazy_static! {
-    pub static ref UPDATER: std::sync::Arc<std::sync::Mutex<update::Updater<eyre::Report, usize>>> = std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
+    pub static ref UPDATER: std::sync::Arc<std::sync::Mutex<update::Updater<eyre::Report, usize>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
 }
 
 pub enum IsoBuilder {

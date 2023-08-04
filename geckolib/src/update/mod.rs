@@ -27,7 +27,17 @@ pub struct Updater<E, U: num::Unsigned = usize> {
 
 impl<E, U: num::Unsigned> Default for Updater<E, U> {
     fn default() -> Self {
-        Self { init_cb: Default::default(), prepare_cb: Default::default(), inc_cb: Default::default(), tick_cb: Default::default(), finish_cb: Default::default(), reset_cb: Default::default(), on_msg_cb: Default::default(), on_type_cb: Default::default(), on_title_cb: Default::default() }
+        Self {
+            init_cb: Default::default(),
+            prepare_cb: Default::default(),
+            inc_cb: Default::default(),
+            tick_cb: Default::default(),
+            finish_cb: Default::default(),
+            reset_cb: Default::default(),
+            on_msg_cb: Default::default(),
+            on_type_cb: Default::default(),
+            on_title_cb: Default::default(),
+        }
     }
 }
 
