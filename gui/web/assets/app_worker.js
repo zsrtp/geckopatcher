@@ -50,7 +50,7 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                         })
                         .then(([gameCode,]) => {
                             console.debug("Done", gameCode);
-                            globalThis.postMessage({ type: "done", is_wii: gameCode.startsWith("RZD") });
+                            globalThis.postMessage({ type: "done", is_wii: gameCode.startsWith("R") });
                         })
                         .catch((err) => { globalThis.postMessage({ type: "cancelled" }); throw err; })
                         .finally(() => {
