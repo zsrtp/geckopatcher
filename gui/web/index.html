@@ -84,8 +84,8 @@
 
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon_ios_touch_192.png">
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="black">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fff">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#000">
 
     <style>
         :root {
@@ -106,25 +106,6 @@
             justify-content: center;
         }
 
-        @media (prefers-color-scheme: dark) {
-            body {
-                /* Dark mode background color for what is not covered by the egui canvas,
-                or where the egui canvas is translucent. */
-                background: #000000;
-                color: #f0f0f0;
-            }
-        }
-
-        /* Allow canvas to fill entire web page: */
-        html,
-        body {
-            overflow: hidden;
-            margin: 0 !important;
-            padding: 0 !important;
-            height: 100%;
-            width: 100%;
-        }
-
         /* ---------------------------------------------- */
         /* Loading animation from https://loading.io/css/ */
         .lds-dual-ring {
@@ -140,9 +121,33 @@
             height: 20px;
             margin: 0px;
             border-radius: 50%;
-            border: 3px solid #fff;
-            border-color: #fff transparent #fff transparent;
             animation: lds-dual-ring 1.2s linear infinite;
+            border: 3px solid #fff;
+            border-color: #fff #000 #fff #000;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                /* Dark mode background color for what is not covered by the egui canvas,
+                or where the egui canvas is translucent. */
+                background: #000;
+                color: #fff;
+            }
+
+            .lds-dual-ring:after {
+                border: 3px solid #000;
+                border-color: #000 #fff #000 #fff;
+            }
+        }
+
+        /* Allow canvas to fill entire web page: */
+        html,
+        body {
+            overflow: hidden;
+            margin: 0 !important;
+            padding: 0 !important;
+            height: 100%;
+            width: 100%;
         }
 
         @keyframes lds-dual-ring {
