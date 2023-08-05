@@ -517,7 +517,7 @@ where
             if let Ok(updater) = UPDATER.lock() {
                 if let Some(on_msg_cb) = updater.on_msg_cb {
                     on_msg_cb(format!(
-                        "{:<32.32} ({:<})",
+                        "{:<32.32} ({:>8})",
                         file.name(),
                         human_bytes(file.len() as f64)
                     ))?;

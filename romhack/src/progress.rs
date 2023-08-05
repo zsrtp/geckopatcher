@@ -48,13 +48,20 @@ fn init_cb(len: Option<usize>) -> color_eyre::Result<()> {
                 .bar
                 .set_prefix(format!("[{}/?]", progress.title_idx));
             progress.bar.enable_steady_tick(Duration::from_millis(200));
+            // .tick_chars("⣉⡜⠶⢣ ")
+            // .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
+            // .tick_chars("⡇⠏⠗⠫⢓⡩⢕⡣⢇ ")
             progress.bar.set_style(match progress.type_ {
                 UpdaterType::Spinner => {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
+                    .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
+                    .progress_chars("█▉▊▋▌▍▎▏ ")
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
                     "{spinner} {prefix:.bold.dim} {msg} {wide_bar} {percent}% {human_pos}/{human_len:6}",
-                )?,
+                )?
+                .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
+                .progress_chars("█▉▊▋▌▍▎▏ "),
             });
             Ok(())
         }
