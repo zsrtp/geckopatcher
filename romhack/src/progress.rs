@@ -50,19 +50,17 @@ fn init_cb(len: Option<usize>) -> color_eyre::Result<()> {
             progress.bar.enable_steady_tick(Duration::from_millis(200));
             // .tick_chars("⣉⡜⠶⢣ ")
             // .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
-            // .tick_chars("⡇⠏⠗⠫⢓⡩⢕⡣⢇ ")
+            // .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
             progress.bar.set_style(match progress.type_ {
                 UpdaterType::Spinner => {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
-                    .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
-                    .progress_chars("█▉▊▋▌▍▎▏ ")
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
                     "{spinner} {prefix:.bold.dim} {msg} {wide_bar} {percent}% {human_pos}/{human_len:6}",
-                )?
-                .tick_chars(" ⠁⠃⠇⡇⣇⣧⣷⣿⣾⣼⣸⢸⠸⠘⠈ ")
-                .progress_chars("█▉▊▋▌▍▎▏ "),
-            });
+                )?,
+            }
+            .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
+            .progress_chars("█▉▊▋▌▍▎▏ "));
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
@@ -103,6 +101,16 @@ fn reset_cb() -> color_eyre::Result<()> {
         Ok(mut progress) => {
             progress.title_idx = 0;
             progress.bar.reset();
+            Ok(())
+        }
+        Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
+    }
+}
+
+fn set_pos_cb(length: usize) -> color_eyre::Result<()> {
+    match BAR.lock() {
+        Ok(progress) => {
+            progress.bar.set_position(length as u64);
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
@@ -159,6 +167,7 @@ pub fn init_cli_progress() {
             .tick(Some(tick_cb))
             .finish(Some(finish_cb))
             .reset(Some(reset_cb))
+            .set_pos(Some(set_pos_cb))
             .set_message(Some(on_msg_cb))
             .set_title(Some(on_title_cb))
             .set_type(Some(on_type_cb));

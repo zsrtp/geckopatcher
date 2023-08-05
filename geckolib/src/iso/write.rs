@@ -621,14 +621,14 @@ where
                             } else {
                                 #[cfg(feature = "progress")]
                                 if let Ok(updater) = UPDATER.lock() {
-                                    if let Some(finish_cb) = updater.finish_cb {
-                                        let _ = finish_cb();
-                                    }
-                                    if let Some(init_cb) = updater.init_cb {
-                                        let _ = init_cb(None);
-                                    }
                                     if let Some(on_title_cb) = updater.on_title_cb {
                                         let _ = on_title_cb("Encrypting partition".to_string());
+                                    }
+                                    // if let Some(finish_cb) = updater.finish_cb {
+                                    //     let _ = finish_cb();
+                                    // }
+                                    if let Some(set_pos_cb) = updater.set_pos_cb {
+                                        let _ = set_pos_cb(0);
                                     }
                                     if let Some(on_msg_cb) = updater.on_msg_cb {
                                         let _ = on_msg_cb("Encrypting partition".to_string());
