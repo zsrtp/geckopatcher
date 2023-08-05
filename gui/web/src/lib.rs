@@ -373,11 +373,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             <legend>{"ISO Patcher"}</legend>
             <PatchInput callback={patch_input_callback} disabled={is_patching} />
             <IsoInput callback={iso_change_callback} disabled={is_patching} />
-            <div class="spinner">
-            if is_patching {
-                <div class="lds-dual-ring"></div>
-            }
-            </div>
+            <div/>
             <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
             <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
         </fieldset>
