@@ -122,11 +122,10 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
     };
 
     let mut out = std::pin::pin!(out);
-    let fs = GeckoFS::parse(f).await?;
+    let mut fs = GeckoFS::parse(f).await?;
     {
-        let mut fs_guard = fs.lock_arc().await;
         let is_wii = out.get_type() == DiscType::Wii;
-        fs_guard.serialize(&mut out, is_wii).await?;
+        fs.serialize(&mut out, is_wii).await?;
         if is_wii {
             log::info!("Encrypting the ISO");
         }

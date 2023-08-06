@@ -57,15 +57,12 @@ fn main() -> color_eyre::eyre::Result<()> {
         };
 
         let mut out = std::pin::pin!(out);
-        let fs = GeckoFS::parse(f).await?;
-        {
-            let mut fs_guard = fs.lock_arc().await;
-            let is_wii = out.get_type() == DiscType::Wii;
-            fs_guard.serialize(&mut out, is_wii).await?;
-            #[cfg(feature = "log")]
-            log::info!("Encrypting the ISO");
-            out.finalize().await?;
-        }
+        let mut fs = GeckoFS::parse(f).await?;
+        let is_wii = out.get_type() == DiscType::Wii;
+        fs.serialize(&mut out, is_wii).await?;
+        #[cfg(feature = "log")]
+        log::info!("Encrypting the ISO");
+        out.finalize().await?;
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
     Ok(())

@@ -38,9 +38,8 @@ fn main() -> color_eyre::eyre::Result<()> {
         );
         {
             let f = Arc::new(Mutex::new(f));
-            let fs = GeckoFS::parse(f).await?;
-            let mut guard = fs.lock_arc().await;
-            let file = guard.sys_mut().get_file_mut("Start.dol")?;
+            let mut fs = GeckoFS::parse(f).await?;
+            let file = fs.sys_mut().get_file_mut("Start.dol")?;
             let size = file.seek(SeekFrom::End(0)).await? as usize;
             file.seek(SeekFrom::Start(0)).await?;
             let mut buf = vec![0u8; size];
@@ -56,7 +55,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             );
             log::info!(
                 "Has banner: {:?}",
-                guard.root_mut().get_file("opening.bnr").is_ok()
+                fs.root_mut().get_file("opening.bnr").is_ok()
             );
         }
         <color_eyre::eyre::Result<()>>::Ok(())

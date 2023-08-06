@@ -129,6 +129,25 @@ fn reset_cb() -> eyre::Result<()> {
     }
 }
 
+fn set_pos_cb(pos: usize) -> eyre::Result<()> {
+    match BAR.lock() {
+        Ok(mut progress) => {
+            progress.pos = pos;
+            send_progress(
+                &progress.sender,
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64)
+                } else {
+                    None
+                },
+            );
+            Ok(())
+        }
+        Err(err) => Err(eyre::eyre!("{:?}", err)),
+    }
+}
+
 fn on_title_cb(title: String) -> eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
@@ -177,6 +196,7 @@ pub fn init_gui_progress(sender: Sender<FromAppMsg>) {
             .increment(Some(inc_cb))
             .finish(Some(finish_cb))
             .reset(Some(reset_cb))
+            .set_pos(Some(set_pos_cb))
             .set_title(Some(on_title_cb))
             .set_type(Some(on_type_cb));
     }

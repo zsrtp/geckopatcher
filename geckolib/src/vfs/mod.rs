@@ -75,13 +75,16 @@ pub enum NodeEnum<R: AsyncRead + AsyncSeek> {
 pub struct GeckoFS<R: AsyncRead + AsyncSeek> {
     pub(super) root: Directory<R>,
     pub(super) system: Directory<R>,
-    reader: Arc<Mutex<DiscReader<R>>>,
 }
 
 impl<R> GeckoFS<R>
 where
     R: AsyncRead + AsyncSeek + 'static,
 {
+    pub fn new() -> Self {
+        Self { root: Directory::new(""), system: Directory::new("&&systemdata") }
+    }
+
     #[doc = r"Utility function to read the disc."]
     async fn read_exact<R2: DerefMut<Target = DiscReader<R>>>(
         reader: &mut R2,
@@ -96,6 +99,7 @@ where
         mut cur_index: usize,
         fst: &Vec<FstEntry>,
         parent_dir: &mut Directory<R>,
+        reader: &Arc<Mutex<DiscReader<R>>>,
     ) -> usize {
         let entry = &fst[cur_index];
 
@@ -103,11 +107,11 @@ where
             let dir = parent_dir.mkdir(entry.relative_file_name.clone());
 
             while cur_index < entry.file_size_next_dir_index - 1 {
-                cur_index = GeckoFS::get_dir_structure_recursive(cur_index + 1, fst, dir);
+                cur_index = GeckoFS::get_dir_structure_recursive(cur_index + 1, fst, dir, reader);
             }
         } else {
             parent_dir.add_file(File::new(
-                FileDataSource::Reader(parent_dir.reader.clone()),
+                FileDataSource::Reader(reader.clone()),
                 entry.relative_file_name.clone(),
                 entry.file_offset_parent_dir,
                 entry.file_size_next_dir_index,
@@ -118,9 +122,9 @@ where
         cur_index
     }
 
-    pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Arc<Mutex<Self>>> {
-        let mut root = Directory::new(reader.clone(), "");
-        let mut system = Directory::new(reader.clone(), "&&systemdata");
+    pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Self> {
+        let mut root = Directory::new("");
+        let mut system = Directory::new("&&systemdata");
         {
             let mut guard = reader.lock_arc().await;
             let is_wii = guard.get_type() == DiscType::Wii;
@@ -311,15 +315,14 @@ where
 
             let mut count = 0;
             while count + 1 < num_entries {
-                count = GeckoFS::get_dir_structure_recursive(count + 1, &fst_entries, &mut root);
+                count = GeckoFS::get_dir_structure_recursive(count + 1, &fst_entries, &mut root, &reader);
             }
         }
         crate::debug!("{} children", root.children.len());
-        Ok(Arc::new(Mutex::new(Self {
+        Ok(Self {
             root,
             system,
-            reader: reader.clone(),
-        })))
+        })
     }
 
     /// Visits the directory tree to calculate the length of the FST table
@@ -562,9 +565,14 @@ where
     pub fn root_mut(&mut self) -> &mut Directory<R> {
         &mut self.root
     }
+}
 
-    pub async fn get_disc_type(&self) -> DiscType {
-        self.reader.lock_arc().await.get_type()
+impl<R> Default for GeckoFS<R>
+where
+    R: AsyncRead + AsyncSeek + 'static,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -608,18 +616,16 @@ where
 pub struct Directory<R: AsyncRead + AsyncSeek> {
     name: String,
     children: Vec<Box<dyn Node<R>>>,
-    reader: Arc<Mutex<DiscReader<R>>>,
 }
 
 impl<R> Directory<R>
 where
     R: AsyncRead + AsyncSeek + 'static,
 {
-    pub fn new<S: Into<String>>(reader: Arc<Mutex<DiscReader<R>>>, name: S) -> Directory<R> {
+    pub fn new<S: Into<String>>(name: S) -> Directory<R> {
         Self {
             name: name.into(),
             children: Vec::new(),
-            reader,
         }
     }
 
@@ -674,7 +680,7 @@ where
     pub fn mkdir(&mut self, name: String) -> &mut Directory<R> {
         if self.children.iter().all(|c| c.name() != name) {
             self.children
-                .push(Box::new(Directory::new(self.reader.clone(), name)));
+                .push(Box::new(Directory::new(name)));
             self.children
                 .last_mut()
                 .map(|x| x.as_directory_mut().unwrap())

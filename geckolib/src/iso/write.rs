@@ -965,7 +965,7 @@ where
     pub async fn new(writer: W, disc_info: Option<WiiDisc>) -> Result<Self> {
         match disc_info {
             None => DiscWriter::new_gc(writer).await,
-            Some(disc_indo) => DiscWriter::new_wii(writer, disc_indo).await,
+            Some(disc_info) => DiscWriter::new_wii(writer, disc_info).await,
         }
     }
 
