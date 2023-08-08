@@ -14,15 +14,12 @@ use std::task::Poll;
 
 #[derive(Debug)]
 #[pin_project]
-pub struct GCDiscReader<R: AsyncRead + AsyncSeek> {
+pub struct GCDiscReader<R> {
     #[pin]
     reader: R,
 }
 
-impl<R> GCDiscReader<R>
-where
-    R: AsyncRead + AsyncSeek,
-{
+impl<R> GCDiscReader<R> {
     pub fn new(reader: R) -> Self {
         Self { reader }
     }
@@ -30,7 +27,7 @@ where
 
 impl<R> Clone for GCDiscReader<R>
 where
-    R: AsyncRead + AsyncSeek + Clone,
+    R: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -41,7 +38,7 @@ where
 
 impl<R> AsyncSeek for GCDiscReader<R>
 where
-    R: AsyncRead + AsyncSeek,
+    R: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -52,7 +49,7 @@ where
     }
 }
 
-impl<R: AsyncRead + AsyncSeek> AsyncRead for GCDiscReader<R> {
+impl<R: AsyncRead> AsyncRead for GCDiscReader<R> {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -70,7 +67,7 @@ enum WiiDiscReaderState {
 
 #[derive(Debug)]
 #[pin_project]
-pub struct WiiDiscReader<R: AsyncRead + AsyncSeek> {
+pub struct WiiDiscReader<R> {
     pub disc_info: WiiDisc,
     // Virtual cursor which tracks where in the decrypted partition we are reading from.
     cursor: u64,
@@ -183,7 +180,7 @@ where
 
 impl<R> Clone for WiiDiscReader<R>
 where
-    R: AsyncRead + AsyncSeek + Clone,
+    R: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -197,7 +194,7 @@ where
 
 impl<R> AsyncSeek for WiiDiscReader<R>
 where
-    R: AsyncRead + AsyncSeek,
+    R: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -243,7 +240,10 @@ where
     }
 }
 
-impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
+impl<R> AsyncRead for WiiDiscReader<R>
+where
+    R: AsyncRead + AsyncSeek,
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -358,14 +358,14 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for WiiDiscReader<R> {
 
 #[derive(Debug)]
 #[pin_project(project = DiskReaderProj)]
-pub enum DiscReader<R: AsyncRead + AsyncSeek> {
+pub enum DiscReader<R> {
     Gamecube(#[pin] GCDiscReader<Pin<Box<R>>>),
     Wii(#[pin] Box<WiiDiscReader<Pin<Box<R>>>>),
 }
 
 impl<R> AsyncSeek for DiscReader<R>
 where
-    R: AsyncRead + AsyncSeek,
+    R: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,

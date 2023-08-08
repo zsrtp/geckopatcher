@@ -21,6 +21,7 @@ toml = "^0.7"
 indicatif = "^0.17"
 num = "^0.4"
 lazy_static = "^1.4"
+colored = { version = "^2.0", optional = true }
 
 [build-dependencies]
 
@@ -35,7 +36,7 @@ log = [
     "async-std/log",
     "async-std/kv-log-macro",
 ]
-progress = ["geckolib/progress"]
+progress = ["geckolib/progress", "colored"]
 parallel = ["geckolib/parallel"]
 
 [[example]]
@@ -43,3 +44,6 @@ name = "title"
 
 [[example]]
 name = "reproc"
+
+[[example]]
+name = "gen"

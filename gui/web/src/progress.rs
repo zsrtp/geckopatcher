@@ -1,6 +1,9 @@
 use std::sync::{Arc, Mutex};
 
-use geckolib::{update::UpdaterType, UPDATER};
+use geckolib::{
+    update::{UpdaterBuilder, UpdaterType},
+    UPDATER,
+};
 use js_sys::Reflect;
 use lazy_static::lazy_static;
 use wasm_bindgen::{JsCast, JsValue};
@@ -185,13 +188,14 @@ fn on_type_cb(type_: UpdaterType) -> eyre::Result<()> {
 
 pub fn init_web_progress() {
     if let Ok(mut updater) = UPDATER.lock() {
-        updater
-            .init(Some(init_cb))
+        let mut ub = UpdaterBuilder::new();
+        ub.init(Some(init_cb))
             .increment(Some(inc_cb))
             .finish(Some(finish_cb))
             .reset(Some(reset_cb))
             .set_pos(Some(set_pos_cb))
             .set_title(Some(on_title_cb))
             .set_type(Some(on_type_cb));
+        *updater = ub.build();
     }
 }

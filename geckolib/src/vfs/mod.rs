@@ -14,6 +14,8 @@ use eyre::Result;
 use human_bytes::human_bytes;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
+#[cfg(feature = "progress")]
+use std::sync::TryLockError;
 use std::task::{Context, Poll};
 
 pub trait Node<R: AsyncRead + AsyncSeek> {
@@ -503,48 +505,47 @@ where
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
-        if let Ok(updater) = UPDATER.lock() {
-            if let Some(on_type_cb) = updater.on_type_cb {
-                on_type_cb(crate::update::UpdaterType::Progress)?;
-            }
-            if let Some(init_cb) = updater.init_cb {
-                init_cb(Some(write_total_size as usize))?;
-            }
-            if let Some(on_title_cb) = updater.on_title_cb {
-                on_title_cb("Writing virtual FileSystem".to_string())?;
-            }
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.set_type(crate::update::UpdaterType::Progress)?;
+            updater.init(Some(write_total_size as usize))?;
+            updater.set_title("Writing virtual FileSystem".to_string())?;
         }
         let mut offset = writer.seek(SeekFrom::Current(0)).await? as usize;
+        #[cfg(feature = "progress")]
+        let mut inc_buffer = 0usize;
         for file in self.root.iter_recurse_mut() {
             #[cfg(feature = "progress")]
-            if let Ok(updater) = UPDATER.lock() {
-                if let Some(on_msg_cb) = updater.on_msg_cb {
-                    on_msg_cb(format!(
-                        "{:<32.32} ({:>8})",
-                        file.name(),
-                        human_bytes(file.len() as f64)
-                    ))?;
-                }
+            if let Ok(mut updater) = UPDATER.try_lock() {
+                updater.set_message(format!(
+                    "{:<32.32} ({:>8})",
+                    file.name(),
+                    human_bytes(file.len() as f64)
+                ))?;
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
             // async_std::io::copy(file, writer).await?; // way too slow
             let mut buf = Vec::with_capacity(file.len());
             file.read_to_end(&mut buf).await?;
-            writer.write_all(&buf).await?;
-            offset += file.len();
-            #[cfg(feature = "progress")]
-            if let Ok(updater) = UPDATER.lock() {
-                if let Some(inc_cb) = updater.inc_cb {
-                    inc_cb(file.len())?;
+            for chunk in buf.chunks(1024*1024) {
+                writer.write_all(chunk).await?;
+                #[cfg(feature = "progress")]
+                match UPDATER.try_lock() {
+                    Ok(mut updater) => {
+                        updater.increment(chunk.len() + inc_buffer)?;
+                        inc_buffer = 0;
+                    }
+                    Err(TryLockError::WouldBlock) => {
+                        inc_buffer += chunk.len();
+                    },
+                    _ => (),
                 }
             }
+            offset += file.len();
         }
         #[cfg(feature = "progress")]
-        if let Ok(updater) = UPDATER.lock() {
-            if let Some(finish_cb) = updater.finish_cb {
-                finish_cb()?;
-            }
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.finish()?;
         }
 
         Ok(())

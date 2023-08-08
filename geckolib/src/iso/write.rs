@@ -26,15 +26,12 @@ use super::disc::{decrypt_title_key, DiscType, WiiDisc, WiiPartition};
 
 #[derive(Debug)]
 #[pin_project]
-pub struct GCDiscWriter<W: AsyncWrite + AsyncSeek> {
+pub struct GCDiscWriter<W> {
     #[pin]
     writer: W,
 }
 
-impl<W> GCDiscWriter<W>
-where
-    W: AsyncWrite + AsyncSeek,
-{
+impl<W> GCDiscWriter<W> {
     pub fn new(writer: W) -> Self {
         Self { writer }
     }
@@ -42,7 +39,7 @@ where
 
 impl<W> Clone for GCDiscWriter<W>
 where
-    W: AsyncWrite + AsyncSeek + Clone,
+    W: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -53,7 +50,7 @@ where
 
 impl<W> AsyncSeek for GCDiscWriter<W>
 where
-    W: AsyncWrite + AsyncSeek,
+    W: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -66,7 +63,7 @@ where
 
 impl<W> AsyncWrite for GCDiscWriter<W>
 where
-    W: AsyncWrite + AsyncRead + AsyncSeek,
+    W: AsyncWrite,
 {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -122,7 +119,7 @@ enum WiiDiscWriterFinalizeState {
 
 #[derive(Debug)]
 #[pin_project]
-pub struct WiiDiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
+pub struct WiiDiscWriter<W> {
     pub disc: WiiDisc,
     hashes: Vec<[u8; consts::WII_HASH_SIZE]>,
     // Virtual cursor which tracks where in the decrypted partition we are writing from.
@@ -250,7 +247,7 @@ fn encrypt_group(group: &mut [u8], part_key: AesKey) {
 
 impl<W> WiiDiscWriter<W>
 where
-    W: AsyncWrite + AsyncRead + AsyncSeek + Unpin,
+    W: AsyncWrite + AsyncSeek + Unpin,
 {
     pub async fn init(disc: WiiDisc, writer: W) -> Result<Self> {
         crate::trace!("Writing Wii Disc and Partition headers");
@@ -350,16 +347,19 @@ where
 
         Ok(this)
     }
+}
 
+impl<W> WiiDiscWriter<W>
+where
+    W: AsyncWrite + AsyncRead + AsyncSeek + Unpin,
+{
     fn poll_close_disc(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let this = self.project();
         let part = &mut this.disc.partitions.partitions[this.disc.partitions.data_idx];
         let finalize_state = std::mem::take(this.finalize_state);
         #[cfg(feature = "progress")]
-        if let Ok(updater) = UPDATER.lock() {
-            if let Some(tick_cb) = updater.tick_cb {
-                tick_cb();
-            }
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.tick();
         }
         match finalize_state {
             WiiDiscWriterFinalizeState::Init => {
@@ -376,22 +376,12 @@ where
                 };
                 let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
                 #[cfg(feature = "progress")]
-                if let Ok(updater) = UPDATER.lock() {
-                    if let Some(finish_cb) = updater.finish_cb {
-                        let _ = finish_cb();
-                    }
-                    if let Some(on_type_cb) = updater.on_type_cb {
-                        let _ = on_type_cb(crate::update::UpdaterType::Progress);
-                    }
-                    if let Some(init_cb) = updater.init_cb {
-                        let _ = init_cb(Some(n_group as usize));
-                    }
-                    if let Some(on_title_cb) = updater.on_title_cb {
-                        let _ = on_title_cb("Building hash table".to_string());
-                    }
-                    if let Some(on_msg_cb) = updater.on_msg_cb {
-                        let _ = on_msg_cb("Building hash table".to_string());
-                    }
+                if let Ok(mut updater) = UPDATER.lock() {
+                    let _ = updater.finish();
+                    let _ = updater.set_type(crate::update::UpdaterType::Progress);
+                    let _ = updater.init(Some(n_group as usize));
+                    let _ = updater.set_title("Building hash table".to_string());
+                    let _ = updater.set_message("Building hash table".to_string());
                 }
                 this.hashes.clear();
                 this.hashes
@@ -546,19 +536,15 @@ where
                             vec![0u8; consts::WII_SECTOR_SIZE * 64],
                         );
                         #[cfg(feature = "progress")]
-                        if let Ok(updater) = UPDATER.lock() {
-                            if let Some(inc_cb) = updater.inc_cb {
-                                let _ = inc_cb(1);
-                            }
+                        if let Ok(mut updater) = UPDATER.lock() {
+                            let _ = updater.increment(1);
                         }
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     } else if part_key.is_some() {
                         #[cfg(feature = "progress")]
-                        if let Ok(updater) = UPDATER.lock() {
-                            if let Some(finish_cb) = updater.finish_cb {
-                                let _ = finish_cb();
-                            }
+                        if let Ok(mut updater) = UPDATER.lock() {
+                            let _ = updater.finish();
                         }
                         *this.finalize_state = WiiDiscWriterFinalizeState::Done;
                         Poll::Ready(Ok(()))
@@ -620,19 +606,10 @@ where
                                 )
                             } else {
                                 #[cfg(feature = "progress")]
-                                if let Ok(updater) = UPDATER.lock() {
-                                    if let Some(on_title_cb) = updater.on_title_cb {
-                                        let _ = on_title_cb("Encrypting partition".to_string());
-                                    }
-                                    // if let Some(finish_cb) = updater.finish_cb {
-                                    //     let _ = finish_cb();
-                                    // }
-                                    if let Some(set_pos_cb) = updater.set_pos_cb {
-                                        let _ = set_pos_cb(0);
-                                    }
-                                    if let Some(on_msg_cb) = updater.on_msg_cb {
-                                        let _ = on_msg_cb("Encrypting partition".to_string());
-                                    }
+                                if let Ok(mut updater) = UPDATER.lock() {
+                                    let _ = updater.set_title("Encrypting partition".to_string());
+                                    let _ = updater.set_pos(0);
+                                    let _ = updater.set_message("Encrypting partition".to_string());
                                 }
                                 WiiDiscWriterFinalizeState::SeekToStart(Some(part_key))
                             };
@@ -662,7 +639,7 @@ where
     }
 }
 
-pub struct FinalizeFuture<'a, W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> {
+pub struct FinalizeFuture<'a, W> {
     pub(crate) writer: &'a mut WiiDiscWriter<W>,
 }
 
@@ -680,7 +657,7 @@ impl<'a, W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> Future for FinalizeFutur
 
 impl<W> Clone for WiiDiscWriter<W>
 where
-    W: AsyncWrite + AsyncRead + AsyncSeek + Unpin + Clone,
+    W: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -696,7 +673,7 @@ where
 
 impl<W> AsyncSeek for WiiDiscWriter<W>
 where
-    W: AsyncWrite + AsyncRead + AsyncSeek + Unpin,
+    W: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -889,14 +866,14 @@ where
 
 #[derive(Debug)]
 #[pin_project(project = DiscWriterProj)]
-pub enum DiscWriter<W: AsyncWrite + AsyncRead + AsyncSeek> {
+pub enum DiscWriter<W> {
     Gamecube(#[pin] GCDiscWriter<Pin<Box<W>>>),
     Wii(#[pin] Box<WiiDiscWriter<Pin<Box<W>>>>),
 }
 
 impl<W> AsyncSeek for DiscWriter<W>
 where
-    W: AsyncWrite + AsyncRead + AsyncSeek,
+    W: AsyncSeek,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
@@ -946,16 +923,25 @@ where
     }
 }
 
-impl<W> DiscWriter<W>
-where
-    W: AsyncWrite + AsyncRead + AsyncSeek,
-{
+impl<W> DiscWriter<W> {
     pub async fn new_gc(writer: W) -> Result<Self> {
         Ok(Self::Gamecube(GCDiscWriter {
             writer: Box::pin(writer),
         }))
     }
 
+    pub fn get_type(&self) -> DiscType {
+        match self {
+            DiscWriter::Gamecube(_) => DiscType::Gamecube,
+            DiscWriter::Wii(_) => DiscType::Wii,
+        }
+    }
+}
+
+impl<W> DiscWriter<W>
+where
+    W: AsyncWrite + AsyncSeek,
+{
     pub async fn new_wii(writer: W, disc: WiiDisc) -> Result<Self> {
         Ok(Self::Wii(Box::new(
             WiiDiscWriter::init(disc, Box::pin(writer)).await?,
@@ -968,14 +954,12 @@ where
             Some(disc_info) => DiscWriter::new_wii(writer, disc_info).await,
         }
     }
+}
 
-    pub fn get_type(&self) -> DiscType {
-        match self {
-            DiscWriter::Gamecube(_) => DiscType::Gamecube,
-            DiscWriter::Wii(_) => DiscType::Wii,
-        }
-    }
-
+impl<W> DiscWriter<W>
+where
+    W: AsyncWrite + AsyncRead + AsyncSeek,
+{
     pub async fn finalize(&mut self) -> io::Result<()> {
         match self {
             DiscWriter::Gamecube(_) => Ok(()),

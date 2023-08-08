@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use flume::Sender;
-use geckolib::{update::UpdaterType, UPDATER};
+use geckolib::{update::{UpdaterType, UpdaterBuilder}, UPDATER};
 use lazy_static::lazy_static;
 
 use crate::app::FromAppMsg;
@@ -191,13 +191,14 @@ pub fn init_gui_progress(sender: Sender<FromAppMsg>) {
         progress.set_sender(Some(sender));
     }
     if let Ok(mut updater) = UPDATER.lock() {
-        updater
-            .init(Some(init_cb))
+        let mut ub = UpdaterBuilder::new();
+        ub.init(Some(init_cb))
             .increment(Some(inc_cb))
             .finish(Some(finish_cb))
             .reset(Some(reset_cb))
             .set_pos(Some(set_pos_cb))
             .set_title(Some(on_title_cb))
             .set_type(Some(on_type_cb));
+        *updater = ub.build();
     }
 }

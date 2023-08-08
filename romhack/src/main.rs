@@ -13,9 +13,8 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     task::block_on::<_, color_eyre::eyre::Result<()>>(async {
         let iso =
-            IsoBuilder::new_patch(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?)
-                .await;
-        iso.build().await?;
+            IsoBuilder::<std::fs::File>::new_patch(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?);
+        iso.build_raw().await?;
         Ok(())
     })?;
     Ok(())

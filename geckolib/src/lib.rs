@@ -29,16 +29,16 @@ pub mod vfs;
 ))]
 use async_std::fs::read;
 use config::Config;
-#[cfg(not(feature = "web"))]
-use std::collections::HashMap;
-#[cfg(not(feature = "web"))]
-use std::io::{Seek, Write};
-#[cfg(not(feature = "web"))]
-use std::path::PathBuf;
-#[cfg(not(feature = "web"))]
-use std::{fs::File, io::BufWriter};
-#[cfg(not(feature = "web"))]
+#[cfg(not(target_family = "wasm"))]
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{BufWriter, Seek, Write},
+    path::PathBuf,
+};
+#[cfg(not(target_family = "wasm"))]
 use zip::{write::FileOptions, ZipWriter};
+use zip::ZipArchive;
 
 #[cfg(feature = "progress")]
 lazy_static! {
@@ -46,12 +46,15 @@ lazy_static! {
         std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
 }
 
-pub enum IsoBuilder {
+pub enum IsoBuilder<R> {
+    Apply { config: Config, zip: ZipArchive<R> },
+    #[cfg(not(target_family = "wasm"))]
     Raw { config: Config },
+    #[cfg(not(target_family = "wasm"))]
     Patch { config: Config },
 }
 
-#[cfg(not(feature = "web"))]
+#[cfg(not(target_family = "wasm"))]
 fn write_file_to_zip<R: Write + Seek, S: Into<String>>(
     zip: &mut ZipWriter<R>,
     filename: S,
@@ -62,7 +65,7 @@ fn write_file_to_zip<R: Write + Seek, S: Into<String>>(
     Ok(())
 }
 
-#[cfg(not(feature = "web"))]
+#[cfg(not(target_family = "wasm"))]
 fn add_file_to_zip(
     index: usize,
     iso_path: &str,
@@ -76,7 +79,7 @@ fn add_file_to_zip(
     Ok(())
 }
 
-#[cfg(not(feature = "web"))]
+#[cfg(not(target_family = "wasm"))]
 fn add_entry_to_zip(
     index: &mut usize,
     iso_path: &String,
@@ -101,37 +104,57 @@ fn add_entry_to_zip(
     Ok(())
 }
 
-impl IsoBuilder {
-    #[cfg(not(feature = "web"))]
-    pub async fn new_raw(config: Config) -> Self {
-        Self::Raw { config }
+impl<R: std::io::Read + std::io::Seek> IsoBuilder<R> {
+    pub async fn open_config_from_patch(patch_reader: R) -> Result<Self, eyre::Report> {
+        let mut zip: ZipArchive<R> = ZipArchive::new(patch_reader)?;
+
+        let config: Config = {
+            let toml_file = zip.by_name("RomHack.toml")?;
+
+            toml::from_str(&std::io::read_to_string(toml_file)?)?
+        };
+
+        Ok(Self::Apply { config, zip })
     }
 
-    #[cfg(not(feature = "web"))]
-    pub async fn new_patch(config: Config) -> Self {
-        Self::Patch { config }
+    async fn apply_patch(&mut self) -> eyre::Result<()> {
+        Ok(())
     }
 
-    #[cfg(not(feature = "web"))]
-    pub async fn build(self) -> eyre::Result<()> {
+    pub async fn build_raw(self) -> eyre::Result<()> {
         match self {
+            mut s @ Self::Apply { config: _, zip: _ } => s.apply_patch().await?,
+            #[cfg(not(target_family = "wasm"))]
             Self::Raw { config } => {
-                Self::build_raw(config).await?;
+                Self::build_and_emit_iso(config).await?;
             }
+            #[cfg(not(target_family = "wasm"))]
             Self::Patch { config } => {
                 Self::build_patch(config).await?;
             }
         };
         Ok(())
     }
+}
 
-    #[cfg(not(feature = "web"))]
-    async fn build_raw(mut _config: Config) -> eyre::Result<()> {
+impl<R> IsoBuilder<R> {
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new_raw(config: Config) -> Self {
+        Self::Raw { config }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    pub fn new_patch(config: Config) -> Self {
+        Self::Patch { config }
+    }
+
+    #[cfg(not(target_family = "wasm"))]
+    async fn build_and_emit_iso(mut _config: Config) -> eyre::Result<()> {
         crate::debug!("");
         todo!()
     }
 
-    #[cfg(not(feature = "web"))]
+    #[cfg(not(target_family = "wasm"))]
     async fn build_patch(mut config: Config) -> eyre::Result<()> {
         crate::info!("Creating patch file");
         config.build.iso.set_extension("patch");
@@ -191,6 +214,8 @@ impl IsoBuilder {
             "RomHack.toml",
             toml::to_string(&config)?.as_bytes(),
         )?;
+
+        zip.finish()?;
 
         Ok(())
     }

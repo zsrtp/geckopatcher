@@ -3,10 +3,11 @@ use std::{
     time::Duration,
 };
 
-use geckolib::update::UpdaterType;
+use geckolib::update::{UpdaterType, UpdaterBuilder};
 use geckolib::UPDATER;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use lazy_static::lazy_static;
+use colored::Colorize;
 
 lazy_static! {
     static ref BAR: Arc<Mutex<CLIProgressBar>> = Arc::new(Mutex::new(CLIProgressBar::new()));
@@ -56,7 +57,7 @@ fn init_cb(len: Option<usize>) -> color_eyre::Result<()> {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
-                    "{spinner} {prefix:.bold.dim} {msg} {wide_bar} {percent}% {human_pos}/{human_len:6}",
+                    "{prefix:.bold.dim} {msg} {spinner} {wide_bar} {percent}% {human_pos}/{human_len:6}",
                 )?,
             }
             .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
@@ -131,10 +132,11 @@ fn on_title_cb(title: String) -> color_eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
             progress.title_idx += 1;
+            let prefix = format!("[{}/?]", progress.title_idx);
             progress
                 .bar
-                .set_prefix(format!("[{}/?]", progress.title_idx));
-            progress.bar.println(title);
+                .set_prefix(prefix.clone());
+            progress.bar.println(format!("{} {}", prefix.bold().dimmed(), title));
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
@@ -161,8 +163,8 @@ fn on_type_cb(type_: UpdaterType) -> color_eyre::Result<()> {
 
 pub fn init_cli_progress() {
     if let Ok(mut updater) = UPDATER.lock() {
-        updater
-            .init(Some(init_cb))
+        let mut ub = UpdaterBuilder::new();
+        ub.init(Some(init_cb))
             .increment(Some(inc_cb))
             .tick(Some(tick_cb))
             .finish(Some(finish_cb))
@@ -171,5 +173,6 @@ pub fn init_cli_progress() {
             .set_message(Some(on_msg_cb))
             .set_title(Some(on_title_cb))
             .set_type(Some(on_type_cb));
+        *updater = ub.build();
     }
 }
