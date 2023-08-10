@@ -1,7 +1,23 @@
 importScripts("worker.js");
 
+async function removeEntry(root, name) {
+    try {
+        await root.removeEntry(name);
+    } catch (ex) {
+        if (!(ex instanceof DOMException) || ex.name != "NotFoundError") {
+            throw ex;
+        }
+    }
+}
+
+async function cleanLocalStorage() {
+    const root = await navigator.storage.getDirectory();
+    return Promise.all([removeEntry(root, "in.patch"), removeEntry(root, "in.iso")]);
+}
+
 async function registerLocalStorage(patch, iso) {
     const root = await navigator.storage.getDirectory();
+    await Promise.all([removeEntry(root, "in.patch"), removeEntry(root, "in.iso"), removeEntry(root, "tpgz.iso")]);
     let patch_ = await root.getFileHandle("in.patch", { create: true });
     let patchWritable = patch_.createWritable();
     let patchRet = patchWritable
@@ -16,6 +32,7 @@ async function registerLocalStorage(patch, iso) {
         .then(() => isoWritable)
         .then((isoWritable_) => iso.stream().pipeTo(isoWritable_))
         .then(() => iso_);
+    await removeEntry(root, "tpgz.iso");
     const fileHandle = root.getFileHandle("tpgz.iso", { create: true });
     return await Promise.all([patchRet, isoRet, fileHandle]);
 }

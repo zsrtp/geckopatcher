@@ -1,5 +1,6 @@
 use crate::crypto::Unpackable;
 
+pub mod builder;
 pub mod disc;
 pub mod read;
 pub mod write;

@@ -111,6 +111,7 @@ enum WiiDiscWriterFinalizeState {
     SeekBack(Option<AesKey>, usize, Vec<u8>),
     WriteGroup(Option<AesKey>, usize, Vec<u8>),
 
+    FlushPartition(AesKey, Vec<u8>),
     SeekToPartHeader(AesKey, Vec<u8>),
     WritePartHeader(AesKey, Vec<u8>),
 
@@ -468,9 +469,12 @@ where
                     }
                 };
                 if n_read == 0 {
+                    let has_part_key = part_key.is_some();
+                    let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
+                    let data_size = part.header.data_size;
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::UnexpectedEof,
-                        eyre::eyre!("Unexpected EOF while reading from the writer"),
+                        eyre::eyre!("Unexpected EOF while reading from the writer (n_group={n_group}; group_idx={group_idx}; rem={rem}; has part_key:{has_part_key:#?}, data_size={data_size:#?})"),
                     )));
                 }
                 *this.finalize_state = if n_read < rem {
@@ -569,7 +573,7 @@ where
                             ),
                         );
                         TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
-                        *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPartHeader(
+                        *this.finalize_state = WiiDiscWriterFinalizeState::FlushPartition(
                             decrypt_title_key(&part.header.ticket),
                             buf,
                         );
@@ -577,6 +581,22 @@ where
                         Poll::Pending
                     }
                 }
+            }
+            WiiDiscWriterFinalizeState::FlushPartition(part_key, buf) => {
+                crate::trace!("WiiDiscWriterFinalizeState::FlushPartition");
+                if this
+                    .writer
+                    .poll_flush(cx)
+                    .is_pending()
+                {
+                    crate::trace!("Pending...");
+                    *this.finalize_state =
+                        WiiDiscWriterFinalizeState::FlushPartition(part_key, buf);
+                    return Poll::Pending;
+                }
+                *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPartHeader(part_key, buf);
+                cx.waker().wake_by_ref();
+                Poll::Pending
             }
             WiiDiscWriterFinalizeState::SeekToPartHeader(part_key, buf) => {
                 crate::trace!("WiiDiscWriterFinalizeState::SeekToPartHeader");

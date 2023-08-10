@@ -1,5 +1,5 @@
 use async_std::{fs, task};
-use geckolib::IsoBuilder;
+use geckolib::iso::builder::{PatchBuilder, Builder};
 
 #[cfg(feature = "progress")]
 mod progress;
@@ -12,10 +12,9 @@ fn main() -> color_eyre::eyre::Result<()> {
     progress::init_cli_progress();
 
     task::block_on::<_, color_eyre::eyre::Result<()>>(async {
-        let iso =
-            IsoBuilder::<std::fs::File>::new_patch(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?);
-        iso.build_raw().await?;
+        let mut iso =
+            PatchBuilder::with_config(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?);
+        iso.build()?;
         Ok(())
-    })?;
-    Ok(())
+    })
 }

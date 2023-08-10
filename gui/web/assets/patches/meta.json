@@ -1,0 +1,12 @@
+[
+    {
+        "name": "Wii NTSCU 1.0",
+        "path": "wii_ntscu_10.patch",
+        "version": "wii_ntscu_10"
+    },
+    {
+        "name": "GCN NTSCU",
+        "path": "gcn_ntscu.patch",
+        "version": "gcn_ntscu"
+    }
+]

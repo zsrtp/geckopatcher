@@ -1,5 +1,6 @@
 use std::{borrow::Borrow, rc::Rc};
 
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::{
     prelude::{wasm_bindgen, Closure},
     JsCast, JsValue,
@@ -131,7 +132,7 @@ impl Component for App {
                     #[cfg(not(feature = "generic_patch"))]
                     {
                         let resp =
-                            JsFuture::from(web_sys::window().unwrap().fetch_with_str(&patch.uri))
+                            JsFuture::from(web_sys::window().unwrap().fetch_with_str(&patch.path))
                                 .await;
                         let resp: Response = match resp {
                             Ok(resp) => resp.dyn_into().unwrap(),
@@ -205,10 +206,10 @@ pub struct Patch {
 }
 
 #[cfg(not(feature = "generic_patch"))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Patch {
     name: String,
-    uri: String,
+    path: String,
     version: String,
 }
 
@@ -239,61 +240,89 @@ pub fn PatchInput(props: &PatchInputProps) -> Html {
 }
 
 #[cfg(not(feature = "generic_patch"))]
-#[function_component]
-pub fn PatchInput(props: &PatchInputProps) -> Html {
-    use web_sys::{HtmlOptionElement, HtmlSelectElement};
+struct PatchInput {
+    patches: Vec<Patch>,
+}
 
-    let patches: Vec<Patch> = vec![
-        Patch {
-            name: "GC NTSCU".into(),
-            uri: "patches/0.5.0-gcn-ntscu.patch".into(),
-            version: "gcn_ntscu".into(),
-        },
-        Patch {
-            name: "Wii NTSCU 1.0".into(),
-            uri: "patches/0.5.0-wii-ntscu-10.patch".into(),
-            version: "wii_ntscu_10".into(),
-        },
-    ];
-    let onchange = {
-        let callback = props.callback.clone();
-        Callback::from(move |e: Event| {
-            let node = e
-                .target()
-                .expect("Change event of the Select node does not have a target");
-            let target: &HtmlSelectElement =
-                node.dyn_ref().expect("Target is not a Select element");
-            let option = target
-                .selected_options()
-                .get_with_index(0)
-                .map(|x| {
-                    x.dyn_into::<HtmlOptionElement>()
-                        .expect("First selected element is not an option")
-                })
-                .map(|x| Patch {
-                    name: x.label(),
-                    uri: "".into(),
-                    version: x.value(),
-                });
-            callback.emit(option);
-        })
-    };
-    let patch_html: Html = patches
-        .iter()
-        .map(|p| {
-            html! {
-                <option value={p.version.clone()}>{p.name.clone()}</option>
-            }
-        })
-        .collect();
-    html! {
-        <>
-            <label for="patch">{"Patch to Apply: "}</label>
-            <select id="patch" disabled={props.disabled.unwrap_or(false)} onchange={onchange}>
-                <option disabled={true} selected={true} value={""}>{"Select Patch"}</option>
-                {patch_html}
-            </select>
-        </>
+#[cfg(not(feature = "generic_patch"))]
+impl Component for PatchInput {
+    type Message = Vec<Patch>;
+
+    type Properties = PatchInputProps;
+
+    fn create(ctx: &Context<Self>) -> Self {
+        {
+            let callback = ctx.link().callback(|msg| msg);
+            wasm_bindgen_futures::spawn_local(async move {
+                let response: Response = wasm_bindgen_futures::JsFuture::from(
+                    web_sys::window()
+                        .expect("No window in this context")
+                        .fetch_with_str("patches/meta.json"),
+                )
+                .await
+                .expect("meta.json not found")
+                .dyn_into().expect("JsValue is not a Response object");
+                let json = wasm_bindgen_futures::JsFuture::from(response.json().expect("Cannot get json from response")).await.expect("Cannot get json from response after await");
+                callback.emit(
+                    serde_wasm_bindgen::from_value::<Vec<Patch>>(json)
+                        .expect("could convert JSON to Patch vector"),
+                );
+            });
+        }
+        Self {
+            patches: Vec::new(),
+        }
+    }
+
+    fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
+        let patches = msg;
+        self.patches = patches;
+        true
+    }
+
+    fn view(&self, ctx: &Context<Self>) -> Html {
+        use web_sys::{HtmlOptionElement, HtmlSelectElement};
+        let onchange = {
+            let callback = ctx.props().callback.clone();
+            Callback::from(move |e: Event| {
+                let node = e
+                    .target()
+                    .expect("Change event of the Select node does not have a target");
+                let target: &HtmlSelectElement =
+                    node.dyn_ref().expect("Target is not a Select element");
+                let option = target
+                    .selected_options()
+                    .get_with_index(0)
+                    .map(|x| {
+                        x.dyn_into::<HtmlOptionElement>()
+                            .expect("First selected element is not an option")
+                    })
+                    .map(|x| Patch {
+                        name: x.label(),
+                        path: "".into(),
+                        version: x.value(),
+                    });
+                callback.emit(option);
+            })
+        };
+        let patch_html: Html = self
+            .patches
+            .iter()
+            .map(|p| {
+                html! {
+                    <option value={p.version.clone()}>{p.name.clone()}</option>
+                }
+            })
+            .collect();
+        html! {
+            <>
+                <label for="patch">{"Patch to Apply: "}</label>
+                <select id="patch" disabled={ctx.props().disabled.unwrap_or(false)} onchange={onchange}>
+                    <option disabled={true} selected={true} value={""}>{"Select Patch"}</option>
+                    {patch_html}
+                </select>
+            </>
+        }
     }
 }
 
