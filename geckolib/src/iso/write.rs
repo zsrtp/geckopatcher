@@ -105,13 +105,13 @@ enum WiiDiscWriterFinalizeState {
     Init,
     SeekToPadding(u64),
     WritePadding(Vec<u8>),
+    FlushPartition,
     SeekToStart(Option<AesKey>),
 
     LoadGroup(Option<AesKey>, usize, usize, Vec<u8>),
     SeekBack(Option<AesKey>, usize, Vec<u8>),
     WriteGroup(Option<AesKey>, usize, Vec<u8>),
 
-    FlushPartition(AesKey, Vec<u8>),
     SeekToPartHeader(AesKey, Vec<u8>),
     WritePartHeader(AesKey, Vec<u8>),
 
@@ -373,7 +373,7 @@ where
                 *this.finalize_state = if padding_size > 0 {
                     WiiDiscWriterFinalizeState::SeekToPadding(padding_size)
                 } else {
-                    WiiDiscWriterFinalizeState::SeekToStart(None)
+                    WiiDiscWriterFinalizeState::FlushPartition
                 };
                 let n_group = part.header.data_size / consts::WII_SECTOR_SIZE as u64 / 64;
                 #[cfg(feature = "progress")]
@@ -382,7 +382,11 @@ where
                     let _ = updater.set_type(crate::update::UpdaterType::Progress);
                     let _ = updater.init(Some(n_group as usize));
                     let _ = updater.set_title("Building hash table".to_string());
-                    let _ = updater.set_message("Building hash table".to_string());
+                    if padding_size > 0 {
+                        let _ = updater.set_message("Writing alignment padding".to_string());
+                    } else {
+                        let _ = updater.set_message("Building hash table".to_string());
+                    }
                 }
                 this.hashes.clear();
                 this.hashes
@@ -394,10 +398,7 @@ where
                 let pos = part.part_offset
                     + part.header.data_offset
                     + (part.header.data_size - padding_size);
-                crate::trace!(
-                    "WiiDiscWriterFinalizeState::SeekToPadding(at 0x{:08X})",
-                    pos
-                );
+                crate::trace!("WiiDiscWriterFinalizeState::SeekToPadding(at 0x{pos:08X})");
                 if this.writer.poll_seek(cx, SeekFrom::Start(pos)).is_pending() {
                     crate::trace!("Pending...");
                     *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPadding(padding_size);
@@ -425,8 +426,24 @@ where
                 *this.finalize_state = if n_written < buf.len() {
                     WiiDiscWriterFinalizeState::WritePadding(buf.split_at(n_written).1.to_vec())
                 } else {
-                    WiiDiscWriterFinalizeState::SeekToStart(None)
+                    WiiDiscWriterFinalizeState::FlushPartition
                 };
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    let _ = updater.set_message("Building hash table".to_string());
+                }
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            WiiDiscWriterFinalizeState::FlushPartition => {
+                crate::trace!("WiiDiscWriterFinalizeState::FlushPartition");
+                if this.writer.poll_flush(cx).is_pending() {
+                    crate::trace!("Pending...");
+                    *this.finalize_state =
+                        WiiDiscWriterFinalizeState::FlushPartition;
+                    return Poll::Pending;
+                }
+                *this.finalize_state = WiiDiscWriterFinalizeState::SeekToStart(None);
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
@@ -573,7 +590,7 @@ where
                             ),
                         );
                         TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
-                        *this.finalize_state = WiiDiscWriterFinalizeState::FlushPartition(
+                        *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPartHeader(
                             decrypt_title_key(&part.header.ticket),
                             buf,
                         );
@@ -581,22 +598,6 @@ where
                         Poll::Pending
                     }
                 }
-            }
-            WiiDiscWriterFinalizeState::FlushPartition(part_key, buf) => {
-                crate::trace!("WiiDiscWriterFinalizeState::FlushPartition");
-                if this
-                    .writer
-                    .poll_flush(cx)
-                    .is_pending()
-                {
-                    crate::trace!("Pending...");
-                    *this.finalize_state =
-                        WiiDiscWriterFinalizeState::FlushPartition(part_key, buf);
-                    return Poll::Pending;
-                }
-                *this.finalize_state = WiiDiscWriterFinalizeState::SeekToPartHeader(part_key, buf);
-                cx.waker().wake_by_ref();
-                Poll::Pending
             }
             WiiDiscWriterFinalizeState::SeekToPartHeader(part_key, buf) => {
                 crate::trace!("WiiDiscWriterFinalizeState::SeekToPartHeader");

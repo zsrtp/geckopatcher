@@ -168,6 +168,9 @@ impl Component for App {
                 if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
                     *is_patching = false;
                 }
+                if let Some(msg_) = Rc::get_mut(&mut self.msg) {
+                    *msg_ = Some("Error".into());
+                }
                 true
             }
             Message::PatchedIso => {
