@@ -164,11 +164,12 @@ async fn reproc<R: AsyncRead + AsyncSeek + 'static, W: AsyncRead + AsyncSeek + A
 
     log::info!("Loading virtual FileSystem...");
     let mut out = std::pin::pin!(out);
-    let mut fs = GeckoFS::parse(f).await?;
+    let fs = Arc::new(Mutex::new(GeckoFS::parse(f).await?));
     {
         let is_wii = out.get_type() == DiscType::Wii;
+        let mut fs_guard = fs.lock_arc().await;
         log::info!("Writing VFS to output file...");
-        fs.serialize(&mut out, is_wii).await?;
+        fs_guard.serialize(&mut out, is_wii).await?;
         if is_wii {
             log::info!("Encrypting the ISO");
         }
