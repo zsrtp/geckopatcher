@@ -57,6 +57,9 @@ fn main() -> color_eyre::eyre::Result<()> {
                 "Has banner: {:?}",
                 fs.root_mut().get_file("opening.bnr").is_ok()
             );
+            let mut buf = vec![0u8; 32];
+            fs.root_mut().get_file_mut("map/Rfinal/Release/RframeworkF.map")?.read(&mut buf).await?;
+            log::info!("str: {:?}", String::from_utf8_lossy(&buf));
         }
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;

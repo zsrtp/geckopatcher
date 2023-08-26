@@ -498,8 +498,16 @@ where
                     WiiDiscWriterFinalizeState::LoadGroup(part_key, group_idx, rem - n_read, buf)
                 } else {
                     if let Some(key) = part_key {
+                        #[cfg(feature = "progress")]
+                        if let Ok(mut updater) = UPDATER.lock() {
+                            let _ = updater.set_message(format!("Encrypting group #{}", group_idx));
+                        }
                         encrypt_group(&mut buf, key);
                     } else {
+                        #[cfg(feature = "progress")]
+                        if let Ok(mut updater) = UPDATER.lock() {
+                            let _ = updater.set_message(format!("Hashing group #{}", group_idx));
+                        }
                         // Hash the group
                         this.hashes[group_idx].copy_from_slice(&hash_group(&mut buf));
                     }

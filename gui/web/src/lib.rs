@@ -1,5 +1,6 @@
 use std::{borrow::Borrow, rc::Rc};
 
+#[cfg(not(feature = "generic_patch"))]
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{
     prelude::{wasm_bindgen, Closure},
@@ -287,6 +288,7 @@ impl Component for PatchInput {
         use web_sys::{HtmlOptionElement, HtmlSelectElement};
         let onchange = {
             let callback = ctx.props().callback.clone();
+            let patches = self.patches.clone();
             Callback::from(move |e: Event| {
                 let node = e
                     .target()
@@ -300,20 +302,19 @@ impl Component for PatchInput {
                         x.dyn_into::<HtmlOptionElement>()
                             .expect("First selected element is not an option")
                     })
-                    .map(|x| Patch {
-                        name: x.label(),
-                        path: "".into(),
-                        version: x.value(),
-                    });
-                callback.emit(option);
+                    .map(|x| x.value().parse::<usize>().map(|i| i - 1).map(|i| patches.get(i)));
+                if let Some(Ok(option)) = option {
+                    callback.emit(option.cloned());
+                }
             })
         };
         let patch_html: Html = self
             .patches
             .iter()
-            .map(|p| {
+            .enumerate()
+            .map(|(i, p)| {
                 html! {
-                    <option value={p.version.clone()}>{p.name.clone()}</option>
+                    <option value={format!("{}", i + 1)}>{p.name.clone()}</option>
                 }
             })
             .collect();
@@ -321,7 +322,7 @@ impl Component for PatchInput {
             <>
                 <label for="patch">{"Patch to Apply: "}</label>
                 <select id="patch" disabled={ctx.props().disabled.unwrap_or(false)} onchange={onchange}>
-                    <option disabled={true} selected={true} value={""}>{"Select Patch"}</option>
+                    <option disabled={true} selected={true}>{"Select Patch"}</option>
                     {patch_html}
                 </select>
             </>

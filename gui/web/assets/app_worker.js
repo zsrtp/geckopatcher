@@ -41,9 +41,10 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                 if (!is_running) {
                     is_running = true;
                     globalThis.postMessage({ type: "progress", title: "Loading Files..." });
-                    registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) =>
-                        wasm_bindgen.run_patch(patch, file, save).then(() => [patch, file, save])
-                    )
+                    registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) => {
+                        console.dir(patch, file, save);
+                        return wasm_bindgen.run_patch(patch, file, save).then(() => [patch, file, save]);
+                    })
                         .then(async ([patch, file, save]) => {
                             let f = await file.getFile();
                             return Promise.all([f.slice(0, 6).text(), deleteLocalStorage(patch, file)]);

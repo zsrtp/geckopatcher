@@ -18,7 +18,7 @@ use std::ops::DerefMut;
 use std::sync::TryLockError;
 use std::task::{Context, Poll};
 
-pub trait Node<R: AsyncRead + AsyncSeek> {
+pub trait Node<R> {
     fn name(&self) -> &str;
     fn get_type(&self) -> NodeType;
     fn into_directory(self) -> Option<Directory<R>>;
@@ -59,22 +59,22 @@ pub enum NodeType {
     Directory,
 }
 
-pub enum NodeEnumRef<'a, R: AsyncRead + AsyncSeek> {
+pub enum NodeEnumRef<'a, R> {
     File(&'a File<R>),
     Directory(&'a Directory<R>),
 }
 
-pub enum NodeEnumMut<'a, R: AsyncRead + AsyncSeek> {
+pub enum NodeEnumMut<'a, R> {
     File(&'a mut File<R>),
     Directory(&'a mut Directory<R>),
 }
 
-pub enum NodeEnum<R: AsyncRead + AsyncSeek> {
+pub enum NodeEnum<R> {
     File(File<R>),
     Directory(Directory<R>),
 }
 
-pub struct GeckoFS<R: AsyncRead + AsyncSeek> {
+pub struct GeckoFS<R> {
     pub(super) root: Directory<R>,
     pub(super) system: Directory<R>,
 }
@@ -84,7 +84,10 @@ where
     R: AsyncRead + AsyncSeek + 'static,
 {
     pub fn new() -> Self {
-        Self { root: Directory::new(""), system: Directory::new("&&systemdata") }
+        Self {
+            root: Directory::new(""),
+            system: Directory::new("&&systemdata"),
+        }
     }
 
     #[doc = r"Utility function to read the disc."]
@@ -98,30 +101,32 @@ where
     }
 
     fn get_dir_structure_recursive(
-        mut cur_index: usize,
+        cur_index: &mut usize,
         fst: &Vec<FstEntry>,
         parent_dir: &mut Directory<R>,
         reader: &Arc<Mutex<DiscReader<R>>>,
-    ) -> usize {
-        let entry = &fst[cur_index];
+    ) {
+        let entry = &fst[*cur_index];
 
-        if entry.kind == FstNodeType::Directory {
-            let dir = parent_dir.mkdir(entry.relative_file_name.clone());
+        match entry.kind {
+            FstNodeType::Directory => {
+                let dir = parent_dir.mkdir(entry.relative_file_name.clone());
 
-            while cur_index < entry.file_size_next_dir_index - 1 {
-                cur_index = GeckoFS::get_dir_structure_recursive(cur_index + 1, fst, dir, reader);
+                while *cur_index < entry.file_size_next_dir_index - 1 {
+                    *cur_index += 1;
+                    GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, reader);
+                }
             }
-        } else {
-            parent_dir.add_file(File::new(
-                FileDataSource::Reader(reader.clone()),
-                entry.relative_file_name.clone(),
-                entry.file_offset_parent_dir,
-                entry.file_size_next_dir_index,
-                entry.file_name_offset,
-            ));
+            FstNodeType::File => {
+                parent_dir.add_file(File::new(
+                    FileDataSource::Reader(reader.clone()),
+                    entry.relative_file_name.clone(),
+                    entry.file_offset_parent_dir,
+                    entry.file_size_next_dir_index,
+                    entry.file_name_offset,
+                ));
+            }
         }
-
-        cur_index
     }
 
     pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Self> {
@@ -173,25 +178,26 @@ where
                 str_tbl_buf.split(|b| *b == 0).count()
             );
 
-            let root_name = (0, "".into());
-            let name_it = {
-                let offsets = std::iter::once(0).chain(
-                    str_tbl_buf
-                        .iter()
-                        .enumerate()
-                        .filter_map(|(i, b)| if *b == 0 { Some(i + 1) } else { None })
-                        .take(num_entries - 1),
-                );
-                std::iter::once(root_name).chain(
-                    offsets.zip(
-                        str_tbl_buf
-                            .split(|b| *b == 0)
-                            .map(String::from_utf8_lossy)
-                            .map(|s| s.to_string()),
-                    ),
-                )
-            };
+            // let root_name = (0, "".into());
+            // let name_it = {
+            //     let offsets = std::iter::once(0).chain(
+            //         str_tbl_buf
+            //             .iter()
+            //             .enumerate()
+            //             .filter_map(|(i, b)| if *b == 0 { Some(i + 1) } else { None })
+            //             .take(num_entries - 1),
+            //     );
+            //     std::iter::once(root_name).chain(
+            //         offsets.zip(
+            //             str_tbl_buf
+            //                 .split(|b| *b == 0)
+            //                 .map(String::from_utf8_lossy)
+            //                 .map(|s| s.to_string()),
+            //         ),
+            //     )
+            // };
 
+            #[cfg(disabled)]
             let fst_entries: Vec<FstEntry> = {
                 fst_list_buf
                     .chunks_exact(FstEntry::BLOCK_SIZE)
@@ -237,8 +243,8 @@ where
                 fst_entry
             })
             .collect();
-            #[cfg(disabled)]
-            {
+            let fst_entries: Vec<FstEntry> = {
+                let mut fst_entries: Vec<FstEntry> = Vec::new();
                 for i in 0..num_entries {
                     let kind = FstNodeType::try_from(fst_list_buf[i * 12])
                         .unwrap_or(FstNodeType::Directory);
@@ -271,7 +277,8 @@ where
                     });
                     crate::trace!("parsed entry #{}: {:?}", i, fst_entries.last());
                 }
-            }
+                fst_entries
+            };
 
             GeckoFS::read_exact(
                 &mut guard,
@@ -315,30 +322,33 @@ where
                 0,
             ));
 
-            let mut count = 0;
-            while count + 1 < num_entries {
-                count = GeckoFS::get_dir_structure_recursive(count + 1, &fst_entries, &mut root, &reader);
+            let mut count = 1;
+            while count < num_entries {
+                GeckoFS::get_dir_structure_recursive(
+                    &mut count,
+                    &fst_entries,
+                    &mut root,
+                    &reader,
+                );
+                count += 1;
             }
         }
         crate::debug!("{} children", root.children.len());
-        Ok(Self {
-            root,
-            system,
-        })
+        Ok(Self { root, system })
     }
 
     /// Visits the directory tree to calculate the length of the FST table
     fn visitor_fst_len(mut acc: usize, node: &dyn Node<R>) -> usize {
         match node.as_enum_ref() {
-            NodeEnumRef::File(file) => {
-                acc += 12 + file.name().len() + 1;
-            }
             NodeEnumRef::Directory(dir) => {
                 acc += 12 + dir.name().len() + 1;
 
                 for child in &dir.children {
                     acc = GeckoFS::visitor_fst_len(acc, child.as_ref());
                 }
+            }
+            NodeEnumRef::File(file) => {
+                acc += 12 + file.name().len() + 1;
             }
         };
         acc
@@ -347,31 +357,12 @@ where
     fn visitor_fst_entries(
         node: &mut dyn Node<R>,
         output_fst: &mut Vec<FstEntry>,
+        files: &mut Vec<File<R>>,
         fst_name_bank: &mut Vec<u8>,
         cur_parent_dir_index: usize,
         offset: &mut u64,
     ) {
         match node.as_enum_mut() {
-            NodeEnumMut::File(file) => {
-                let pos = align_addr(*offset, 5);
-
-                let fst_entry = FstEntry {
-                    kind: FstNodeType::File,
-                    file_size_next_dir_index: file.len(),
-                    file_name_offset: fst_name_bank.len(),
-                    file_offset_parent_dir: pos as usize,
-                    relative_file_name: file.name().to_string(),
-                };
-
-                fst_name_bank.extend_from_slice(file.name().as_bytes());
-                fst_name_bank.push(0);
-
-                *offset += file.len() as u64;
-                *offset = align_addr(*offset, 2);
-
-                file.fst = fst_entry.clone();
-                output_fst.push(fst_entry);
-            }
             NodeEnumMut::Directory(dir) => {
                 let fst_entry = FstEntry {
                     kind: FstNodeType::Directory,
@@ -391,6 +382,7 @@ where
                     GeckoFS::visitor_fst_entries(
                         child.as_mut(),
                         output_fst,
+                        files,
                         fst_name_bank,
                         this_dir_index,
                         offset,
@@ -398,6 +390,28 @@ where
                 }
 
                 output_fst[this_dir_index].file_size_next_dir_index = output_fst.len();
+            }
+            NodeEnumMut::File(file) => {
+                let pos = align_addr(*offset, 5);
+                *offset = pos;
+
+                let fst_entry = FstEntry {
+                    kind: FstNodeType::File,
+                    file_size_next_dir_index: file.len(),
+                    file_name_offset: fst_name_bank.len(),
+                    file_offset_parent_dir: pos as usize,
+                    relative_file_name: file.name().to_string(),
+                };
+
+                fst_name_bank.extend_from_slice(file.name().as_bytes());
+                fst_name_bank.push(0);
+
+                *offset += file.len() as u64;
+                *offset = align_addr(*offset, 2);
+
+                file.fst = fst_entry.clone();
+                output_fst.push(fst_entry);
+                files.push(file.clone());
             }
         };
     }
@@ -420,7 +434,7 @@ where
         let fst_list_offset = align_addr(fst_list_offset_raw, consts::FST_ALIGNMENT_BIT);
         let fst_list_padding_size = fst_list_offset - fst_list_offset_raw;
 
-        let fst_len = GeckoFS::visitor_fst_len(0, &self.root);
+        let fst_len = GeckoFS::visitor_fst_len(0, &self.root) - 1;
 
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
@@ -462,6 +476,7 @@ where
             ..Default::default()
         }];
         let mut fst_name_bank = Vec::new();
+        let mut files = Vec::new();
 
         let mut offset = (fst_list_offset + fst_len) as u64;
         for node in self.root_mut().iter_mut() {
@@ -469,6 +484,7 @@ where
             GeckoFS::visitor_fst_entries(
                 node.as_mut(),
                 &mut output_fst,
+                &mut files,
                 &mut fst_name_bank,
                 l,
                 &mut offset,
@@ -476,8 +492,9 @@ where
         }
         output_fst[0].file_size_next_dir_index = output_fst.len();
         crate::debug!("output_fst size = {}", output_fst.len());
+        crate::debug!("first fst_name entry = {}", fst_name_bank[0]);
         #[cfg(feature = "progress")]
-        let write_total_size = output_fst
+        let write_total_size: u64 = output_fst
             .iter()
             .filter_map(|f| {
                 if f.kind == FstNodeType::File {
@@ -486,7 +503,7 @@ where
                     None
                 }
             })
-            .sum::<u64>();
+            .sum();
 
         for entry in output_fst {
             let mut buf = [0u8; 12];
@@ -513,7 +530,7 @@ where
         let mut offset = writer.seek(SeekFrom::Current(0)).await? as usize;
         #[cfg(feature = "progress")]
         let mut inc_buffer = 0usize;
-        for file in self.root.iter_recurse_mut() {
+        for mut file in files {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.try_lock() {
                 updater.set_message(format!(
@@ -524,20 +541,27 @@ where
             }
             let padding_size = file.fst.file_offset_parent_dir - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
+            // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
-            let mut buf = Vec::with_capacity(file.len());
-            file.read_to_end(&mut buf).await?;
-            for chunk in buf.chunks(1024*1024) {
-                writer.write_all(chunk).await?;
+            let mut rem = file.len();
+            loop {
+                if rem == 0 {
+                    break;
+                }
+                let transfer_size = std::cmp::min(rem, 1024 * 1024);
+                let mut buf = vec![0u8; transfer_size];
+                file.read_exact(&mut buf).await?;
+                writer.write_all(&buf).await?;
+                rem -= transfer_size;
                 #[cfg(feature = "progress")]
                 match UPDATER.try_lock() {
                     Ok(mut updater) => {
-                        updater.increment(chunk.len() + inc_buffer)?;
+                        updater.increment(transfer_size + inc_buffer)?;
                         inc_buffer = 0;
                     }
                     Err(TryLockError::WouldBlock) => {
-                        inc_buffer += chunk.len();
-                    },
+                        inc_buffer += transfer_size;
+                    }
                     _ => (),
                 }
             }
@@ -614,14 +638,14 @@ where
     }
 }
 
-pub struct Directory<R: AsyncRead + AsyncSeek> {
+pub struct Directory<R> {
     name: String,
     children: Vec<Box<dyn Node<R>>>,
 }
 
 impl<R> Directory<R>
 where
-    R: AsyncRead + AsyncSeek + 'static,
+    R: 'static,
 {
     pub fn new<S: Into<String>>(name: S) -> Directory<R> {
         Self {
@@ -680,8 +704,7 @@ where
 
     pub fn mkdir(&mut self, name: String) -> &mut Directory<R> {
         if self.children.iter().all(|c| c.name() != name) {
-            self.children
-                .push(Box::new(Directory::new(name)));
+            self.children.push(Box::new(Directory::new(name)));
             self.children
                 .last_mut()
                 .map(|x| x.as_directory_mut().unwrap())
@@ -721,7 +744,7 @@ where
 
     pub fn iter_recurse(&self) -> impl Iterator<Item = &'_ File<R>> {
         crate::trace!("Start iter_recurse");
-        fn traverse_depth<'b, R: AsyncRead + AsyncSeek + 'static>(
+        fn traverse_depth<'b, R: 'static>(
             start: &'b dyn Node<R>,
             stack: &mut Vec<&'b File<R>>,
         ) {
@@ -742,7 +765,7 @@ where
 
     pub fn iter_recurse_mut(&mut self) -> impl Iterator<Item = &'_ mut File<R>> {
         crate::trace!("Start iter_recurse_mut");
-        fn traverse_depth<'b, R: AsyncRead + AsyncSeek + 'static>(
+        fn traverse_depth<'b, R: 'static>(
             start: &'b mut dyn Node<R>,
             stack: &mut Vec<&'b mut File<R>>,
         ) {
@@ -803,8 +826,6 @@ where
 }
 
 impl<R> Node<R> for Directory<R>
-where
-    R: AsyncRead + AsyncSeek,
 {
     fn name(&self) -> &str {
         &self.name
@@ -853,23 +874,37 @@ struct FileState {
 }
 
 #[derive(Debug)]
-pub enum FileDataSource<R: AsyncRead + AsyncSeek> {
+pub enum FileDataSource<R> {
     Reader(Arc<Mutex<DiscReader<R>>>),
-    Box(Box<[u8]>),
+    Box(Arc<Mutex<Box<[u8]>>>),
 }
 
-pub struct File<R: AsyncRead + AsyncSeek> {
+impl<R> Clone for FileDataSource<R> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Reader(arg0) => Self::Reader(arg0.clone()),
+            Self::Box(arg0) => Self::Box(arg0.clone()),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct File<R> {
     fst: FstEntry,
     state: FileState,
-    reader: FileDataSource<R>,
+    data: FileDataSource<R>,
+}
+
+impl<R> Clone for File<R> {
+    fn clone(&self) -> Self {
+        Self { fst: self.fst.clone(), state: self.state, data: self.data.clone() }
+    }
 }
 
 impl<R> File<R>
-where
-    R: AsyncRead + AsyncSeek,
 {
     pub fn new<S: Into<String>>(
-        reader: FileDataSource<R>,
+        data: FileDataSource<R>,
         name: S,
         file_offset_parent_dir: usize,
         file_size_next_dir_index: usize,
@@ -884,30 +919,25 @@ where
                 file_name_offset,
             },
             state: Default::default(),
-            reader,
+            data,
         }
     }
 
     pub fn set_data(&mut self, data: Box<[u8]>) {
-        self.reader = FileDataSource::Box(data);
+        self.fst.file_size_next_dir_index = data.len();
+        self.data = FileDataSource::Box(Arc::new(Mutex::new(data)));
     }
 
     pub fn len(&self) -> usize {
-        match &self.reader {
-            FileDataSource::Reader(_) => self.fst.file_size_next_dir_index,
-            FileDataSource::Box(data) => data.len(),
-        }
+        self.fst.file_size_next_dir_index
     }
 
     pub fn is_empty(&self) -> bool {
-        match &self.reader {
-            FileDataSource::Reader(_) => self.len() == 0,
-            FileDataSource::Box(data) => data.is_empty(),
-        }
+        self.len() == 0
     }
 }
 
-impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
+impl<R: AsyncSeek> AsyncSeek for File<R> {
     fn poll_seek(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -945,7 +975,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Current(pos)
             }
         };
-        match &self.reader {
+        match &self.data {
             FileDataSource::Reader(reader) => match reader.try_lock_arc() {
                 Some(mut guard) => {
                     let guard_mut = guard.deref_mut();
@@ -1024,7 +1054,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
             (self.len() as i64 - self.state.cursor as i64) as usize,
         );
         match self.state.state {
-            FileReadState::Seeking => match &self.reader {
+            FileReadState::Seeking => match &self.data {
                 FileDataSource::Reader(reader) => match reader.try_lock_arc() {
                     Some(mut guard) => {
                         let guard_pin = std::pin::pin!(guard.deref_mut());
@@ -1051,8 +1081,8 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                         Poll::Pending
                     }
                 },
-                FileDataSource::Box(data) => {
-                    if self.state.cursor > data.len() as u64 {
+                FileDataSource::Box(_data) => {
+                    if self.state.cursor > self.len() as u64 {
                         Poll::Ready(Err(io::Error::from(io::ErrorKind::InvalidInput)))
                     } else {
                         self.state.state = FileReadState::Reading;
@@ -1061,7 +1091,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                     }
                 }
             },
-            FileReadState::Reading => match &self.reader {
+            FileReadState::Reading => match &self.data {
                 FileDataSource::Reader(reader) => match reader.try_lock_arc() {
                     Some(mut guard) => {
                         let guard_pin = std::pin::pin!(guard.deref_mut());
@@ -1084,10 +1114,14 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                     }
                 },
                 FileDataSource::Box(data) => {
+                    let d: async_std::sync::MutexGuardArc<Box<[u8]>> = match data.try_lock_arc() {
+                        Some(data) => data,
+                        None => return Poll::Pending,
+                    };
                     let num_read =
-                        std::cmp::min(buf.len(), (data.len() as u64 - self.state.cursor) as usize);
+                        std::cmp::min(buf.len(), (self.len() as u64 - self.state.cursor) as usize);
                     buf[..num_read]
-                        .copy_from_slice(&data[self.state.cursor as usize..][..num_read]);
+                        .copy_from_slice(&d[self.state.cursor as usize..][..num_read]);
                     self.state.cursor += num_read as u64;
                     self.state.state = FileReadState::Seeking;
                     Poll::Ready(Ok(num_read))
@@ -1098,8 +1132,6 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
 }
 
 impl<R> Node<R> for File<R>
-where
-    R: AsyncRead + AsyncSeek,
 {
     fn name(&self) -> &str {
         &self.fst.relative_file_name
