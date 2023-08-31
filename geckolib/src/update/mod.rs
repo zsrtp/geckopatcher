@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash, Default)]
 pub enum UpdaterType {
     #[default]
     Spinner,

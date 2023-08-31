@@ -39,6 +39,7 @@ pub struct WiiDiscHeader {
     pub game_title: [u8; 64],
     pub disable_hash_verif: u8,
     pub disable_disc_encrypt: u8,
+    pub padding: [u8; 0x39e],
 }
 
 impl Default for WiiDiscHeader {
@@ -58,21 +59,22 @@ impl Default for WiiDiscHeader {
             game_title: [0; 64],
             disable_hash_verif: Default::default(),
             disable_disc_encrypt: Default::default(),
+            padding: [0; 0x39e],
         }
     }
 }
 
 impl Unpackable for WiiDiscHeader {
-    const BLOCK_SIZE: usize = 0x62;
+    const BLOCK_SIZE: usize = 0x400;
 }
 
 pub fn disc_get_header(raw: &[u8]) -> WiiDiscHeader {
     let mut unk1 = [0_u8; 14];
     let mut game_title = [0u8; 64];
-    unsafe {
-        unk1.copy_from_slice(&raw[0xA..0x18]);
-        game_title.copy_from_slice(std::mem::transmute(&raw[0x20..0x60]));
-    };
+    let mut padding = [0u8; 0x39e];
+    unk1.copy_from_slice(&raw[0xA..0x18]);
+    game_title.copy_from_slice(&raw[0x20..0x60]);
+    padding.copy_from_slice(&raw[0x62..0x400]);
     WiiDiscHeader {
         disc_id: raw[0],
         game_code: [raw[1], raw[2]],
@@ -88,6 +90,7 @@ pub fn disc_get_header(raw: &[u8]) -> WiiDiscHeader {
         game_title,
         disable_hash_verif: raw[0x60],
         disable_disc_encrypt: raw[0x61],
+        padding,
     }
 }
 
@@ -108,6 +111,7 @@ pub fn disc_set_header(buffer: &mut [u8], dh: &WiiDiscHeader) {
     buffer[0x20..0x60].copy_from_slice(&dh.game_title[..]);
     buffer[0x60] = dh.disable_hash_verif;
     buffer[0x61] = dh.disable_disc_encrypt;
+    buffer[0x62..0x400].copy_from_slice(&dh.padding);
 }
 
 #[derive(Debug, Clone, Copy, Default)]

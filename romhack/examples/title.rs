@@ -5,6 +5,7 @@ use async_std::{
     io::{prelude::*, BufReader},
     task,
 };
+use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::vfs::GeckoFS;
 #[cfg(feature = "progress")]
@@ -24,6 +25,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                 .await?,
         );
         let mut f = DiscReader::new(f).await?;
+        let is_wii = f.get_type() == DiscType::Wii;
 
         f.seek(std::io::SeekFrom::Start(0)).await?;
         let mut buf = vec![0u8; 0x60];
@@ -58,7 +60,9 @@ fn main() -> color_eyre::eyre::Result<()> {
                 fs.root_mut().get_file("opening.bnr").is_ok()
             );
             let mut buf = vec![0u8; 32];
-            fs.root_mut().get_file_mut("map/Rfinal/Release/RframeworkF.map")?.read(&mut buf).await?;
+            let map_file = fs.root_mut().get_file_mut(if is_wii {"map/Rfinal/Release/RframeworkF.map"} else {"map/Final/Release/frameworkF.map"})?;
+            map_file.seek(SeekFrom::Start(0)).await?;
+            map_file.read(&mut buf).await?;
             log::info!("str: {:?}", String::from_utf8_lossy(&buf));
         }
         <color_eyre::eyre::Result<()>>::Ok(())

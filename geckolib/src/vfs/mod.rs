@@ -324,12 +324,7 @@ where
 
             let mut count = 1;
             while count < num_entries {
-                GeckoFS::get_dir_structure_recursive(
-                    &mut count,
-                    &fst_entries,
-                    &mut root,
-                    &reader,
-                );
+                GeckoFS::get_dir_structure_recursive(&mut count, &fst_entries, &mut root, &reader);
                 count += 1;
             }
         }
@@ -744,10 +739,7 @@ where
 
     pub fn iter_recurse(&self) -> impl Iterator<Item = &'_ File<R>> {
         crate::trace!("Start iter_recurse");
-        fn traverse_depth<'b, R: 'static>(
-            start: &'b dyn Node<R>,
-            stack: &mut Vec<&'b File<R>>,
-        ) {
+        fn traverse_depth<'b, R: 'static>(start: &'b dyn Node<R>, stack: &mut Vec<&'b File<R>>) {
             match start.as_enum_ref() {
                 NodeEnumRef::File(file) => stack.push(file),
                 NodeEnumRef::Directory(dir) => {
@@ -825,8 +817,7 @@ where
     }
 }
 
-impl<R> Node<R> for Directory<R>
-{
+impl<R> Node<R> for Directory<R> {
     fn name(&self) -> &str {
         &self.name
     }
@@ -897,12 +888,15 @@ pub struct File<R> {
 
 impl<R> Clone for File<R> {
     fn clone(&self) -> Self {
-        Self { fst: self.fst.clone(), state: self.state, data: self.data.clone() }
+        Self {
+            fst: self.fst.clone(),
+            state: self.state,
+            data: self.data.clone(),
+        }
     }
 }
 
-impl<R> File<R>
-{
+impl<R> File<R> {
     pub fn new<S: Into<String>>(
         data: FileDataSource<R>,
         name: S,
@@ -943,7 +937,7 @@ impl<R: AsyncSeek> AsyncSeek for File<R> {
         cx: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
-        crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos,);
+        crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos);
         let pos = match pos {
             SeekFrom::Start(pos) => {
                 if pos > self.len() as u64 {
@@ -1120,8 +1114,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                     };
                     let num_read =
                         std::cmp::min(buf.len(), (self.len() as u64 - self.state.cursor) as usize);
-                    buf[..num_read]
-                        .copy_from_slice(&d[self.state.cursor as usize..][..num_read]);
+                    buf[..num_read].copy_from_slice(&d[self.state.cursor as usize..][..num_read]);
                     self.state.cursor += num_read as u64;
                     self.state.state = FileReadState::Seeking;
                     Poll::Ready(Ok(num_read))
@@ -1131,8 +1124,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
     }
 }
 
-impl<R> Node<R> for File<R>
-{
+impl<R> Node<R> for File<R> {
     fn name(&self) -> &str {
         &self.fst.relative_file_name
     }
