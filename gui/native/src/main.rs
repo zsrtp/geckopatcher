@@ -4,6 +4,7 @@
 mod app;
 pub mod progress;
 pub use app::PatcherApp;
+use eframe::Theme;
 use egui::Vec2;
 
 const ICON: &[u8; 0x47D11] = include_bytes!("../assets/icon.png");
@@ -37,6 +38,8 @@ fn main() -> eframe::Result<()> {
         follow_system_theme: true,
         initial_window_size: Some(Vec2::new(300., 200.)),
         min_window_size: Some(Vec2::new(280., 220.)),
+        default_theme: Theme::Dark,
+        run_and_return: false,
         ..Default::default()
     };
     eframe::run_native(
