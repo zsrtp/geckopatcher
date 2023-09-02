@@ -1,6 +1,7 @@
 use std::io::{Read, Seek};
 
 use async_std::fs;
+use egui::{TextureHandle, ImageData, ColorImage, Vec2};
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use rfd::FileHandle;
 use std::path::PathBuf;
@@ -84,6 +85,7 @@ pub struct PatcherApp {
     is_patching: bool,
     status: Option<String>,
     progress: Option<f32>,
+    github_image: Option<TextureHandle>,
 }
 
 async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
@@ -146,6 +148,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                     ToAppMsg::GetPatch => {
                         match rfd::AsyncFileDialog::new()
                             .add_filter("application/zip", &["patch"])
+                            .add_filter("All Files", &["*"])
                             .pick_file()
                             .await
                         {
@@ -171,6 +174,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                     ToAppMsg::GetIso => {
                         match rfd::AsyncFileDialog::new()
                             .add_filter("application/x-cd-image", &["iso"])
+                            .add_filter("All Files", &["*"])
                             .pick_file()
                             .await
                         {
@@ -196,6 +200,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                     ToAppMsg::PatchAndSave(_patch, iso) => {
                         match rfd::AsyncFileDialog::new()
                             .add_filter("application/x-cd-image", &["iso"])
+                            .add_filter("All Files", &["*"])
                             .set_file_name("tpgz.iso")
                             .save_file()
                             .await
@@ -205,24 +210,29 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                                 log::debug!("Got a file from the user! Starting patching");
                                 if let Err(err) = reproc(iso, save).await {
                                     log::error!("{:?}", err);
+                                    if sender.send_async(FromAppMsg::Progress(Some(format!("{}", err)), None)).await.is_err() {
+                                        log::error!("could not send Progress (error in reproc)");
+                                        return;
+                                    }
                                     if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
                                         log::error!(
                                             "could not send NoSaveOpened (error in reproc)"
                                         );
                                         return;
                                     }
-                                }
-                                if sender
-                                    .send_async(FromAppMsg::Progress(None, None))
-                                    .await
-                                    .is_err()
-                                {
-                                    log::trace!("could not send Progress");
-                                }
-                                log::info!("reproc done");
-                                if sender.send_async(FromAppMsg::FinishedSave).await.is_err() {
-                                    log::error!("could not send FinishedSave");
-                                    return;
+                                } else {
+                                    if sender
+                                        .send_async(FromAppMsg::Progress(None, None))
+                                        .await
+                                        .is_err()
+                                    {
+                                        log::trace!("could not send Progress");
+                                    }
+                                    log::info!("reproc done");
+                                    if sender.send_async(FromAppMsg::FinishedSave).await.is_err() {
+                                        log::error!("could not send FinishedSave");
+                                        return;
+                                    }
                                 }
                             }
                             None => {
@@ -265,6 +275,7 @@ impl PatcherApp {
             is_patching: false,
             status: None,
             progress: None,
+            github_image: None,
         }
     }
 }
@@ -287,6 +298,7 @@ impl eframe::App for PatcherApp {
             is_patching,
             status,
             progress,
+            github_image,
         } = self;
 
         // Examples of how to create different panels and windows.
@@ -410,17 +422,15 @@ impl eframe::App for PatcherApp {
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.label("powered by ");
-                    ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-                    ui.label(" and ");
-                    ui.hyperlink_to(
-                        "eframe",
-                        "https://github.com/emilk/egui/tree/master/crates/eframe",
-                    );
-                    ui.label(".");
-                });
-                ui.horizontal(|ui| {
+                    let data: &[u8] = if ui.style().visuals.dark_mode {include_bytes!("../assets/github-mark-white.png")} else {include_bytes!("../assets/github-mark.png")};
+                    let github = github_image
+                        .get_or_insert_with(|| {
+                            let img = image::load_from_memory_with_format(data, image::ImageFormat::Png).unwrap();
+                            let image = img.as_rgba8().unwrap();
+                            let (width, height) = image.dimensions();
+                            ui.ctx().load_texture("github-logo", ImageData::Color(ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw())), Default::default())
+                        });
+                    ui.image(github, Vec2::new(15.0, 15.0));
                     ui.hyperlink_to("Github", "https://github.com/kipcode66/geckopatcher")
                 });
                 egui::warn_if_debug_build(ui);
@@ -463,34 +473,36 @@ impl eframe::App for PatcherApp {
             };
         }
 
-        let files = ctx.input_mut(|i| i.raw.take().dropped_files);
-        for f in files {
-            if let Some(path) = &f.path {
-                let path_ = path.clone();
-                let fd = std::fs::File::open(path);
-                match fd {
-                    Err(err) => {
-                        log::warn!("could not read file at \"{path_:?}\": {err}");
-                        break;
-                    }
-                    Ok(mut file) => {
-                        let mut buf = [0u8; 6];
-                        if file.read_exact(&mut buf).is_err() {
+        if !*is_patching {
+            let files = ctx.input_mut(|i| i.raw.take().dropped_files);
+            for f in files {
+                if let Some(path) = &f.path {
+                    let path_ = path.clone();
+                    let fd = std::fs::File::open(path);
+                    match fd {
+                        Err(err) => {
+                            log::warn!("could not read file at \"{path_:?}\": {err}");
                             break;
                         }
-                        let _ = file.seek(std::io::SeekFrom::Start(0));
-                        let re = regex::Regex::new(
-                            "^((([RSGUDP0124])([A-Z0-9]{2})([DEFIJKPRSTU]))([A-Z0-9]{2}))",
-                        )
-                        .expect("Couldn't parse the GameCode RegEx");
-                        let is_game = re.is_match(&String::from_utf8_lossy(&buf));
-                        if is_game {
-                            *in_file = Some(InFile::Dropped(f));
-                        } else if buf[..4] == [b'P', b'K', 3, 4] {
-                            *patch_file = Some(InFile::Dropped(f));
+                        Ok(mut file) => {
+                            let mut buf = [0u8; 6];
+                            if file.read_exact(&mut buf).is_err() {
+                                break;
+                            }
+                            let _ = file.seek(std::io::SeekFrom::Start(0));
+                            let re = regex::Regex::new(
+                                "^((([RSGUDP0124])([A-Z0-9]{2})([DEFIJKPRSTU]))([A-Z0-9]{2}))",
+                            )
+                            .expect("Couldn't parse the GameCode RegEx");
+                            let is_game = re.is_match(&String::from_utf8_lossy(&buf));
+                            if is_game {
+                                *in_file = Some(InFile::Dropped(f));
+                            } else if buf[..4] == [b'P', b'K', 3, 4] {
+                                *patch_file = Some(InFile::Dropped(f));
+                            }
                         }
-                    }
-                };
+                    };
+                }
             }
         }
     }
