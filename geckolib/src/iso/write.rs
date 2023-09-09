@@ -141,60 +141,63 @@ fn get_data_pool(data: &mut [u8], chunk_size: usize) -> impl Iterator<Item = &mu
     data.chunks_exact_mut(chunk_size)
 }
 
+fn h0_process(data: &mut [u8]) {
+    let (hash, data) = data.split_at_mut(consts::WII_SECTOR_HASH_SIZE);
+    for j in 0..consts::WII_SECTOR_DATA_HASH_COUNT {
+        hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
+            &Sha1::from(
+                &data[j * consts::WII_SECTOR_DATA_HASH_SIZE
+                    ..(j + 1) * consts::WII_SECTOR_DATA_HASH_SIZE],
+            )
+            .digest()
+            .bytes(),
+        );
+    }
+}
+fn h1_process(data: &mut [u8]) {
+    let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
+    for j in 0..8 {
+        hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
+            &Sha1::from(
+                &data[j * consts::WII_SECTOR_SIZE..]
+                    [..consts::WII_HASH_SIZE * (consts::WII_SECTOR_DATA_HASH_COUNT)],
+            )
+            .digest()
+            .bytes()[..],
+        );
+    }
+    for j in 0..8 {
+        data[j * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8]
+            .copy_from_slice(&hash);
+    }
+}
+
+fn h2_process(h: &mut [u8]) {
+    let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
+    for i in 0..8 {
+        hash[i * consts::WII_HASH_SIZE..(i + 1) * consts::WII_HASH_SIZE].copy_from_slice(
+            &Sha1::from(
+                &h[i * 8 * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8],
+            )
+            .digest()
+            .bytes()[..],
+        );
+    }
+    for i in 0..8 * 8 {
+        h[i * consts::WII_SECTOR_SIZE + 0x340..][..consts::WII_HASH_SIZE * 8]
+            .copy_from_slice(&hash);
+    }
+}
+
 fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     // h0
     let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE);
-    fn h0_process(data: &mut [u8]) {
-        let (hash, data) = data.split_at_mut(consts::WII_SECTOR_HASH_SIZE);
-        for j in 0..consts::WII_SECTOR_DATA_HASH_COUNT {
-            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(
-                    &data[j * consts::WII_SECTOR_DATA_HASH_SIZE
-                        ..(j + 1) * consts::WII_SECTOR_DATA_HASH_SIZE],
-                )
-                .digest()
-                .bytes(),
-            );
-        }
-    }
     data_pool.for_each(h0_process);
     // h1
     let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE * 8);
-    data_pool.for_each(|data| {
-        let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
-        for j in 0..8 {
-            hash[j * consts::WII_HASH_SIZE..(j + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(
-                    &data[j * consts::WII_SECTOR_SIZE..]
-                        [..consts::WII_HASH_SIZE * (consts::WII_SECTOR_DATA_HASH_COUNT)],
-                )
-                .digest()
-                .bytes()[..],
-            );
-        }
-        for j in 0..8 {
-            data[j * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8]
-                .copy_from_slice(&hash);
-        }
-    });
+    data_pool.for_each(h1_process);
     // h2
     let data_pool = get_data_pool(buf, consts::WII_SECTOR_SIZE * 8 * 8);
-    fn h2_process(h: &mut [u8]) {
-        let mut hash = [0u8; consts::WII_HASH_SIZE * 8];
-        for i in 0..8 {
-            hash[i * consts::WII_HASH_SIZE..(i + 1) * consts::WII_HASH_SIZE].copy_from_slice(
-                &Sha1::from(
-                    &h[i * 8 * consts::WII_SECTOR_SIZE + 0x280..][..consts::WII_HASH_SIZE * 8],
-                )
-                .digest()
-                .bytes()[..],
-            );
-        }
-        for i in 0..8 * 8 {
-            h[i * consts::WII_SECTOR_SIZE + 0x340..][..consts::WII_HASH_SIZE * 8]
-                .copy_from_slice(&hash);
-        }
-    }
     data_pool.for_each(h2_process);
     // single H3
     let mut ret_buf = [0u8; consts::WII_HASH_SIZE];
