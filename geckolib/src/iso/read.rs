@@ -113,7 +113,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     ret_vec
         .iter()
         .enumerate()
-        .for_each(|(i, p)| crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset));
+        .for_each(|(i, p)| {crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset)});
     if !ret_vec.is_empty() {
         if let Some(data_idx) = data_idx {
             crate::trace!(

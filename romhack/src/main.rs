@@ -11,6 +11,8 @@ fn main() -> color_eyre::eyre::Result<()> {
     #[cfg(feature = "progress")]
     progress::init_cli_progress();
 
+    // TODO Use clap to parse arguments...
+
     task::block_on::<_, color_eyre::eyre::Result<()>>(async {
         let mut iso =
             PatchBuilder::with_config(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?);
