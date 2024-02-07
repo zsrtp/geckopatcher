@@ -560,7 +560,7 @@ where
                     _ => (),
                 }
             }
-            offset += file.len();
+            offset += file.len() + padding_size;
         }
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
