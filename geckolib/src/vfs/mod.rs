@@ -404,7 +404,7 @@ where
                 *offset += file.len() as u64;
                 *offset = align_addr(*offset, 2);
 
-                file.fst = fst_entry.clone();
+                file.new_offset = pos;
                 output_fst.push(fst_entry);
                 files.push(file.clone());
             }
@@ -475,7 +475,7 @@ where
 
         let mut offset = (fst_list_offset + fst_len) as u64;
         for node in self.root_mut().iter_mut() {
-            let l = output_fst.len();
+            let l = 0;
             GeckoFS::visitor_fst_entries(
                 node.as_mut(),
                 &mut output_fst,
@@ -534,7 +534,7 @@ where
                     human_bytes(file.len() as f64)
                 ))?;
             }
-            let padding_size = file.fst.file_offset_parent_dir - offset;
+            let padding_size = file.new_offset as usize - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
             // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
@@ -882,6 +882,7 @@ impl<R> Clone for FileDataSource<R> {
 #[derive(Debug)]
 pub struct File<R> {
     fst: FstEntry,
+    new_offset: u64,
     state: FileState,
     data: FileDataSource<R>,
 }
@@ -890,6 +891,7 @@ impl<R> Clone for File<R> {
     fn clone(&self) -> Self {
         Self {
             fst: self.fst.clone(),
+            new_offset: self.new_offset,
             state: self.state,
             data: self.data.clone(),
         }
@@ -912,6 +914,7 @@ impl<R> File<R> {
                 file_size_next_dir_index,
                 file_name_offset,
             },
+            new_offset: 0,
             state: Default::default(),
             data,
         }
