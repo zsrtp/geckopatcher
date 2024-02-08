@@ -3,7 +3,7 @@ use std::{borrow::Borrow, rc::Rc};
 #[cfg(not(feature = "generic_patch"))]
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{
-    prelude::{wasm_bindgen, Closure},
+    prelude::*,
     JsCast, JsValue,
 };
 #[cfg(not(feature = "generic_patch"))]

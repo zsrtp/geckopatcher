@@ -100,10 +100,9 @@ impl async_std::io::Write for WebFile {
     ) -> std::task::Poll<std::io::Result<usize>> {
         let mut options = web_sys::FileSystemReadWriteOptions::new();
         options.at(self.cursor as f64);
-        let mut b = buf.to_vec();
         match self
             .handle
-            .write_with_u8_array_and_options(&mut b, &options)
+            .write_with_u8_array_and_options(buf, &options)
         {
             Ok(n) => {
                 self.cursor += n as u64;
