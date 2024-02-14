@@ -14,12 +14,15 @@ use geckolib::vfs::GeckoFS;
 use romhack::progress::init_cli_progress;
 
 #[derive(Debug, Parser)]
-#[command(author, version, long_about = None)]
+#[command(author, version, about, long_about = None)]
 /// Extract Title information from the FILE.
 struct Args {
     #[arg(value_hint = ValueHint::FilePath)]
     /// The file to extract the info from
     file: PathBuf,
+    #[arg(value_hint = ValueHint::AnyPath, )]
+    /// Where to output the opening banner file
+    banner_out: Option<PathBuf>,
 }
 
 fn main() -> color_eyre::eyre::Result<()> {
@@ -73,7 +76,14 @@ fn main() -> color_eyre::eyre::Result<()> {
                     fs.root_mut().get_file("opening.bnr").is_ok()
                 );
             }
-            let mut buf = vec![0u8; 32];
+            if let Some(banner_out_path) = args.banner_out {
+                if let Ok(banner) = fs.root_mut().get_file_mut("opening.bnr") {
+                    let mut out_file = async_std::fs::OpenOptions::new().write(true).create(true).open(banner_out_path).await?;
+                    async_std::io::copy(banner, &mut out_file).await?;
+                }
+            }
+            buf.resize(32, 0);
+            buf.fill(0);
             let map_file = fs.root_mut().get_file_mut(if is_wii {
                 "map/Rfinal/Release/RframeworkF.map"
             } else {

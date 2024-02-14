@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
+#[cfg(feature = "log")]
+use async_std::io::{prelude::SeekExt, ReadExt};
 use async_std::{
-    io::{prelude::SeekExt, BufReader, ReadExt},
+    io::BufReader,
     sync::{Arc, Mutex},
 };
-use clap::{arg, command, value_parser, Parser, ValueHint};
+use clap::{arg, command, Parser, ValueHint};
 use geckolib::{
     iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
