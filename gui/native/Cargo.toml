@@ -2,21 +2,22 @@
 name = "gui-patcher"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.65"
+rust-version = "1.75"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egui = "^0.22"
-eframe = { version = "^0.22", default-features = false, features = [
+egui = "^0.26"
+egui_extras = { version = "^0.26", features = ["image"] }
+eframe = { version = "^0.26", default-features = false, features = [
     "accesskit",     # Make egui comptaible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
     "persistence",   # Enable restoring app state when restarting the app.
 ] }
-rfd = {version = "^0.11", default-features = false, features = ["xdg-portal"]}
+rfd = {version = "^0.13", default-features = false, features = ["xdg-portal", "async-std"]}
 log = "^0.4"
-flume = "^0.10"
+flume = "^0.11"
 eyre = "^0.6"
 lazy_static = "^1.4"
 
@@ -25,8 +26,12 @@ serde = { version = "^1.0", features = ["derive"] }
 
 # native dependecies:
 geckolib = { path = "../../geckolib", features = ["progress"] }
-env_logger = "^0.10"
+env_logger = "^0.11"
 futures-lite = "^1.13"
 async-std = "^1.12"
-image = "^0.24"
-regex = "^1.9"
+image = { version = "^0.24", features = ["png"]}
+regex = "^1.10"
+
+[features]
+default = ["parallel"]
+parallel = ["geckolib/parallel"]

@@ -32,6 +32,7 @@ lazy_static! {
         std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
 }
 
+/// Open a config from a patch file
 pub async fn open_config_from_patch<R: std::io::Read + std::io::Seek>(patch_reader: R) -> Result<IsoBuilder<R>, eyre::Report> {
     let mut zip: ZipArchive<R> = ZipArchive::new(patch_reader)?;
 

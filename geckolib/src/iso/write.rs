@@ -209,6 +209,7 @@ fn hash_group(buf: &mut [u8]) -> [u8; consts::WII_HASH_SIZE] {
     ret_buf
 }
 
+/// Implementation of the Segher's fake signing algorithm
 fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
     let content = &mut part.tmd.contents[0];
     let mut hashes_ = Vec::with_capacity(consts::WII_H3_SIZE);

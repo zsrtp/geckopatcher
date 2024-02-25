@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::path::Path;
 use zip::{read::ZipFile, ZipArchive};
 
+/// A file from an arbitrary source
 pub enum File<'a> {
     Zip(Box<ZipFile<'a>>),
     #[cfg(not(target_os = "unknown"))]
@@ -30,6 +31,7 @@ impl<'a> Read for File<'a> {
     }
 }
 
+/// A source of files for the builder
 #[derive(Debug)]
 pub enum FSSource<R> {
     Zip(Box<ZipArchive<R>>),

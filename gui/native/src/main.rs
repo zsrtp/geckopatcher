@@ -3,13 +3,15 @@
 
 mod app;
 pub mod progress;
+use std::sync::Arc;
+
 pub use app::PatcherApp;
 use eframe::Theme;
 use egui::Vec2;
 
 const ICON: &[u8; 0x47D11] = include_bytes!("../assets/icon.png");
 
-pub(crate) fn load_icon() -> eframe::IconData {
+pub(crate) fn load_icon() -> egui::viewport::IconData {
     let (icon_rgba, icon_width, icon_height) = {
         let image = image::load_from_memory(ICON)
             .expect("Failed to open icon path")
@@ -19,7 +21,7 @@ pub(crate) fn load_icon() -> eframe::IconData {
         (rgba, width, height)
     };
 
-    eframe::IconData {
+    egui::viewport::IconData {
         rgba: icon_rgba,
         width: icon_width,
         height: icon_height,
@@ -30,14 +32,19 @@ pub(crate) fn load_icon() -> eframe::IconData {
 fn main() -> eframe::Result<()> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
+    let icon = Arc::new(load_icon());
+
     // let native_options = eframe::NativeOptions::default();
     let native_options = eframe::NativeOptions {
-        icon_data: Some(load_icon()),
-        drag_and_drop_support: true,
+        viewport: egui::ViewportBuilder {
+            inner_size: Some(Vec2::new(300., 200.)),
+            min_inner_size: Some(Vec2::new(280., 220.)),
+            icon: Some(icon),
+            drag_and_drop: Some(true),
+            ..Default::default()
+        },
         centered: true,
         follow_system_theme: true,
-        initial_window_size: Some(Vec2::new(300., 200.)),
-        min_window_size: Some(Vec2::new(280., 220.)),
         default_theme: Theme::Dark,
         run_and_return: false,
         ..Default::default()

@@ -23,6 +23,7 @@ pub trait Builder {
     fn build(&mut self) -> Result<(), Self::Error>;
 }
 
+/// A builder for creating an ISO
 pub struct IsoBuilder<R> {
     config: Config,
     fs: FSSource<R>,

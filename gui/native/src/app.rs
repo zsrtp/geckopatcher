@@ -1,7 +1,7 @@
 use std::io::{Read, Seek};
 
 use async_std::fs;
-use egui::{TextureHandle, ImageData, ColorImage, Vec2};
+use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use rfd::FileHandle;
 use std::path::PathBuf;
@@ -56,6 +56,7 @@ pub enum FromAppMsg {
     Progress(Option<String>, Option<f32>),
     OpenedFile(FileHandle),
     OpenedPatch(FileHandle),
+    SaveSelected,
     FinishedSave,
     NoFileOpened,
     NoPatchOpened,
@@ -85,7 +86,6 @@ pub struct PatcherApp {
     is_patching: bool,
     status: Option<String>,
     progress: Option<f32>,
-    github_image: Option<TextureHandle>,
 }
 
 async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
@@ -142,6 +142,15 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
         let (sender, receiver) = (snd, rcv);
         init_gui_progress(sender.clone());
 
+        macro_rules! send_async {
+            ($msg:expr, $err:expr) => {
+                if sender.send_async($msg).await.is_err() {
+                    log::error!($err);
+                    return;
+                }
+            };
+        }
+
         loop {
             match receiver.recv_async().await {
                 Ok(msg) => match msg {
@@ -154,20 +163,16 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                         {
                             Some(file) => {
                                 log::debug!("Got a patch file from the user!");
-                                if sender
-                                    .send_async(FromAppMsg::OpenedPatch(file))
-                                    .await
-                                    .is_err()
-                                {
-                                    log::error!("could not send OpenedPatch");
-                                    return;
-                                }
+                                send_async!(
+                                    FromAppMsg::OpenedPatch(file),
+                                    "could not send OpenedPatch"
+                                );
                             }
                             None => {
-                                if sender.send_async(FromAppMsg::NoPatchOpened).await.is_err() {
-                                    log::error!("could not send NoPatchOpened");
-                                    return;
-                                }
+                                send_async!(
+                                    FromAppMsg::NoPatchOpened,
+                                    "could not send NoPatchOpened"
+                                );
                             }
                         };
                     }
@@ -208,18 +213,23 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                         {
                             Some(save) => {
                                 log::debug!("Got a file from the user! Starting patching");
+                                send_async!(
+                                    FromAppMsg::Progress(
+                                        Some("Starting process".to_string()),
+                                        None
+                                    ),
+                                    "Could not send Progress (update gui)"
+                                );
                                 if let Err(err) = reproc(iso, save).await {
                                     log::error!("{:?}", err);
-                                    if sender.send_async(FromAppMsg::Progress(Some(format!("{}", err)), None)).await.is_err() {
-                                        log::error!("could not send Progress (error in reproc)");
-                                        return;
-                                    }
-                                    if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
-                                        log::error!(
-                                            "could not send NoSaveOpened (error in reproc)"
-                                        );
-                                        return;
-                                    }
+                                    send_async!(
+                                        FromAppMsg::Progress(Some(format!("{}", err)), None,),
+                                        "could not send Progress (error in reproc)"
+                                    );
+                                    send_async!(
+                                        FromAppMsg::NoSaveOpened,
+                                        "could not send NoSaveOpened (error in reproc)"
+                                    );
                                 } else {
                                     if sender
                                         .send_async(FromAppMsg::Progress(None, None))
@@ -275,7 +285,6 @@ impl PatcherApp {
             is_patching: false,
             status: None,
             progress: None,
-            github_image: None,
         }
     }
 }
@@ -298,8 +307,9 @@ impl eframe::App for PatcherApp {
             is_patching,
             status,
             progress,
-            github_image,
         } = self;
+
+        egui_extras::install_image_loaders(ctx);
 
         // Examples of how to create different panels and windows.
         // Pick whichever suits you.
@@ -311,7 +321,7 @@ impl eframe::App for PatcherApp {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Quit").clicked() {
-                        _frame.close();
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
             });
@@ -361,7 +371,7 @@ impl eframe::App for PatcherApp {
                                     *picked_patch = OpenFileState::None;
                                 }
                                 Err(TrySendError::Disconnected(_)) => {
-                                    _frame.close();
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             };
                         }
@@ -390,7 +400,7 @@ impl eframe::App for PatcherApp {
                                     *picked_file = OpenFileState::None;
                                 }
                                 Err(TrySendError::Disconnected(_)) => {
-                                    _frame.close();
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             };
                         }
@@ -412,7 +422,7 @@ impl eframe::App for PatcherApp {
                                 }
                                 Err(TrySendError::Full(_)) => {}
                                 Err(TrySendError::Disconnected(_)) => {
-                                    _frame.close();
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 }
                             };
                         }
@@ -422,15 +432,14 @@ impl eframe::App for PatcherApp {
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
-                    let data: &[u8] = if ui.style().visuals.dark_mode {include_bytes!("../assets/github-mark-white.png")} else {include_bytes!("../assets/github-mark.png")};
-                    let github = github_image
-                        .get_or_insert_with(|| {
-                            let img = image::load_from_memory_with_format(data, image::ImageFormat::Png).unwrap();
-                            let image = img.as_rgba8().unwrap();
-                            let (width, height) = image.dimensions();
-                            ui.ctx().load_texture("github-logo", ImageData::Color(ColorImage::from_rgba_unmultiplied([width as usize, height as usize], image.as_raw())), Default::default())
-                        });
-                    ui.image(github, Vec2::new(15.0, 15.0));
+                    ui.add(
+                        egui::Image::new(if ui.style().visuals.dark_mode {
+                            egui::include_image!("../assets/github-mark-white.png")
+                        } else {
+                            egui::include_image!("../assets/github-mark.png")
+                        })
+                        .fit_to_exact_size(Vec2 { x: 15.0, y: 15.0 }),
+                    );
                     ui.hyperlink_to("Github", "https://github.com/kipcode66/geckopatcher")
                 });
                 egui::warn_if_debug_build(ui);
@@ -466,7 +475,15 @@ impl eframe::App for PatcherApp {
                     *status = status_;
                     *progress = progress_;
                 }
-                Err(TryRecvError::Disconnected) => _frame.close(),
+                Ok(FromAppMsg::SaveSelected) => {
+                    ctx.request_repaint();
+                    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close)
+                }
                 Err(TryRecvError::Empty) => {
                     break;
                 }
