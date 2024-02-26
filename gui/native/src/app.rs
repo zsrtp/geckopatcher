@@ -142,15 +142,6 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
         let (sender, receiver) = (snd, rcv);
         init_gui_progress(sender.clone());
 
-        macro_rules! send_async {
-            ($msg:expr, $err:expr) => {
-                if sender.send_async($msg).await.is_err() {
-                    log::error!($err);
-                    return;
-                }
-            };
-        }
-
         loop {
             match receiver.recv_async().await {
                 Ok(msg) => match msg {
@@ -163,16 +154,20 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                         {
                             Some(file) => {
                                 log::debug!("Got a patch file from the user!");
-                                send_async!(
-                                    FromAppMsg::OpenedPatch(file),
-                                    "could not send OpenedPatch"
-                                );
+                                if sender
+                                    .send_async(FromAppMsg::OpenedPatch(file))
+                                    .await
+                                    .is_err()
+                                {
+                                    log::error!("could not send OpenedPatch");
+                                    return;
+                                }
                             }
                             None => {
-                                send_async!(
-                                    FromAppMsg::NoPatchOpened,
-                                    "could not send NoPatchOpened"
-                                );
+                                if sender.send_async(FromAppMsg::NoPatchOpened).await.is_err() {
+                                    log::error!("could not send NoPatchOpened");
+                                    return;
+                                }
                             }
                         };
                     }
@@ -213,23 +208,36 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                         {
                             Some(save) => {
                                 log::debug!("Got a file from the user! Starting patching");
-                                send_async!(
-                                    FromAppMsg::Progress(
+                                if sender
+                                    .send_async(FromAppMsg::Progress(
                                         Some("Starting process".to_string()),
-                                        None
-                                    ),
-                                    "Could not send Progress (update gui)"
-                                );
+                                        None,
+                                    ))
+                                    .await
+                                    .is_err()
+                                {
+                                    log::error!("Could not send Progress (update gui)");
+                                    return;
+                                }
                                 if let Err(err) = reproc(iso, save).await {
                                     log::error!("{:?}", err);
-                                    send_async!(
-                                        FromAppMsg::Progress(Some(format!("{}", err)), None,),
-                                        "could not send Progress (error in reproc)"
-                                    );
-                                    send_async!(
-                                        FromAppMsg::NoSaveOpened,
-                                        "could not send NoSaveOpened (error in reproc)"
-                                    );
+                                    if sender
+                                        .send_async(FromAppMsg::Progress(
+                                            Some(format!("{}", err)),
+                                            None,
+                                        ))
+                                        .await
+                                        .is_err()
+                                    {
+                                        log::error!("could not send Progress (error in reproc)");
+                                        return;
+                                    }
+                                    if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
+                                        log::error!(
+                                            "could not send NoSaveOpened (error in reproc)"
+                                        );
+                                        return;
+                                    }
                                 } else {
                                     if sender
                                         .send_async(FromAppMsg::Progress(None, None))
