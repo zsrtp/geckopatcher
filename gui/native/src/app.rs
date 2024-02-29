@@ -1,6 +1,7 @@
 use std::io::{Read, Seek};
 
 use async_std::fs;
+use async_std::io::BufReader;
 use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use rfd::FileHandle;
@@ -90,11 +91,14 @@ pub struct PatcherApp {
 
 async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
     // let patch = fs::OpenOptions::new().read(true).open(patch_path).await;
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .open(file_path)
-        .await
-        .unwrap();
+    let file = BufReader::with_capacity(
+        0x7C00 * 64 * 8,
+        fs::OpenOptions::new()
+            .read(true)
+            .open(file_path)
+            .await
+            .unwrap(),
+    );
     let save = fs::OpenOptions::new()
         .read(true)
         .write(true)

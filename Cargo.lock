@@ -350,7 +350,7 @@ checksum = "bc19683171f287921f2405677dd2ed2549c3b3bda697a563ebc3a121ace2aba1"
 dependencies = [
  "async-lock 3.3.0",
  "blocking",
- "futures-lite 2.0.0",
+ "futures-lite 2.2.0",
 ]
 
 [[package]]
@@ -398,7 +398,7 @@ dependencies = [
  "cfg-if",
  "concurrent-queue",
  "futures-io",
- "futures-lite 2.0.0",
+ "futures-lite 2.2.0",
  "parking",
  "polling 3.5.0",
  "rustix 0.38.31",
@@ -435,7 +435,7 @@ checksum = "b948000fad4873c1c9339d60f2623323a0cfd3816e5181033c6a5cb68b2accf7"
 dependencies = [
  "async-io 2.3.1",
  "blocking",
- "futures-lite 2.0.0",
+ "futures-lite 2.2.0",
 ]
 
 [[package]]
@@ -1688,17 +1688,15 @@ dependencies = [
 
 [[package]]
 name = "futures-lite"
-version = "2.0.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c1155db57329dca6d018b61e76b1488ce9a2e5e44028cac420a5898f4fcef63"
+checksum = "445ba825b27408685aaecefd65178908c36c6e96aaf6d8599419d46e624192ba"
 dependencies = [
  "fastrand 2.0.0",
  "futures-core",
  "futures-io",
- "memchr",
  "parking",
  "pin-project-lite",
- "waker-fn",
 ]
 
 [[package]]
@@ -1940,7 +1938,7 @@ dependencies = [
  "env_logger 0.11.2",
  "eyre",
  "flume 0.11.0",
- "futures-lite 1.13.0",
+ "futures-lite 2.2.0",
  "geckolib",
  "image",
  "lazy_static",
@@ -2626,9 +2624,9 @@ checksum = "c1b04fb49957986fdce4d6ee7a65027d55d4b6d2265e5848bbb507b58ccfdb6f"
 
 [[package]]
 name = "parking"
-version = "2.1.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14f2252c834a40ed9bb5422029649578e63aa341ac401f74e719dd1afda8394e"
+checksum = "bb813b8af86854136c6922af0598d719255ecb2179515e6e7730d468f05c9cae"
 
 [[package]]
 name = "parking_lot"

@@ -9,7 +9,7 @@ pub use app::PatcherApp;
 use eframe::Theme;
 use egui::Vec2;
 
-const ICON: &[u8; 0x47D11] = include_bytes!("../assets/icon.png");
+const ICON: &[u8; 0xc053] = include_bytes!("../assets/icon.png");
 
 pub(crate) fn load_icon() -> egui::viewport::IconData {
     let (icon_rgba, icon_width, icon_height) = {
