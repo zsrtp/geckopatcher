@@ -18,7 +18,7 @@ cbc = { version = "^0.1" }
 eyre = "^0.6"
 thiserror = "^1.0"
 num = "^0.4"
-toml = "^0.7"
+toml = "^0.8"
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 serde = "^1.0"
 serde_derive = "^1.0"
@@ -30,21 +30,20 @@ async-std = { version = "^1.12", default-features = false, features = [
     "pin-project-lite",
     "gloo-timers",
 ] }
-image = { version = "^0.24", default-features = false, features = [
+image = { version = "^0.25", default-features = false, features = [
     "jpeg",
     "png",
 ] }
-goblin = "^0.7"
+goblin = "^0.8"
 lazy_static = "^1.4"
 pin-project = "^1.1"
-rayon = { version = "^1.7", optional = true }
-event-listener = { version = "^2.5", optional = true }
+rayon = { version = "^1.10", optional = true }
 human_bytes = { version = "^0.4", optional = true, default-features = false }
 static_assertions = "^1.1"
 
 [features]
 default = ["parallel", "log"]
 web = []
-parallel = ["rayon", "image/jpeg_rayon"]
+parallel = ["rayon", "image/rayon"]
 log = ["async-std/default"]
-progress = ["event-listener", "human_bytes"]
+progress = ["human_bytes"]
