@@ -668,23 +668,55 @@ where
 
     pub fn finalize(&mut self) -> FinalizeFuture<'_, W> {
         crate::trace!("Finalizing the ISO");
-        FinalizeFuture { writer: self }
+        FinalizeFuture { writer: self, state: Default::default() }
     }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+enum FinalizeFutureState {
+    #[default]
+    Init,
+    Flush,
+    Close,
+    Done,
 }
 
 pub struct FinalizeFuture<'a, W> {
     pub(crate) writer: &'a mut WiiDiscWriter<W>,
+    state: FinalizeFutureState,
 }
 
 impl<'a, W: AsyncWrite + AsyncRead + AsyncSeek + Unpin> Future for FinalizeFuture<'a, W> {
     type Output = io::Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let Self { writer } = &mut *self;
+        let Self { writer, state } = &mut *self;
         let mut pinned = Pin::new(&mut **writer);
-        ready!(pinned.as_mut().poll_close_disc(cx))?;
-        let this = pinned.as_mut().project();
-        this.writer.poll_close(cx)
+        match state {
+            FinalizeFutureState::Init => {
+                ready!(pinned.as_mut().poll_close_disc(cx))?;
+                *state = FinalizeFutureState::Flush;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            FinalizeFutureState::Flush => {
+                let this = pinned.as_mut().project();
+                ready!(this.writer.poll_flush(cx))?;
+                *state = FinalizeFutureState::Close;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            FinalizeFutureState::Close => {
+                let this = pinned.as_mut().project();
+                ready!(this.writer.poll_close(cx))?;
+                *state = FinalizeFutureState::Done;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            FinalizeFutureState::Done => {
+                Poll::Ready(Ok(()))
+            },
+        }
     }
 }
 
@@ -995,7 +1027,7 @@ where
 {
     pub async fn finalize(&mut self) -> io::Result<()> {
         match self {
-            DiscWriter::Gamecube(_) => Ok(()),
+            DiscWriter::Gamecube(writer) => writer.flush().await,
             DiscWriter::Wii(writer) => writer.finalize().await,
         }
     }
