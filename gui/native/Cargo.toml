@@ -27,10 +27,11 @@ serde = { version = "^1.0", features = ["derive"] }
 # native dependecies:
 geckolib = { path = "../../geckolib", features = ["progress"] }
 env_logger = "^0.11"
-futures-lite = "^2.2"
+futures-lite = "^2.3"
 async-std = "^1.12"
 image = { version = "^0.25", features = ["png"]}
 regex = "^1.10"
+pin-project = "^1.1"
 
 [features]
 default = ["parallel"]
