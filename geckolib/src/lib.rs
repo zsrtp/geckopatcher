@@ -27,11 +27,12 @@ use std::fs::{File, OpenOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
+#[cfg(not(target_arch = "wasm32"))]
+use async_std::{path::PathBuf, fs};
 use config::Config;
 use eyre::Context;
-use iso::builder::IsoBuilder;
+use iso::builder::{IsoBuilder, PatchBuilder};
 use zip::ZipArchive;
-use async_std::io::{Read as AsyncRead, Write as AsyncWrite, BufReader};
 
 #[cfg(feature = "progress")]
 lazy_static! {
@@ -54,22 +55,22 @@ pub async fn open_config_from_patch<R: std::io::Read + std::io::Seek>(
     Ok(IsoBuilder::new_with_zip(config, zip))
 }
 
-// #[cfg(not(target_arch = "wasm32"))]
-// pub async fn apply_patch<R1: std::io::Read + std::io::Seek, R2: AsyncRead + std::io::Seek, W: AsyncWrite>(
-//     patch: R1,
-//     original_game: R2,
-//     output: W,
-// ) -> eyre::Result<()> {
-//     let builder = open_config_from_patch(patch).await?;
-
-//     config.src.iso = original_game;
-//     config.build.iso = output;
-
-//     build_and_emit_iso(printer, zip, compiled_library, config).await
-// }
+#[cfg(not(target_arch = "wasm32"))]
+/// Open a config from a file on the FileSystem to return an IsoBuilder
+pub async fn open_config_from_fs_iso(config_file: &PathBuf) -> eyre::Result<IsoBuilder<File>> {
+    let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
+    Ok(IsoBuilder::new_with_fs(config, config_file))
+}
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn new(name: &str) -> Result<(), eyre::Report> {
+/// Open a config from a file on the FileSystem to return a PatchBuilder
+pub async fn open_config_from_fs_patch(config_file: &PathBuf) -> eyre::Result<PatchBuilder> {
+    let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
+    Ok(PatchBuilder::with_config(config))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn new(name: &str) -> eyre::Result<()> {
     use std::io::Write;
 
     let exit_code = Command::new("cargo")

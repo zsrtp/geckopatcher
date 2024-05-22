@@ -1,52 +1,16 @@
-use async_std::{fs, path::PathBuf, task};
-use clap::{Parser, Subcommand, ValueHint};
-use geckolib::{iso::builder::{Builder, PatchBuilder}, new};
+use std::str::FromStr;
+
+use async_std::task;
+use clap::Parser;
+use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_fs_patch, open_config_from_patch};
+
+#[cfg(feature = "progress")]
+use geckolib::{UPDATER, update::UpdaterType};
 
 #[cfg(feature = "progress")]
 mod progress;
 
-#[derive(Debug, Parser)]
-#[command(author, version)]
-/// Patches a game file
-struct Cli {
-    #[command(subcommand)]
-    /// Sub command
-    cmd: Commands,
-}
-
-#[derive(Subcommand, Debug)]
-/// Command from 
-enum Commands {
-    /// Builds the Rom Hack
-    Build {
-        #[arg(short, long)]
-        /// Compiles the Rom Hack in Rust's debug mode
-        debug: bool,
-        #[arg(short, long)]
-        /// Compiles the Rom Hack as a patch
-        patch: bool,
-        #[arg(short, long)]
-        /// Compiles the Rom Hack from local files
-        raw: bool
-    },
-    /// Applies a patch file to a game to create a Rom Hack
-    Apply {
-        #[arg(value_hint = ValueHint::FilePath)]
-        /// Input path to patch file
-        patch: PathBuf,
-        #[arg(value_hint = ValueHint::FilePath)]
-        /// Input path to original game (GCM or ISO format)
-        original_game: PathBuf,
-        #[arg(value_hint = ValueHint::Other)]
-        /// Output path for Rom Hack
-        output: PathBuf,
-    },
-    /// Creates a new Rom Hack with the given name
-    New {
-        #[arg(value_hint = ValueHint::Other)]
-        name: String
-    },
-}
+use romhack::cli::{Cli, Commands};
 
 fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
@@ -57,16 +21,37 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     let args = Cli::parse();
 
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.lock() {
+        updater.init(Some(4))?;
+        updater.set_type(UpdaterType::Spinner)?;
+        updater.set_title("Initializing...".into())?;
+        updater.set_message("".into())?;
+    }
+
     match args.cmd {
         Commands::Build { debug, patch, raw } => {
             task::block_on::<_, color_eyre::eyre::Result<()>>(async {
-                let mut iso =
-                    PatchBuilder::with_config(toml::from_str(&fs::read_to_string("RomHack.toml").await?)?);
-                iso.build()?;
-                Ok(())
+                if patch {
+                    let mut builder = open_config_from_fs_patch(&async_std::path::PathBuf::from_str("RomHack.toml")?).await?;
+                    builder.build().await
+                } else {
+                    let mut builder = open_config_from_fs_iso(&async_std::path::PathBuf::from_str("RomHack.toml")?).await?;
+                    builder.build().await
+                }
             })
         },
-        Commands::Apply { patch, original_game, output } => todo!(),
+        Commands::Apply { patch, original_game, output } => {
+            task::block_on::<_, color_eyre::eyre::Result<()>>(async {
+                let mut builder = open_config_from_patch(std::fs::OpenOptions::new().read(true).open(patch)?).await?;
+                {
+                    let config = builder.config_mut();
+                    config.src.iso = original_game;
+                    config.build.iso = output;
+                }
+                builder.build().await
+            })
+        },
         Commands::New { name } => {
             new(&name)?;
             Ok(())
