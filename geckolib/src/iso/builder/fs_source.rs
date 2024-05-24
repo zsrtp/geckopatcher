@@ -1,4 +1,4 @@
-use std::io::{Read, Seek};
+use std::{fs, io::{Read, Seek}};
 #[cfg(not(target_os = "unknown"))]
 use std::path::PathBuf;
 use std::path::Path;
@@ -51,6 +51,46 @@ impl<R> FSSource<R> {
 }
 
 impl<R: Read + Seek> FSSource<R> {
+    pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
+        match self {
+            FSSource::Zip(zip) => {
+                zip.index_for_path(path).is_some()
+            },
+            FSSource::FS(inner_path) => {
+                let p = inner_path.join(path);
+                p.exists()
+            },
+        }
+    }
+
+    pub fn is_dir<P: AsRef<Path>>(&self, path: P) -> bool {
+        match self {
+            FSSource::Zip(zip) => {
+                zip.index_for_path(path)
+                    .and_then(|idx| zip.by_index(idx).ok())
+                    .map_or(false, |entry| entry.is_dir())
+            },
+            FSSource::FS(inner_path) => {
+                let p = inner_path.join(path);
+                p.is_dir()
+            },
+        }
+    }
+
+    pub fn is_file<P: AsRef<Path>>(&self, path: P) -> bool {
+        match self {
+            FSSource::Zip(zip) => {
+                zip.index_for_path(path)
+                    .and_then(|idx| zip.by_index(idx).ok())
+                    .map_or(false, |entry| entry.is_file())
+            },
+            FSSource::FS(inner_path) => {
+                let p = inner_path.join(path);
+                p.is_file()
+            },
+        }
+    }
+
     pub fn get_file<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<File> {
         match self {
             FSSource::Zip(zip) => Ok(File::Zip(Box::new(
@@ -73,5 +113,24 @@ impl<R: Read + Seek> FSSource<R> {
                 ))
             }
         }
+    }
+
+    pub fn get_names<P: AsRef<Path>>(&self, path: P) -> eyre::Result<Vec<String>> {
+        let mut names: Vec<String> = Vec::new();
+        match self {
+            FSSource::Zip(_) => {
+                return Err(eyre::eyre!("Unsupported operation on ZipArchive: get_names"))
+            },
+            FSSource::FS(inner_path) => {
+                let p = inner_path.join(path);
+                for entry in fs::read_dir(p)? {
+                    let entry = entry?;
+                    let entry_path = entry.path();
+                    let file_name = entry_path.file_name().expect("Entry has no name");
+                    names.push(String::from(file_name.to_str().unwrap()));
+                }
+            },
+        }
+        Ok(names)
     }
 }

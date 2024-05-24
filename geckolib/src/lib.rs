@@ -36,6 +36,7 @@ use zip::ZipArchive;
 
 #[cfg(feature = "progress")]
 lazy_static! {
+    /// Progress updater
     pub static ref UPDATER: std::sync::Arc<std::sync::Mutex<update::Updater<eyre::Report, usize>>> =
         std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
 }
