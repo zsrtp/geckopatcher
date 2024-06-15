@@ -360,7 +360,16 @@ where
 #[pin_project(project = DiskReaderProj)]
 pub enum DiscReader<R> {
     Gamecube(#[pin] GCDiscReader<Pin<Box<R>>>),
-    Wii(#[pin] Box<WiiDiscReader<Pin<Box<R>>>>),
+    Wii(#[pin] WiiDiscReader<Pin<Box<R>>>),
+}
+
+impl<R: Clone> Clone for DiscReader<R> {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Gamecube(reader) => Self::Gamecube(reader.clone()),
+            Self::Wii(reader) => Self::Wii(reader.clone()),
+        }
+    }
 }
 
 impl<R> AsyncSeek for DiscReader<R>
@@ -410,7 +419,7 @@ where
             Ok(Self::Gamecube(GCDiscReader::new(reader)))
         } else if BE::read_u32(&buf[..][..4]) == 0x5D1C9EA3 {
             crate::debug!("Loading Wii disc");
-            Ok(Self::Wii(Box::new(WiiDiscReader::try_parse(reader).await?)))
+            Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))
         } else {
             Err(eyre::eyre!("Not a game disc"))
         }

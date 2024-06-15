@@ -48,7 +48,8 @@ fn main() -> color_eyre::eyre::Result<()> {
             )
             .await?,
         );
-        let f = Arc::new(Mutex::new(DiscReader::new(f).await?));
+        // let f = Arc::new(Mutex::new(DiscReader::new(f).await?));
+        let f = DiscReader::new(f).await?;
         #[cfg(feature = "log")]
         {
             let mut guard = f.lock_arc().await;
@@ -65,7 +66,6 @@ fn main() -> color_eyre::eyre::Result<()> {
             );
         }
         let out = {
-            let guard = f.lock_arc().await;
             DiscWriter::new(
                 async_std::fs::OpenOptions::new()
                     .write(true)
@@ -75,7 +75,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                         args.dest,
                     )
                     .await?,
-                guard.get_disc_info(),
+                f.get_disc_info(),
             )
             .await?
         };

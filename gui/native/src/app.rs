@@ -8,12 +8,10 @@ use rfd::FileHandle;
 use std::path::PathBuf;
 
 use async_std::io::prelude::{ReadExt, SeekExt};
-use async_std::sync::Mutex;
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
 use geckolib::vfs::GeckoFS;
-use std::sync::Arc;
 
 use crate::progress::init_gui_progress;
 
@@ -107,12 +105,11 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
         .open(save_path)
         .await
         .unwrap();
-    let f = Arc::new(Mutex::new(DiscReader::new(file).await?));
+    let mut f = DiscReader::new(file).await?;
     {
-        let mut guard = f.lock_arc().await;
-        guard.seek(std::io::SeekFrom::Start(0)).await?;
+        f.seek(std::io::SeekFrom::Start(0)).await?;
         let mut buf = vec![0u8; 0x60];
-        guard.read(&mut buf).await?;
+        f.read(&mut buf).await?;
         log::info!(
             "[{}] Game Title: {:02X?}",
             String::from_utf8_lossy(&buf[..6]),
@@ -123,8 +120,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
         );
     }
     let out = {
-        let guard = f.lock_arc().await;
-        DiscWriter::new(save, guard.get_disc_info()).await?
+        DiscWriter::new(save, f.get_disc_info()).await?
     };
 
     let mut out = std::pin::pin!(out);

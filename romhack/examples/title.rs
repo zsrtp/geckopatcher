@@ -53,7 +53,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                 .expect("This game has no title")
         );
         {
-            let f = Arc::new(Mutex::new(f));
+            let f = f;
             let mut fs = GeckoFS::parse(f).await?;
             let file = fs.sys_mut().get_file_mut("Start.dol")?;
             let size = file.seek(SeekFrom::End(0)).await? as usize;

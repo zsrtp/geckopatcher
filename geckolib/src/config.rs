@@ -11,7 +11,7 @@ pub struct Config {
     #[serde(default)]
     pub files: HashMap<String, PathBuf>,
     pub build: Build,
-    pub link: Option<Link>,
+    pub link: Link,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -40,9 +40,9 @@ pub struct Build {
     pub iso: PathBuf,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Link {
     pub entries: Vec<String>,
     pub base: String,
-    pub libs: Option<Vec<PathBuf>>,
+    pub libs: Vec<PathBuf>,
 }

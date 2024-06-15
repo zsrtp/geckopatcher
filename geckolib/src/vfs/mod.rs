@@ -7,6 +7,7 @@ use crate::iso::{consts, FstEntry, FstNodeType};
 use crate::UPDATER;
 use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
 use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
+use async_std::path::PathBuf;
 use async_std::sync::{Arc, Mutex};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
@@ -14,6 +15,7 @@ use eyre::Result;
 use human_bytes::human_bytes;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
+use std::path::Path;
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::task::{Context, Poll};
@@ -91,11 +93,7 @@ where
     }
 
     #[doc = r"Utility function to read the disc."]
-    async fn read_exact<R2: DerefMut<Target = DiscReader<R>>>(
-        reader: &mut R2,
-        pos: SeekFrom,
-        buf: &mut [u8],
-    ) -> Result<()> {
+    async fn read_exact(reader: &mut DiscReader<R>, pos: SeekFrom, buf: &mut [u8]) -> Result<()> {
         reader.seek(pos).await?;
         Ok(reader.read_exact(buf).await?)
     }
@@ -129,12 +127,11 @@ where
         }
     }
 
-    pub async fn parse(reader: Arc<Mutex<DiscReader<R>>>) -> Result<Self> {
+    pub async fn parse(mut reader: DiscReader<R>) -> Result<Self> {
         let mut root = Directory::new("");
         let mut system = Directory::new("&&systemdata");
         {
-            let mut guard = reader.lock_arc().await;
-            let is_wii = guard.get_type() == DiscType::Wii;
+            let is_wii = reader.get_type() == DiscType::Wii;
             crate::debug!(
                 "{}",
                 if is_wii {
@@ -145,20 +142,21 @@ where
             );
             let mut buf = [0u8; 4];
             GeckoFS::read_exact(
-                &mut guard,
+                &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_OFFSET as u64),
                 &mut buf,
             )
             .await?;
             let fst_offset = (BE::read_u32(&buf[..]) << (if is_wii { 2 } else { 0 })) as u64;
-            GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
+            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
             let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
-            GeckoFS::read_exact(&mut guard, SeekFrom::Start(fst_offset), &mut fst_list_buf).await?;
+            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf)
+                .await?;
             let string_table_offset = num_entries as u64 * FstEntry::BLOCK_SIZE as u64;
 
             GeckoFS::read_exact(
-                &mut guard,
+                &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
                 &mut buf,
             )
@@ -166,7 +164,7 @@ where
             let fst_size = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
             let mut str_tbl_buf = vec![0u8; fst_size - string_table_offset as usize];
             GeckoFS::read_exact(
-                &mut guard,
+                &mut reader,
                 SeekFrom::Start(string_table_offset + fst_offset),
                 &mut str_tbl_buf,
             )
@@ -281,7 +279,7 @@ where
             };
 
             GeckoFS::read_exact(
-                &mut guard,
+                &mut reader,
                 SeekFrom::Start(consts::OFFSET_DOL_OFFSET as u64),
                 &mut buf,
             )
@@ -293,29 +291,31 @@ where
                 num_entries * FstEntry::BLOCK_SIZE
             );
 
+            let arc_reader = Arc::new(Mutex::new(reader));
+
             system.add_file(File::new(
-                FileDataSource::Reader(reader.clone()),
+                FileDataSource::Reader(arc_reader.clone()),
                 "iso.hdr",
                 0,
                 consts::HEADER_LENGTH,
                 0,
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(reader.clone()),
+                FileDataSource::Reader(arc_reader.clone()),
                 "AppLoader.ldr",
                 consts::HEADER_LENGTH,
                 dol_offset - consts::HEADER_LENGTH,
                 0,
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(reader.clone()),
+                FileDataSource::Reader(arc_reader.clone()),
                 "Start.dol",
                 dol_offset,
                 fst_offset as usize - dol_offset,
                 0,
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(reader.clone()),
+                FileDataSource::Reader(arc_reader.clone()),
                 "Game.toc",
                 fst_offset as usize,
                 fst_size,
@@ -324,7 +324,12 @@ where
 
             let mut count = 1;
             while count < num_entries {
-                GeckoFS::get_dir_structure_recursive(&mut count, &fst_entries, &mut root, &reader);
+                GeckoFS::get_dir_structure_recursive(
+                    &mut count,
+                    &fst_entries,
+                    &mut root,
+                    &arc_reader,
+                );
                 count += 1;
             }
         }
@@ -649,9 +654,9 @@ where
         }
     }
 
-    pub fn resolve_node(&self, path: &str) -> Option<&dyn Node<R>> {
+    pub fn resolve_node<P: AsRef<Path>>(&self, path: P) -> Option<&dyn Node<R>> {
         let mut dir = self;
-        let mut segments = path.split('/').peekable();
+        let mut segments = path.as_ref().components().peekable();
 
         while let Some(segment) = segments.next() {
             if segments.peek().is_some() {
@@ -660,22 +665,22 @@ where
                     .children
                     .iter()
                     .filter_map(|c| c.as_directory_ref())
-                    .find(|d| d.name == segment)?;
+                    .find(|d| d.name == segment.as_os_str().to_string_lossy())?;
             } else {
                 return dir
                     .children
                     .iter()
-                    .filter_map(|c| c.as_file_ref())
-                    .find(|f| f.name() == segment)
+                    .map(|c| c.as_ref())
+                    .find(|f| f.name() == segment.as_os_str().to_string_lossy())
                     .map(|x| x as &dyn Node<R>);
             }
         }
         Some(dir)
     }
 
-    pub fn resolve_node_mut(&mut self, path: &str) -> Option<&mut dyn Node<R>> {
+    pub fn resolve_node_mut<P: AsRef<Path>>(&mut self, path: P) -> Option<&mut dyn Node<R>> {
         let mut dir = self;
-        let mut segments = path.split('/').peekable();
+        let mut segments = path.as_ref().components().peekable();
 
         while let Some(segment) = segments.next() {
             if segments.peek().is_some() {
@@ -684,22 +689,28 @@ where
                     .children
                     .iter_mut()
                     .filter_map(|c| c.as_directory_mut())
-                    .find(|d| d.name == segment)?;
+                    .find(|d| d.name == segment.as_os_str().to_str().unwrap_or_default())?;
             } else {
                 return dir
                     .children
                     .iter_mut()
-                    .filter_map(|c| c.as_file_mut())
-                    .find(|f| f.name() == segment)
+                    .map(|c| c.as_mut())
+                    .find(|f| f.name() == segment.as_os_str().to_str().unwrap_or_default())
                     .map(|x| x as &mut dyn Node<R>);
             }
         }
         Some(dir)
     }
 
-    pub fn mkdir(&mut self, name: String) -> &mut Directory<R> {
-        if self.children.iter().all(|c| c.name() != name) {
-            self.children.push(Box::new(Directory::new(name)));
+    pub fn mkdir<P: AsRef<Path>>(&mut self, name: P) -> &mut Directory<R> {
+        if self
+            .children
+            .iter()
+            .all(|c| c.name() != name.as_ref().as_os_str().to_string_lossy())
+        {
+            self.children.push(Box::new(Directory::new(
+                name.as_ref().as_os_str().to_string_lossy(),
+            )));
             self.children
                 .last_mut()
                 .map(|x| x.as_directory_mut().unwrap())
@@ -707,10 +718,31 @@ where
         } else {
             self.children
                 .iter_mut()
-                .find(|c| c.name() == name)
+                .find(|c| c.name() == name.as_ref().as_os_str().to_string_lossy())
                 .map(|c| c.as_directory_mut().unwrap())
                 .unwrap()
         }
+    }
+
+    pub fn mkdirs<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<&mut Directory<R>> {
+        let mut p = PathBuf::new();
+        for component in path.as_ref().components() {
+            p.push(component);
+            if let Some(node) = self.resolve_node_mut(&p) {
+                if node.get_type() != NodeType::Directory {
+                    return Err(eyre::eyre!(
+                        "\"{:?}\" already exist and is not a directory",
+                        component
+                    ));
+                }
+            } else {
+                let mut p2 = p.clone();
+                p2.pop();
+                let dir = self.get_dir_mut(p2)?;
+                dir.mkdir(component);
+            }
+        }
+        Ok(self.resolve_node_mut(path).and_then(|node| node.as_directory_mut()).unwrap())
     }
 
     pub fn add_file(&mut self, file: File<R>) -> &mut File<R> {
@@ -796,24 +828,28 @@ where
             .ok_or(eyre::eyre!("\"{path}\" is not a File!"))
     }
 
-    pub fn get_dir(&self, path: &str) -> Result<&Directory<R>> {
+    pub fn get_dir<P: AsRef<Path>>(&self, path: P) -> Result<&Directory<R>> {
         let self_name = self.name().to_owned();
-        self.resolve_node(path)
+        self.resolve_node(path.as_ref())
             .ok_or(eyre::eyre!(
-                "\"{path}\" not found in the directory \"{self_name}\""
+                "\"{:?}\" not found in the directory \"{}\"",
+                path.as_ref(),
+                self_name
             ))?
             .as_directory_ref()
-            .ok_or(eyre::eyre!("\"{path}\" is not a Directory!"))
+            .ok_or(eyre::eyre!("\"{:?}\" is not a Directory!", path.as_ref()))
     }
 
-    pub fn get_dir_mut(&mut self, path: &str) -> Result<&mut Directory<R>> {
+    pub fn get_dir_mut<P: AsRef<Path>>(&mut self, path: P) -> Result<&mut Directory<R>> {
         let self_name = self.name().to_owned();
-        self.resolve_node_mut(path)
+        self.resolve_node_mut(path.as_ref())
             .ok_or(eyre::eyre!(
-                "\"{path}\" not found in the directory \"{self_name}\""
+                "\"{:?}\" not found in the directory \"{}\"",
+                path.as_ref(),
+                self_name
             ))?
             .as_directory_mut()
-            .ok_or(eyre::eyre!("\"{path}\" is not a Directory!"))
+            .ok_or(eyre::eyre!("\"{:?}\" is not a Directory!", path.as_ref()))
     }
 }
 

@@ -13,10 +13,18 @@ extern crate serde;
 extern crate sha1_smol;
 #[macro_use]
 extern crate static_assertions;
+extern crate regex;
+extern crate standalone_syn as syn;
 
+pub mod assembler;
+pub mod banner;
 pub mod config;
 pub mod crypto;
+pub mod demangle;
+pub mod dol;
+pub mod framework_map;
 pub mod iso;
+pub mod linker;
 pub(crate) mod logs;
 #[cfg(feature = "progress")]
 pub mod update;
@@ -28,7 +36,7 @@ use std::fs::{File, OpenOptions};
 use std::process::Command;
 
 #[cfg(not(target_arch = "wasm32"))]
-use async_std::{path::PathBuf, fs};
+use async_std::{fs, path::PathBuf};
 use config::Config;
 use eyre::Context;
 use iso::builder::{IsoBuilder, PatchBuilder};
@@ -60,7 +68,7 @@ pub async fn open_config_from_patch<R: std::io::Read + std::io::Seek>(
 /// Open a config from a file on the FileSystem to return an IsoBuilder
 pub async fn open_config_from_fs_iso(config_file: &PathBuf) -> eyre::Result<IsoBuilder<File>> {
     let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
-    Ok(IsoBuilder::new_with_fs(config, config_file))
+    Ok(IsoBuilder::new_with_fs(config, PathBuf::new()))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
