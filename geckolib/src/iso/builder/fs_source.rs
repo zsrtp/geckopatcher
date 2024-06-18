@@ -63,7 +63,7 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
-    pub fn is_dir<P: AsRef<Path>>(&self, path: P) -> bool {
+    pub fn is_dir<P: AsRef<Path>>(&mut self, path: P) -> bool {
         match self {
             FSSource::Zip(zip) => {
                 zip.index_for_path(path)
@@ -77,7 +77,7 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
-    pub fn is_file<P: AsRef<Path>>(&self, path: P) -> bool {
+    pub fn is_file<P: AsRef<Path>>(&mut self, path: P) -> bool {
         match self {
             FSSource::Zip(zip) => {
                 zip.index_for_path(path)
@@ -109,7 +109,7 @@ impl<R: Read + Seek> FSSource<R> {
                         .to_str()
                         .ok_or(eyre::eyre!("Could get get &OsStr as &str"))?
                         .to_string(),
-                    std::fs::OpenOptions::new().read(true).open(p)?,
+                    std::fs::OpenOptions::new().read(true).open(&p)?,
                 ))
             }
         }
