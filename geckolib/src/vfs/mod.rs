@@ -13,6 +13,7 @@ use byteorder::{ByteOrder, BE};
 use eyre::Result;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
+use num::ToPrimitive;
 use std::io::{Error, SeekFrom};
 use std::ops::DerefMut;
 use std::path::Path;
@@ -418,9 +419,10 @@ where
 
     pub async fn serialize<W>(&mut self, writer: &mut W, is_wii: bool) -> Result<()>
     where
-        W: AsyncWrite + AsyncSeek + Unpin,
+        W: AsyncWrite + Unpin,
     {
         crate::debug!("Serializing the FileSystem");
+        let mut pos: u64 = 0;
         let header_size = self.sys().get_file("iso.hdr")?.len();
         let apploader_size = self.sys().get_file("AppLoader.ldr")?.len();
 
@@ -454,13 +456,16 @@ where
         writer.write_all(&buf[..OFFSET_DOL_OFFSET]).await?;
         writer.write_all(&b).await?;
         writer.write_all(&buf[OFFSET_DOL_OFFSET + 0x10..]).await?;
+        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
         buf.clear();
         self.sys_mut()
             .get_file_mut("AppLoader.ldr")?
             .read_to_end(&mut buf)
             .await?;
         writer.write_all(&buf).await?;
+        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
         writer.write_all(&vec![0u8; dol_padding_size]).await?;
+        pos += dol_padding_size.to_u64().ok_or(eyre::eyre!("DOL padding too large"))?;
 
         buf.clear();
         self.sys_mut()
@@ -468,7 +473,9 @@ where
             .read_to_end(&mut buf)
             .await?;
         writer.write_all(&buf).await?;
+        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
         writer.write_all(&vec![0u8; fst_list_padding_size]).await?;
+        pos += fst_list_padding_size.to_u64().ok_or(eyre::eyre!("FST list padding too large"))?;
 
         let mut output_fst = vec![FstEntry {
             kind: FstNodeType::Directory,
@@ -516,9 +523,11 @@ where
                 &mut buf,
             );
             writer.write_all(&buf).await?;
+            pos += buf.len() as u64;
         }
 
         writer.write_all(&fst_name_bank).await?;
+        pos += fst_name_bank.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
@@ -527,7 +536,7 @@ where
             updater.init(Some(write_total_size as usize))?;
             updater.set_title("Writing virtual FileSystem".to_string())?;
         }
-        let mut offset = writer.seek(SeekFrom::Current(0)).await? as usize;
+        let mut offset = pos.to_usize().ok_or(eyre::eyre!("Offset too large"))?;
         #[cfg(feature = "progress")]
         let mut inc_buffer = 0usize;
         for mut file in files {
