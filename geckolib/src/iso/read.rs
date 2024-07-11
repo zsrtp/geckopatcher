@@ -1,5 +1,6 @@
 use super::disc::*;
 use crate::crypto::{aes_decrypt_inplace, consts, Unpackable, WiiCryptoError};
+use crate::iso::consts as iso_consts;
 use async_std::io::prelude::SeekExt;
 use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use async_std::task::ready;
@@ -414,10 +415,10 @@ where
         let mut buf = [0u8; 8];
         reader.read(&mut buf).await?;
         crate::debug!("Magics: {:?}", buf);
-        if BE::read_u32(&buf[4..][..4]) == 0xC2339F3D {
+        if BE::read_u32(&buf[4..][..4]) == iso_consts::GC_MAGIC {
             crate::debug!("Loading Gamecube disc");
             Ok(Self::Gamecube(GCDiscReader::new(reader)))
-        } else if BE::read_u32(&buf[..][..4]) == 0x5D1C9EA3 {
+        } else if BE::read_u32(&buf[..][..4]) == iso_consts::WII_MAGIC {
             crate::debug!("Loading Wii disc");
             Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))
         } else {

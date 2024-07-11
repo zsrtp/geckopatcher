@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use async_std::io::{prelude::SeekExt, ReadExt};
 use async_std::{
     io::BufReader,
-    sync::{Arc, Mutex},
+    //sync::{Arc, Mutex},
 };
 use clap::{arg, command, Parser, ValueHint};
 use geckolib::{
@@ -17,7 +17,7 @@ use romhack::progress;
 #[derive(Debug, Parser)]
 #[command(author, version)]
 /// Reprocess a game file (to the level of individual files)
-/// 
+///
 /// Takes a SOURCE file and reprocess it (extract and re-pack)
 /// into a DEST file. This extracts the whole FileSystem from
 /// the SOURCE file.
@@ -40,22 +40,19 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     let args = Args::parse();
 
-    async_std::task::block_on(async {
+    futures::executor::block_on(async {
         let f = BufReader::with_capacity(
             0x7C00 * 64 * 8,
-            async_std::fs::File::open(
-                args.source,
-            )
-            .await?,
+            async_std::fs::File::open(args.source).await?,
         );
         // let f = Arc::new(Mutex::new(DiscReader::new(f).await?));
-        let f = DiscReader::new(f).await?;
+        let mut f = DiscReader::new(f).await?;
+        let disc_info = f.get_disc_info();
         #[cfg(feature = "log")]
         {
-            let mut guard = f.lock_arc().await;
-            guard.seek(std::io::SeekFrom::Start(0)).await?;
+            f.seek(std::io::SeekFrom::Start(0)).await?;
             let mut buf = vec![0u8; 0x60];
-            guard.read(&mut buf).await?;
+            f.read(&mut buf).await?;
             log::info!(
                 "[{}] Game Title: {:02X?}",
                 String::from_utf8_lossy(&buf[..6]),
@@ -66,27 +63,21 @@ fn main() -> color_eyre::eyre::Result<()> {
             );
         }
         let out = {
-            DiscWriter::new(
-                async_std::fs::OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create(true)
-                    .open(
-                        args.dest,
-                    )
-                    .await?,
-                f.get_disc_info(),
-            )
-            .await?
+            let writer = async_std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(args.dest)
+                .await?;
+            DiscWriter::new(writer, disc_info).await?
         };
 
-        let mut out = std::pin::pin!(out);
-        let mut fs = GeckoFS::parse(f).await?;
-        let is_wii = out.get_type() == DiscType::Wii;
-        fs.serialize(&mut out, is_wii).await?;
-        #[cfg(feature = "log")]
-        log::info!("Encrypting the ISO");
-        out.finalize().await?;
+        // let mut out = std::pin::pin!(out);
+        // let mut fs = GeckoFS::parse(f).await?;
+        // let is_wii = out.get_type() == DiscType::Wii;
+        // fs.serialize(&mut out, is_wii).await?;
+        // #[cfg(feature = "log")]
+        // log::info!("Encrypting the ISO");
+        // out.finalize().await?;
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
     Ok(())

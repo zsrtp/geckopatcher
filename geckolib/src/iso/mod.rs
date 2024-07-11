@@ -17,8 +17,10 @@ pub mod consts {
     pub const OFFSET_FST_SIZE: usize = 0x428;
     pub const OFFSET_GC_MAGIC: usize = 0x01C;
     pub const OFFSET_WII_MAGIC: usize = 0x018;
+    pub const GC_MAGIC: u32 = 0xC2339F3D;
+    pub const WII_MAGIC: u32 = 0x5D1C9EA3;
     pub const HEADER_LENGTH: usize = 0x2440;
-    pub const DOL_ALIGNMENT_BIT: usize = 8;
+    pub const DOL_ALIGNMENT_BIT: usize = 10;
     pub const DOL_ALIGNMENT: usize = 1 << DOL_ALIGNMENT_BIT;
     pub const FST_ALIGNMENT_BIT: usize = 8;
     pub const FST_ALIGNMENT: usize = 1 << FST_ALIGNMENT_BIT;

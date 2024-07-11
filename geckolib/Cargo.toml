@@ -19,7 +19,7 @@ eyre = "^0.6"
 thiserror = "^1.0"
 num = "^0.4"
 toml = "^0.8"
-zip = { version = "2.1.0", default-features = false, features = ["deflate"] }
+zip = { version = "^2.1", default-features = false, features = ["deflate"] }
 regex = "^1.10"
 rustc-demangle = "^0.1"
 serde = "^1.0"
@@ -37,7 +37,7 @@ image = { version = "^0.25", default-features = false, features = [
     "png",
 ] }
 goblin = "^0.8"
-lazy_static = "^1.4"
+lazy_static = "^1.5"
 pin-project = "^1.1"
 rayon = { version = "^1.10", optional = true }
 human_bytes = { version = "^0.4", optional = true, default-features = false }
