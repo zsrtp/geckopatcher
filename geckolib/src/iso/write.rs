@@ -25,9 +25,7 @@ use crate::{
 use super::disc::{decrypt_title_key, DiscType, WiiDisc, WiiPartition};
 
 #[derive(Debug)]
-#[pin_project]
 pub struct GCDiscWriter<W> {
-    #[pin]
     writer: W,
 }
 
@@ -50,41 +48,41 @@ where
 
 impl<W> AsyncSeek for GCDiscWriter<W>
 where
-    W: AsyncSeek,
+    W: AsyncSeek + Unpin,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         pos: SeekFrom,
     ) -> Poll<Result<u64, std::io::Error>> {
-        self.project().writer.poll_seek(cx, pos)
+        std::pin::pin!(&mut self.get_mut().writer).poll_seek(cx, pos)
     }
 }
 
 impl<W> AsyncWrite for GCDiscWriter<W>
 where
-    W: AsyncWrite,
+    W: AsyncWrite + Unpin,
 {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, std::io::Error>> {
-        self.project().writer.poll_write(cx, buf)
+        std::pin::pin!(&mut self.get_mut().writer).poll_write(cx, buf)
     }
 
     fn poll_flush(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.project().writer.poll_flush(cx)
+        std::pin::pin!(&mut self.get_mut().writer).poll_flush(cx)
     }
 
     fn poll_close(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        self.project().writer.poll_close(cx)
+        std::pin::pin!(&mut self.get_mut().writer).poll_close(cx)
     }
 }
 
@@ -752,24 +750,23 @@ where
 // ---
 
 #[derive(Debug)]
-#[pin_project(project = DiscWriterProj)]
 pub enum DiscWriter<W> {
-    Gamecube(#[pin] GCDiscWriter<Pin<Box<W>>>),
-    Wii(#[pin] WiiDiscWriter<Pin<Box<W>>>),
+    Gamecube(GCDiscWriter<W>),
+    Wii(WiiDiscWriter<W>),
 }
 
 impl<W> AsyncWrite for DiscWriter<W>
 where
-    W: AsyncWrite + AsyncSeek,
+    W: AsyncWrite + AsyncSeek + Unpin,
 {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
-        match self.project() {
-            DiscWriterProj::Gamecube(writer) => writer.poll_write(cx, buf),
-            DiscWriterProj::Wii(writer) => writer.poll_write(cx, buf),
+        match self.get_mut() {
+            DiscWriter::Gamecube(writer) => std::pin::pin!(writer).poll_write(cx, buf),
+            DiscWriter::Wii(writer) => std::pin::pin!(writer).poll_write(cx, buf),
         }
     }
 
@@ -777,9 +774,9 @@ where
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.project() {
-            DiscWriterProj::Gamecube(writer) => writer.poll_flush(cx),
-            DiscWriterProj::Wii(writer) => writer.poll_flush(cx),
+        match self.get_mut() {
+            DiscWriter::Gamecube(writer) => std::pin::pin!(writer).poll_flush(cx),
+            DiscWriter::Wii(writer) => std::pin::pin!(writer).poll_flush(cx),
         }
     }
 
@@ -787,9 +784,9 @@ where
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<std::io::Result<()>> {
-        match self.project() {
-            DiscWriterProj::Gamecube(writer) => writer.poll_close(cx),
-            DiscWriterProj::Wii(writer) => writer.poll_close(cx),
+        match self.get_mut() {
+            DiscWriter::Gamecube(writer) => std::pin::pin!(writer).poll_close(cx),
+            DiscWriter::Wii(writer) => std::pin::pin!(writer).poll_close(cx),
         }
     }
 }
@@ -797,7 +794,7 @@ where
 impl<W> DiscWriter<W> {
     pub async fn new_gc(writer: W) -> Result<Self> {
         Ok(Self::Gamecube(GCDiscWriter {
-            writer: Box::pin(writer),
+            writer,
         }))
     }
 
@@ -811,11 +808,11 @@ impl<W> DiscWriter<W> {
 
 impl<W> DiscWriter<W>
 where
-    W: AsyncWrite + AsyncSeek,
+    W: AsyncWrite + AsyncSeek + Unpin,
 {
     pub async fn new_wii(writer: W, disc: WiiDisc) -> Result<Self> {
         Ok(Self::Wii(
-            WiiDiscWriter::init(disc, Box::pin(writer)).await?,
+            WiiDiscWriter::init(disc, writer).await?,
         ))
     }
 
@@ -829,7 +826,7 @@ where
 
 impl<W> DiscWriter<W>
 where
-    W: AsyncWrite + AsyncSeek,
+    W: AsyncWrite + AsyncSeek + Unpin,
 {
     pub async fn finalize(&mut self) -> io::Result<()> {
         match self {
