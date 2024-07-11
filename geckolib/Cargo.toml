@@ -46,7 +46,7 @@ standalone-syn = "^0.13"
 encoding_rs = "^0.8"
 
 [features]
-default = ["parallel", "log"]
+default = ["parallel"]
 web = []
 parallel = ["rayon", "image/rayon"]
 log = ["async-std/default"]

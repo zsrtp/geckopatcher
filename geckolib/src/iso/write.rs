@@ -6,6 +6,7 @@ use async_std::{
 };
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+use log::trace;
 #[cfg(feature = "parallel")]
 use rayon::{prelude::ParallelIterator, slice::ParallelSliceMut};
 use sha1_smol::Sha1;
@@ -93,7 +94,7 @@ enum WiiDiscWriterState {
     /// Setups the data to be written
     Setup,
     /// Parse the data to be written
-    Parse(Vec<u8>),
+    Parse(usize, Vec<u8>),
     /// Seek for writing accumulated data
     SeekToGroup(usize, Vec<u8>),
     /// Writing the data
@@ -122,7 +123,7 @@ struct WiiDiscWriterArcState {
     // Virtual cursor which tracks where in the decrypted partition we are writing from.
     cursor: u64,
     state: WiiDiscWriterState,
-    group: [u8; consts::WII_SECTOR_SIZE * 64],
+    group: Box<[u8; consts::WII_SECTOR_SIZE * 64]>,
     finalize_state: WiiDiscWriterFinalizeState,
 }
 
@@ -284,7 +285,7 @@ where
                 initialized: false,
                 cursor: 0,
                 state: WiiDiscWriterState::default(),
-                group: [0u8; consts::WII_SECTOR_SIZE * 64],
+                group: Box::new([0u8; consts::WII_SECTOR_SIZE * 64]),
                 finalize_state: WiiDiscWriterFinalizeState::default(),
                 hashes: Vec::new(),
             })),
@@ -474,18 +475,22 @@ where
         let state = std::mem::take(&mut state_guard.state);
         match state {
             WiiDiscWriterState::Setup => {
-                state_guard.state = WiiDiscWriterState::Parse(buf.to_vec());
+                state_guard.state = WiiDiscWriterState::Parse(start_group_idx, buf.to_vec());
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterState::Parse(in_buf) => {
+            WiiDiscWriterState::Parse(group_idx, in_buf) => {
+                let start_blk = std::cmp::max(
+                    start_group_idx * 64 + start_block_idx_in_group,
+                    group_idx * 64,
+                );
                 let end_blk = std::cmp::min(
                     end_group_idx * 64 + end_block_idx_in_group,
-                    start_group_idx * 64 + 64,
+                    group_idx * 64 + 64,
                 );
                 let mut curr_buf = &in_buf[..];
                 let mut rem = write_size;
-                for i in start_blk_idx..end_blk {
+                for i in start_blk..end_blk {
                     // Offsets in the group buffer (decrypted address)
                     let buffer_start = std::cmp::max(
                         vstart % consts::WII_SECTOR_DATA_SIZE as u64
@@ -500,6 +505,12 @@ where
                         (i % 64) as u64 * consts::WII_SECTOR_SIZE as u64
                             + consts::WII_SECTOR_SIZE as u64,
                     );
+                    crate::trace!(
+                        "Writing block #{} (0x{:08X} to 0x{:08X})",
+                        i,
+                        buffer_start,
+                        buffer_end
+                    );
                     let data;
                     (data, curr_buf) = curr_buf.split_at((buffer_end - buffer_start) as usize);
                     state_guard.group[buffer_start as usize..buffer_end as usize]
@@ -511,22 +522,22 @@ where
                     == 0
                 {
                     // We are at the start of a group. We can hash and encrypt the group and write it.
-                    crate::trace!("Hashing and encrypting group #{}", start_group_idx);
-                    if state_guard.hashes.len() <= start_group_idx {
+                    crate::trace!("Hashing and encrypting group #{}", group_idx);
+                    if state_guard.hashes.len() <= group_idx {
                         state_guard
                             .hashes
-                            .resize(start_group_idx + 1, [0u8; consts::WII_HASH_SIZE]);
+                            .resize(group_idx + 1, [0u8; consts::WII_HASH_SIZE]);
                     }
-                    let group_hash = hash_group(&mut state_guard.group);
-                    state_guard.hashes[start_group_idx].copy_from_slice(&group_hash);
+                    let group_hash = hash_group(&mut state_guard.group[..]);
+                    state_guard.hashes[group_idx].copy_from_slice(&group_hash);
                     let part_key = decrypt_title_key(
                         &state_guard.disc.partitions.partitions[part_idx]
                             .header
                             .ticket,
                     );
-                    encrypt_group(&mut state_guard.group, part_key);
+                    encrypt_group(&mut state_guard.group[..], part_key);
                     state_guard.state =
-                        WiiDiscWriterState::SeekToGroup(start_group_idx, curr_buf.to_vec());
+                        WiiDiscWriterState::SeekToGroup(group_idx, curr_buf.to_vec());
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 } else {
@@ -579,12 +590,13 @@ where
                 } else {
                     if buf.is_empty() {
                         // The write is done.
+                        crate::trace!("Write done at block #{}", group_idx);
                         state_guard.state = WiiDiscWriterState::Setup;
                         state_guard.cursor += write_size as u64;
                         Poll::Ready(Ok(write_size))
                     } else {
                         // We need to write the rest of the buffer
-                        state_guard.state = WiiDiscWriterState::Parse(curr_buf);
+                        state_guard.state = WiiDiscWriterState::Parse(group_idx + 1, curr_buf);
                         cx.waker().wake_by_ref();
                         Poll::Ready(Ok(write_size))
                     }
@@ -639,11 +651,11 @@ where
                         .hashes
                         .resize(group_idx as usize + 1, [0u8; consts::WII_HASH_SIZE]);
                 }
-                let group_hash = hash_group(&mut state.group);
+                let group_hash = hash_group(&mut state.group[..]);
                 state.hashes[group_idx as usize].copy_from_slice(&group_hash);
                 let part_key =
                     decrypt_title_key(&state.disc.partitions.partitions[part_idx].header.ticket);
-                encrypt_group(&mut state.group, part_key);
+                encrypt_group(&mut state.group[..], part_key);
 
                 state.finalize_state = if state.cursor % (consts::WII_SECTOR_DATA_SIZE as u64 * 64)
                     != 0
@@ -837,7 +849,6 @@ where
     W: AsyncWrite + AsyncSeek + Unpin,
 {
     pub fn new_wii(writer: W, disc: WiiDisc) -> Self {
-        println!("Creating WiiDiscWriter");
         Self::Wii(WiiDiscWriter::new(disc, writer))
     }
 
