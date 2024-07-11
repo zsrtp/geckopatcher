@@ -330,7 +330,6 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
                 // ),
                 wii_disc_info,
             )
-            .await?
         };
 
         if let Ok(mut updater) = UPDATER.lock() {
@@ -340,7 +339,6 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
         let mut out = std::pin::pin!(out);
         let is_wii = out.get_type() == DiscType::Wii;
         disc.serialize(&mut out, is_wii).await?;
-        out.finalize().await?;
 
         Ok(())
     }

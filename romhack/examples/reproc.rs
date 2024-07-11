@@ -2,13 +2,10 @@ use std::path::PathBuf;
 
 #[cfg(feature = "log")]
 use async_std::io::{prelude::SeekExt, ReadExt};
-use async_std::{
-    io::BufReader,
-    //sync::{Arc, Mutex},
-};
+use async_std::io::{BufReader, BufWriter};
 use clap::{arg, command, Parser, ValueHint};
 use geckolib::{
-    iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
+    iso::{disc::{DiscType, WiiDisc}, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
 };
 #[cfg(feature = "progress")]
@@ -62,22 +59,25 @@ fn main() -> color_eyre::eyre::Result<()> {
                     .expect("This game has no title")
             );
         }
-        let out = {
+        let out: DiscWriter<async_std::fs::File> = {
             let writer = async_std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .open(args.dest)
-                .await?;
-            DiscWriter::new(writer, disc_info).await?
+                    .write(true)
+                    .create(true)
+                    .open(args.dest)
+                    .await?;
+            println!("DiscWriter::new(writer, disc_info);");
+            DiscWriter::new(writer, disc_info)
         };
+        if let DiscWriter::Wii(wii_out) = out.clone() {
+            std::pin::pin!(wii_out).init().await?;
+        }
 
         let mut out = std::pin::pin!(out);
         let mut fs = GeckoFS::parse(f).await?;
         let is_wii = out.get_type() == DiscType::Wii;
-        fs.serialize(&mut out, is_wii).await?;
         #[cfg(feature = "log")]
         log::info!("Encrypting the ISO");
-        out.finalize().await?;
+        fs.serialize(&mut out, is_wii).await?;
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
     Ok(())

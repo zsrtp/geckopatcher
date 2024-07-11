@@ -125,7 +125,6 @@ fn main() -> color_eyre::eyre::Result<()> {
                     },
                 }),
             )
-            .await?
         };
 
         let mut out = std::pin::pin!(out);

@@ -120,7 +120,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
         );
     }
     let out = {
-        DiscWriter::new(save, f.get_disc_info()).await?
+        DiscWriter::new(save, f.get_disc_info())
     };
 
     let mut out = std::pin::pin!(out);
