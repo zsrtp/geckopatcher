@@ -467,6 +467,21 @@ where
             );
         }
 
+
+        // Virtual space
+        // Existing  ----~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        //               ^ vstart                     ^ vend
+        // Data          -----------------------------
+
+        // Real space
+        //G|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|-----------------------------------------------------------------------|-------
+        //S|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|-----------------------------------|-----------------------------------|-------
+        //B|G~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|BSG--------------|BSG--------------|BSG--------------|BSG--------------|___----
+        //                                           ^
+        //Buffer                             |___----~~~~~~~~~~ ___~~~~~~~~~~~~~~ ___~~~~~~~~~~~~~~ ___~~~~~~~~~~~~~~|
+        //Data                                       ----------    --------------    -----
+        //                                           ^ start                              ^ end
+
         let state = std::mem::take(&mut state_guard.state);
         match state {
             WiiDiscWriterWriteState::Setup => {
@@ -590,7 +605,7 @@ where
                             / (consts::WII_SECTOR_DATA_SIZE as u64 * 64) + 1)
                             * consts::WII_SECTOR_DATA_SIZE as u64 * 64;
                     }
-                    if buf.is_empty() {
+                    if curr_buf.is_empty() {
                         // The write is done.
                         crate::trace!("Write done at block #{}", group_idx);
                         state_guard.cursor = cursor;
@@ -600,7 +615,7 @@ where
                         // We need to write the rest of the buffer
                         state_guard.state = WiiDiscWriterWriteState::Parse(cursor, group_idx + 1, curr_buf);
                         cx.waker().wake_by_ref();
-                        Poll::Ready(Ok(buf.len()))
+                        Poll::Pending
                     }
                 }
             }
