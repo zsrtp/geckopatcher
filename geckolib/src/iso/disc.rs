@@ -719,7 +719,7 @@ where
     ((addr - T::from(1)) & !((T::from(1) << bit) - T::from(1))) + (T::from(1) << bit)
 }
 
-pub fn to_encrypted_addr<T>(size: T) -> T
+pub fn to_raw_addr<T>(size: T) -> T
 where
     T: std::ops::Div<Output = T>
         + std::ops::Mul<Output = T>
@@ -733,7 +733,7 @@ where
         + T::from(consts::WII_SECTOR_HASH_SIZE as u16)
 }
 
-pub fn to_decrypted_addr<T>(size: T) -> T
+pub fn to_virtual_addr<T>(size: T) -> T
 where
     T: std::ops::Div<Output = T>
         + std::ops::Mul<Output = T>
@@ -753,86 +753,86 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::iso::disc::{to_decrypted_addr, to_encrypted_addr};
+    use crate::iso::disc::{to_virtual_addr, to_raw_addr};
 
     #[test]
     fn works_normally() {
-        assert_eq!(to_decrypted_addr(0x400u16), 0x0);
-        assert_eq!(to_decrypted_addr(0x400u32), 0x0);
-        assert_eq!(to_decrypted_addr(0x400u64), 0x0);
-        assert_eq!(to_decrypted_addr(0x400u128), 0x0);
-        assert_eq!(to_decrypted_addr(0x400usize), 0x0);
+        assert_eq!(to_virtual_addr(0x400u16), 0x0);
+        assert_eq!(to_virtual_addr(0x400u32), 0x0);
+        assert_eq!(to_virtual_addr(0x400u64), 0x0);
+        assert_eq!(to_virtual_addr(0x400u128), 0x0);
+        assert_eq!(to_virtual_addr(0x400usize), 0x0);
 
-        assert_eq!(to_decrypted_addr(0x600u16), 0x200);
-        assert_eq!(to_decrypted_addr(0x600u32), 0x200);
-        assert_eq!(to_decrypted_addr(0x600u64), 0x200);
-        assert_eq!(to_decrypted_addr(0x600u128), 0x200);
-        assert_eq!(to_decrypted_addr(0x600usize), 0x200);
+        assert_eq!(to_virtual_addr(0x600u16), 0x200);
+        assert_eq!(to_virtual_addr(0x600u32), 0x200);
+        assert_eq!(to_virtual_addr(0x600u64), 0x200);
+        assert_eq!(to_virtual_addr(0x600u128), 0x200);
+        assert_eq!(to_virtual_addr(0x600usize), 0x200);
 
-        assert_eq!(to_decrypted_addr(0x7fffu16), 0x7BFF);
-        assert_eq!(to_decrypted_addr(0x7fffu32), 0x7BFF);
-        assert_eq!(to_decrypted_addr(0x7fffu64), 0x7BFF);
-        assert_eq!(to_decrypted_addr(0x7fffu128), 0x7BFF);
-        assert_eq!(to_decrypted_addr(0x7fffusize), 0x7BFF);
+        assert_eq!(to_virtual_addr(0x7fffu16), 0x7BFF);
+        assert_eq!(to_virtual_addr(0x7fffu32), 0x7BFF);
+        assert_eq!(to_virtual_addr(0x7fffu64), 0x7BFF);
+        assert_eq!(to_virtual_addr(0x7fffu128), 0x7BFF);
+        assert_eq!(to_virtual_addr(0x7fffusize), 0x7BFF);
 
-        assert_eq!(to_decrypted_addr(0x8401u16), 0x7C01);
-        assert_eq!(to_decrypted_addr(0x8401u32), 0x7C01);
-        assert_eq!(to_decrypted_addr(0x8401u64), 0x7C01);
-        assert_eq!(to_decrypted_addr(0x8401u128), 0x7C01);
-        assert_eq!(to_decrypted_addr(0x8401usize), 0x7C01);
+        assert_eq!(to_virtual_addr(0x8401u16), 0x7C01);
+        assert_eq!(to_virtual_addr(0x8401u32), 0x7C01);
+        assert_eq!(to_virtual_addr(0x8401u64), 0x7C01);
+        assert_eq!(to_virtual_addr(0x8401u128), 0x7C01);
+        assert_eq!(to_virtual_addr(0x8401usize), 0x7C01);
     }
 
     #[test]
     fn hash_address_goes_to_start_of_data() {
-        assert_eq!(to_decrypted_addr(0x0u16), 0x0);
-        assert_eq!(to_decrypted_addr(0x0u32), 0x0);
-        assert_eq!(to_decrypted_addr(0x0u64), 0x0);
-        assert_eq!(to_decrypted_addr(0x0u128), 0x0);
-        assert_eq!(to_decrypted_addr(0x0usize), 0x0);
+        assert_eq!(to_virtual_addr(0x0u16), 0x0);
+        assert_eq!(to_virtual_addr(0x0u32), 0x0);
+        assert_eq!(to_virtual_addr(0x0u64), 0x0);
+        assert_eq!(to_virtual_addr(0x0u128), 0x0);
+        assert_eq!(to_virtual_addr(0x0usize), 0x0);
 
-        assert_eq!(to_decrypted_addr(0x1u16), 0x0);
-        assert_eq!(to_decrypted_addr(0x1u32), 0x0);
-        assert_eq!(to_decrypted_addr(0x1u64), 0x0);
-        assert_eq!(to_decrypted_addr(0x1u128), 0x0);
-        assert_eq!(to_decrypted_addr(0x1usize), 0x0);
+        assert_eq!(to_virtual_addr(0x1u16), 0x0);
+        assert_eq!(to_virtual_addr(0x1u32), 0x0);
+        assert_eq!(to_virtual_addr(0x1u64), 0x0);
+        assert_eq!(to_virtual_addr(0x1u128), 0x0);
+        assert_eq!(to_virtual_addr(0x1usize), 0x0);
 
-        assert_eq!(to_decrypted_addr(0x3FFu16), 0x0);
-        assert_eq!(to_decrypted_addr(0x3FFu32), 0x0);
-        assert_eq!(to_decrypted_addr(0x3FFu64), 0x0);
-        assert_eq!(to_decrypted_addr(0x3FFu128), 0x0);
-        assert_eq!(to_decrypted_addr(0x3FFusize), 0x0);
+        assert_eq!(to_virtual_addr(0x3FFu16), 0x0);
+        assert_eq!(to_virtual_addr(0x3FFu32), 0x0);
+        assert_eq!(to_virtual_addr(0x3FFu64), 0x0);
+        assert_eq!(to_virtual_addr(0x3FFu128), 0x0);
+        assert_eq!(to_virtual_addr(0x3FFusize), 0x0);
 
-        assert_eq!(to_decrypted_addr(0x8000u16), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x8000u32), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x8000u64), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x8000u128), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x8000usize), 0x7C00);
+        assert_eq!(to_virtual_addr(0x8000u16), 0x7C00);
+        assert_eq!(to_virtual_addr(0x8000u32), 0x7C00);
+        assert_eq!(to_virtual_addr(0x8000u64), 0x7C00);
+        assert_eq!(to_virtual_addr(0x8000u128), 0x7C00);
+        assert_eq!(to_virtual_addr(0x8000usize), 0x7C00);
 
-        assert_eq!(to_decrypted_addr(0x83ffu16), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x83ffu32), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x83ffu64), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x83ffu128), 0x7C00);
-        assert_eq!(to_decrypted_addr(0x83ffusize), 0x7C00);
+        assert_eq!(to_virtual_addr(0x83ffu16), 0x7C00);
+        assert_eq!(to_virtual_addr(0x83ffu32), 0x7C00);
+        assert_eq!(to_virtual_addr(0x83ffu64), 0x7C00);
+        assert_eq!(to_virtual_addr(0x83ffu128), 0x7C00);
+        assert_eq!(to_virtual_addr(0x83ffusize), 0x7C00);
     }
 
     #[test]
     fn decrypted_address_idempotent() {
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x1u16)), 0x1);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x1u32)), 0x1);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x1u64)), 0x1);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x1u128)), 0x1);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x1usize)), 0x1);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x1u16)), 0x1);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x1u32)), 0x1);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x1u64)), 0x1);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x1u128)), 0x1);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x1usize)), 0x1);
 
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x0u16)), 0x0);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x0u32)), 0x0);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x0u64)), 0x0);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x0u128)), 0x0);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x0usize)), 0x0);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x0u16)), 0x0);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x0u32)), 0x0);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x0u64)), 0x0);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x0u128)), 0x0);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x0usize)), 0x0);
 
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x7C00u16)), 0x7C00);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x7C00u32)), 0x7C00);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x7C00u64)), 0x7C00);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x7C00u128)), 0x7C00);
-        assert_eq!(to_decrypted_addr(to_encrypted_addr(0x7C00usize)), 0x7C00);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x7C00u16)), 0x7C00);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x7C00u32)), 0x7C00);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x7C00u64)), 0x7C00);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x7C00u128)), 0x7C00);
+        assert_eq!(to_virtual_addr(to_raw_addr(0x7C00usize)), 0x7C00);
     }
 }

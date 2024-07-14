@@ -128,7 +128,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
             crate::trace!(
                 "(data_size: {:#08X}; decrypted size: {:#08X})",
                 ret_vec[data_idx].header.data_size,
-                to_decrypted_addr(ret_vec[data_idx].header.data_size)
+                to_virtual_addr(ret_vec[data_idx].header.data_size)
             );
             return Ok(WiiPartitions {
                 data_idx,
@@ -207,7 +207,7 @@ where
         match pos {
             SeekFrom::Current(pos) => {
                 if *this.cursor as i64 + pos < 0i64
-                    || *this.cursor as i64 + pos > to_decrypted_addr(part.header.data_size) as i64
+                    || *this.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
                 {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
@@ -218,17 +218,17 @@ where
             }
             SeekFrom::End(pos) => {
                 if *this.cursor as i64 + pos < 0i64
-                    || *this.cursor as i64 + pos > to_decrypted_addr(part.header.data_size) as i64
+                    || *this.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
                 {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "Invalid argument",
                     )));
                 }
-                *this.cursor = (to_decrypted_addr(part.header.data_size) as i64 + pos) as u64;
+                *this.cursor = (to_virtual_addr(part.header.data_size) as i64 + pos) as u64;
             }
             SeekFrom::Start(pos) => {
-                if pos > to_decrypted_addr(part.header.data_size) {
+                if pos > to_virtual_addr(part.header.data_size) {
                     return Poll::Ready(Err(std::io::Error::new(
                         std::io::ErrorKind::Other,
                         "Invalid argument",
@@ -253,7 +253,7 @@ where
         let this = self.project();
         crate::trace!("Pooling WiiDiscReader for read ({} byte(s))", buf.len());
         // If the requested size is 0, or if we are done reading, return without changing buf.
-        let decrypted_size = to_decrypted_addr(
+        let decrypted_size = to_virtual_addr(
             this.disc_info.partitions.partitions[this.disc_info.partitions.data_idx]
                 .header
                 .data_size,

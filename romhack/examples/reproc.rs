@@ -4,6 +4,7 @@ use async_std::io::BufReader;
 #[cfg(feature = "log")]
 use async_std::io::{prelude::SeekExt, ReadExt};
 use clap::{arg, command, Parser, ValueHint};
+use futures::AsyncWriteExt;
 use geckolib::{
     iso::{disc::DiscType, read::DiscReader, write::DiscWriter},
     vfs::GeckoFS,
@@ -76,6 +77,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         #[cfg(feature = "log")]
         log::info!("Encrypting the ISO");
         fs.serialize(&mut out, is_wii).await?;
+        out.close().await?;
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
     Ok(())

@@ -16,7 +16,7 @@ use std::{sync::Arc, task::Poll};
 use crate::{
     crypto::{aes_encrypt_inplace, consts, AesKey, Unpackable},
     iso::disc::{
-        align_addr, disc_set_header, to_decrypted_addr, to_encrypted_addr, PartHeader, TMDContent, TitleMetaData, WiiDiscHeader
+        align_addr, disc_set_header, to_virtual_addr, to_raw_addr, PartHeader, TMDContent, TitleMetaData, WiiDiscHeader
     },
 };
 
@@ -467,7 +467,6 @@ where
             );
         }
 
-
         // Virtual space
         // Existing  ----~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         //               ^ vstart                     ^ vend
@@ -499,16 +498,16 @@ where
                     group_idx * 64 + 63,
                 );
                 let mut curr_buf = &in_buf[..];
-                let mut last_buf_end = to_encrypted_addr((end_blk + 1) as u64 * consts::WII_SECTOR_SIZE as u64 - 1) + 1;
+                let mut last_buf_end = to_raw_addr((end_blk + 1) as u64 * consts::WII_SECTOR_SIZE as u64 - 1) + 1;
                 for i in start_blk..=end_blk {
                     // Offsets in the group buffer (decrypted address)
                     let buffer_start = std::cmp::max(
-                        to_encrypted_addr(vstart),
-                        to_encrypted_addr(i as u64 * consts::WII_SECTOR_DATA_SIZE as u64),
+                        to_raw_addr(vstart),
+                        to_raw_addr(i as u64 * consts::WII_SECTOR_DATA_SIZE as u64),
                     ) % (consts::WII_SECTOR_SIZE as u64 * 64);
                     let buffer_end = std::cmp::min(
-                        to_encrypted_addr(vend - 1),
-                        to_encrypted_addr((i as u64 + 1) * consts::WII_SECTOR_DATA_SIZE as u64 - 1),
+                        to_raw_addr(vend - 1),
+                        to_raw_addr((i as u64 + 1) * consts::WII_SECTOR_DATA_SIZE as u64 - 1),
                     ) % (consts::WII_SECTOR_SIZE as u64 * 64) + 1;
                     last_buf_end = buffer_end;
                     let size = (buffer_end - buffer_start) as usize;
@@ -561,7 +560,7 @@ where
                     + state_guard.disc.partitions.partitions[part_idx]
                         .header
                         .data_offset
-                    + to_encrypted_addr((group_idx * 64 * consts::WII_SECTOR_DATA_SIZE) as u64);
+                    + to_raw_addr((group_idx * 64 * consts::WII_SECTOR_DATA_SIZE) as u64);
                 crate::trace!("Seeking to 0x{:08X}", group_addr);
                 if pin!(&mut this.writer)
                     .poll_seek(cx, SeekFrom::Start(group_addr))
@@ -650,11 +649,10 @@ where
         }
         match finalize_state {
             WiiDiscWriterCloseState::Init => {
-                println!("WiiDiscWriterFinalizeState::Init");
                 crate::trace!("WiiDiscWriterFinalizeState::Init");
                 // Align the encrypted data size to 21 bits
                 state.disc.partitions.partitions[part_idx].header.data_size = align_addr(
-                    state.disc.partitions.partitions[part_idx].header.data_size,
+                    to_raw_addr(state.cursor),
                     21,
                 );
 
@@ -772,7 +770,8 @@ where
                                 Poll::Pending
                             } else {
                                 state.finalize_state = WiiDiscWriterCloseState::CloseWriter;
-                                Poll::Ready(Ok(()))
+                                cx.waker().wake_by_ref();
+                                Poll::Pending
                             }
                         }
                         Err(err) => {
