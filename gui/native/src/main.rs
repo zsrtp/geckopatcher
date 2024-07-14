@@ -52,6 +52,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Romhack Patcher",
         native_options,
-        Box::new(|cc| Box::new(app::PatcherApp::new(cc))),
+        Box::new(|cc| Ok(Box::new(app::PatcherApp::new(cc)))),
     )
 }

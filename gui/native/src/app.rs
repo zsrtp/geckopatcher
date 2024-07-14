@@ -4,6 +4,7 @@ use async_std::fs;
 use async_std::io::BufReader;
 use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
+use futures_lite::AsyncWriteExt;
 use rfd::FileHandle;
 use std::path::PathBuf;
 
@@ -131,7 +132,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
         if is_wii {
             log::info!("Encrypting the ISO");
         }
-        out.finalize().await?;
+        out.close().await?;
         log::info!("ISO writing done");
     }
     <eyre::Result<()>>::Ok(())

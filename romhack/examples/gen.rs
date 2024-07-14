@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_std::sync::Mutex;
-use futures::{AsyncRead, AsyncSeek, AsyncWrite};
+use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use geckolib::{
     iso::{
         disc::{DiscType, PartHeader, TitleMetaData, WiiDiscRegionAgeRating, WiiPartition},
@@ -149,7 +149,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             fs.serialize(&mut out, is_wii).await?;
             #[cfg(feature = "log")]
             log::info!("Encrypting the ISO");
-            out.finalize().await?;
+            out.close().await?;
         }
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
