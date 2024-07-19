@@ -123,8 +123,11 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
     let out = {
         DiscWriter::new(save, f.get_disc_info())
     };
+    if let DiscWriter::Wii(wii_out) = out.clone() {
+        std::pin::pin!(wii_out).init().await?;
+    }
 
-    let mut out = std::pin::pin!(out);
+    let mut out = out;
     let mut fs = GeckoFS::parse(f).await?;
     {
         let is_wii = out.get_type() == DiscType::Wii;
@@ -132,6 +135,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
         if is_wii {
             log::info!("Encrypting the ISO");
         }
+        out.flush().await?;
         out.close().await?;
         log::info!("ISO writing done");
     }

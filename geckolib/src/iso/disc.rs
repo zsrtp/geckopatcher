@@ -704,6 +704,143 @@ pub struct WiiDisc {
     pub partitions: WiiPartitions,
 }
 
+// Disc Data/Hash Structs
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct WiiSectorHash {
+    pub(crate) h0: [[u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT],
+    _h0_padding: [u8; 20],
+    pub(crate) h1: [[u8; consts::WII_HASH_SIZE]; 8],
+    _h1_padding: [u8; 32],
+    pub(crate) h2: [[u8; consts::WII_HASH_SIZE]; 8],
+    _h2_padding: [u8; 32],
+}
+const_assert_eq!(std::mem::size_of::<WiiSectorHash>(), consts::WII_SECTOR_HASH_SIZE);
+
+impl Default for WiiSectorHash {
+    fn default() -> Self {
+        WiiSectorHash {
+            h0: [[0u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT],
+            _h0_padding: [0u8; 20],
+            h1: [[0u8; consts::WII_HASH_SIZE]; 8],
+            _h1_padding: [0u8; 32],
+            h2: [[0u8; consts::WII_HASH_SIZE]; 8],
+            _h2_padding: [0u8; 32],
+        }
+    }
+}
+
+impl WiiSectorHash {
+    pub fn as_array(self) -> [u8; consts::WII_SECTOR_HASH_SIZE] {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    pub fn as_array_ref(&self) -> &[u8; consts::WII_SECTOR_HASH_SIZE] {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    pub fn as_array_mut(&mut self) -> &mut [u8; consts::WII_SECTOR_HASH_SIZE] {
+        unsafe { std::mem::transmute(self) }
+    }
+
+    pub fn get_h0_ref(&self) -> &[u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
+        unsafe { std::mem::transmute(&self.h0) }
+    }
+
+    pub fn get_h1_ref(&self) -> &[u8; consts::WII_HASH_SIZE * 8] {
+        unsafe { std::mem::transmute(&self.h1) }
+    }
+
+    pub fn get_h2_ref(&self) -> &[u8; consts::WII_HASH_SIZE * 8] {
+        unsafe { std::mem::transmute(&self.h2) }
+    }
+
+    pub fn get_h0_mut(&mut self) -> &mut [u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
+        unsafe { std::mem::transmute(&mut self.h0) }
+    }
+
+    pub fn get_h1_mut(&mut self) -> &mut [u8; consts::WII_HASH_SIZE * 8] {
+        unsafe { std::mem::transmute(&mut self.h1) }
+    }
+
+    pub fn get_h2_mut(&mut self) -> &mut [u8; consts::WII_HASH_SIZE * 8] {
+        unsafe { std::mem::transmute(&mut self.h2) }
+    }
+}
+
+#[derive(Debug, Copy, Clone)]
+#[repr(C)]
+pub struct WiiSector {
+    pub(crate) hash: WiiSectorHash,
+    pub(crate) data: [u8; consts::WII_SECTOR_DATA_SIZE],
+}
+const_assert_eq!(std::mem::size_of::<WiiSector>(), consts::WII_SECTOR_SIZE);
+
+impl Default for WiiSector {
+    fn default() -> Self {
+        WiiSector {
+            hash: WiiSectorHash::default(),
+            data: [0u8; consts::WII_SECTOR_DATA_SIZE],
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct WiiSubGroup {
+    pub(crate) sectors: Box<[WiiSector; 8]>,
+}
+
+impl Default for WiiSubGroup {
+    fn default() -> Self {
+        WiiSubGroup {
+            sectors: Box::new([WiiSector::default(); 8]),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+pub struct WiiGroup {
+    pub(crate) sub_groups: Box<[WiiSubGroup; 8]>,
+}
+
+impl Default for WiiGroup {
+    fn default() -> Self {
+        WiiGroup {
+            sub_groups: Box::new(core::array::from_fn(|_| WiiSubGroup::default())),
+        }
+    }
+}
+
+impl WiiGroup {
+    pub fn reset(&mut self) {
+        for sub_group in self.sub_groups.iter_mut() {
+            for sector in sub_group.sectors.iter_mut() {
+                sector.hash = WiiSectorHash::default();
+                sector.data.fill(0);
+            }
+        }
+    }
+
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.as_sectors_ref().iter().flat_map(|sector| sector.hash.as_array_ref().iter().chain(sector.data.iter())).copied().collect()
+    }
+
+    pub fn as_sectors(self) -> Vec<WiiSector> {
+        self.sub_groups.iter().flat_map(|sub_group| sub_group.sectors.iter()).copied().collect()
+    }
+
+    pub fn as_sectors_ref(&self) -> Vec<&WiiSector> {
+        self.sub_groups.iter().flat_map(|sub_group| sub_group.sectors.iter()).collect()
+    }
+
+    pub fn as_sectors_mut(&mut self) -> Vec<&mut WiiSector> {
+        self.sub_groups.iter_mut().flat_map(|sub_group| sub_group.sectors.iter_mut()).collect()
+    }
+}
+
 // Numeric helper functions for address handling
 
 /// Aligns the `addr` up so that every bits before the `bit`-th bit are 0.

@@ -39,12 +39,15 @@ fn main() -> color_eyre::eyre::Result<()> {
     let args = Args::parse();
 
     futures::executor::block_on(async {
-        let f = BufReader::with_capacity(
+        let file = BufReader::with_capacity(
             0x7C00 * 64 * 8,
             async_std::fs::File::open(args.source).await?,
         );
-        // let f = Arc::new(Mutex::new(DiscReader::new(f).await?));
-        let mut f = DiscReader::new(f).await?;
+        #[cfg(feature = "log")]
+        let mut f;
+        #[cfg(not(feature = "log"))]
+        let f;
+        f = DiscReader::new(file).await?;
         let disc_info = f.get_disc_info();
         #[cfg(feature = "log")]
         {

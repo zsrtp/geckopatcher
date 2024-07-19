@@ -111,6 +111,7 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
         ret_vec.push(part);
     }
     crate::debug!("{:} partitions found", ret_vec.len());
+    #[cfg(feature = "log")]
     ret_vec
         .iter()
         .enumerate()
