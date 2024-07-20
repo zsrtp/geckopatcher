@@ -56,6 +56,7 @@ impl<R: Read + Seek> FSSource<R> {
             FSSource::Zip(zip) => {
                 zip.index_for_path(path).is_some()
             },
+            #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.exists()
@@ -70,6 +71,7 @@ impl<R: Read + Seek> FSSource<R> {
                     .and_then(|idx| zip.by_index(idx).ok())
                     .map_or(false, |entry| entry.is_dir())
             },
+            #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.is_dir()
@@ -84,6 +86,7 @@ impl<R: Read + Seek> FSSource<R> {
                     .and_then(|idx| zip.by_index(idx).ok())
                     .map_or(false, |entry| entry.is_file())
             },
+            #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.is_file()
@@ -115,12 +118,14 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
+    #[cfg(not(target_os = "unknown"))]
     pub fn get_names<P: AsRef<Path>>(&self, path: P) -> eyre::Result<Vec<String>> {
         let mut names: Vec<String> = Vec::new();
         match self {
             FSSource::Zip(_) => {
                 return Err(eyre::eyre!("Unsupported operation on ZipArchive: get_names"))
             },
+            #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 for entry in fs::read_dir(p)? {

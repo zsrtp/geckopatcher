@@ -1,11 +1,11 @@
 #[cfg(not(target_os = "unknown"))]
-use async_std::fs::read;
-use async_std::fs::OpenOptions;
-use async_std::io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek};
+use async_std::{fs::{read, OpenOptions}, io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek}};
+#[cfg(not(target_os = "unknown"))]
 use async_std::sync::Mutex;
 use eyre::Context;
 #[cfg(not(target_os = "unknown"))]
 use std::collections::HashMap;
+#[cfg(not(target_os = "unknown"))]
 use std::sync::Arc;
 #[cfg(not(target_os = "unknown"))]
 use std::{
@@ -69,6 +69,7 @@ impl<R> IsoBuilder<R> {
     }
 }
 
+#[cfg(not(target_os = "unknown"))]
 fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
     iso_path: &String,
     actual_path: &PathBuf,
@@ -132,6 +133,7 @@ fn patch_instructions(
     Ok(original.to_bytes())
 }
 
+#[cfg(not(target_os = "unknown"))]
 impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
     type Error = eyre::Report;
 

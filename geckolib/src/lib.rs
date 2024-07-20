@@ -39,7 +39,9 @@ use std::process::Command;
 use async_std::{fs, path::PathBuf};
 use config::Config;
 use eyre::Context;
-use iso::builder::{IsoBuilder, PatchBuilder};
+use iso::builder::IsoBuilder;
+#[cfg(not(target_os = "unknown"))]
+use iso::builder::PatchBuilder;
 use zip::ZipArchive;
 
 #[cfg(feature = "progress")]

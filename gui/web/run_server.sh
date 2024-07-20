@@ -1,0 +1,1 @@
+npx ~/git/http-server/ -S --cors -H "Cross-Origin-Resource-Policy:same-site;Cross-Origin-Opener-Policy:same-origin;Cross-Origin-Embedder-Policy:require-corp;Control:no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate" --cert ~/sandbox/simplehttpsserver/localhost.crt --key ~/sandbox/simplehttpsserver/localhost.key dist/

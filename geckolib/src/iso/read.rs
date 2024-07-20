@@ -423,7 +423,7 @@ where
             crate::debug!("Loading Wii disc");
             Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))
         } else {
-            Err(eyre::eyre!("Not a game disc"))
+            Err(eyre::eyre!("Not a game disc (Wii: {:08X}; GC: {:08X})", BE::read_u32(&buf[..][..4]), BE::read_u32(&buf[4..][..4])))
         }
     }
 
