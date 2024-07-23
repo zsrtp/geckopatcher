@@ -537,6 +537,12 @@ where
             }
             offset = (file_offset + file.len() as u64) as usize;
         }
+
+        // The disc apparently needs to be aligned to 8 bits
+        let padding_size = align_addr(offset as u64, 8) as usize - offset;
+        writer.write_all(&vec![0u8; padding_size]).await?;
+        //offset += padding_size; // Unececssary, but kept for clarity
+
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.finish()?;
