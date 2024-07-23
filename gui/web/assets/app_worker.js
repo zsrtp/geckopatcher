@@ -16,8 +16,14 @@ async function registerLocalStorage(patch, iso) {
         .then(() => isoWritable)
         .then((isoWritable_) => iso.stream().pipeTo(isoWritable_))
         .then(() => iso_);
-    const fileHandle = root.getFileHandle("tpgz.iso", { create: true });
-    return await Promise.all([patchRet, isoRet, fileHandle]);
+    let fileHandle_ = await root.getFileHandle("tpgz.iso", { create: true });
+    let fileWritable = fileHandle_.createWritable();
+    let fileRet = fileWritable
+        .then((fileHandle) => fileHandle.truncate(0))
+        .then(() => fileWritable)
+        .then((fileWritable) => fileWritable.close())
+        .then(() => fileHandle_);
+    return await Promise.all([patchRet, isoRet, fileRet]);
 }
 
 async function deleteLocalStorage(patch, iso) {

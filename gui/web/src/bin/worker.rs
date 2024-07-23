@@ -49,6 +49,12 @@ impl async_std::io::Read for WebFile {
                 return std::task::Poll::Pending;
             }
         };
+        if let Err(err) = state.handle.flush() {
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{err:?}"),
+            )));
+        };
         let mut options = web_sys::FileSystemReadWriteOptions::new();
         options.at(state.cursor as f64);
         match state.handle.read_with_u8_array_and_options(buf, &options) {
@@ -77,6 +83,12 @@ impl async_std::io::Seek for WebFile {
                 cx.waker().wake_by_ref();
                 return std::task::Poll::Pending;
             }
+        };
+        if let Err(err) = state.handle.flush() {
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{err:?}"),
+            )));
         };
         let len = match state.handle.get_size() {
             Ok(size) => size as u64,
@@ -135,6 +147,12 @@ impl async_std::io::Write for WebFile {
                 cx.waker().wake_by_ref();
                 return std::task::Poll::Pending;
             }
+        };
+        if let Err(err) = state.handle.flush() {
+            return std::task::Poll::Ready(Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{err:?}"),
+            )));
         };
         let mut options = web_sys::FileSystemReadWriteOptions::new();
         options.at(state.cursor as f64);
