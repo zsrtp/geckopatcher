@@ -113,7 +113,6 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
                 file_name,
                 0,
                 0,
-                0,
             ));
         }
     }

@@ -2,7 +2,7 @@ use crate::crypto::Unpackable;
 use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
-use crate::iso::{consts, FstEntry, FstNodeType};
+use crate::iso::{consts, FstNode, FstEntry, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
 use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
@@ -101,28 +101,27 @@ where
 
     fn get_dir_structure_recursive(
         cur_index: &mut usize,
-        fst: &Vec<FstEntry>,
+        fst: &Vec<FstNode>,
         parent_dir: &mut Directory<R>,
         reader: &Arc<Mutex<DiscReader<R>>>,
     ) {
         let entry = &fst[*cur_index];
 
-        match entry.kind {
-            FstNodeType::Directory => {
-                let dir = parent_dir.mkdir(entry.relative_file_name.clone());
+        match entry.clone() {
+            FstNode::Directory { relative_file_name, parent_dir: _, next_dir_index } => {
+                let dir = parent_dir.mkdir(relative_file_name.clone());
 
-                while *cur_index < entry.file_size_next_dir_index - 1 {
+                while *cur_index < next_dir_index - 1 {
                     *cur_index += 1;
                     GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, reader);
                 }
             }
-            FstNodeType::File => {
+            FstNode::File { relative_file_name, file_offset, file_size } => {
                 parent_dir.add_file(File::new(
                     FileDataSource::Reader(reader.clone()),
-                    entry.relative_file_name.clone(),
-                    entry.file_offset_parent_dir,
-                    entry.file_size_next_dir_index,
-                    entry.file_name_offset,
+                    relative_file_name.clone(),
+                    file_offset,
+                    file_size,
                 ));
             }
         }
@@ -197,9 +196,9 @@ where
             // };
 
             #[cfg(disabled)]
-            let fst_entries: Vec<FstEntry> = {
+            let fst_entries: Vec<FstNode> = {
                 fst_list_buf
-                    .chunks_exact(FstEntry::BLOCK_SIZE)
+                    .chunks_exact(FstNode::BLOCK_SIZE)
                     .zip(name_it)
                     .enumerate()
             }
@@ -231,7 +230,7 @@ where
                     (BE::read_u32(&entry_buf[4..]) as usize) << (if is_wii { 2 } else { 0 });
                 let file_size_next_dir_index = BE::read_u32(&entry_buf[8..]) as usize;
 
-                let fst_entry = FstEntry {
+                let fst_entry = FstNode {
                     kind,
                     relative_file_name,
                     file_offset_parent_dir,
@@ -242,38 +241,21 @@ where
                 fst_entry
             })
             .collect();
-            let fst_entries: Vec<FstEntry> = {
-                let mut fst_entries: Vec<FstEntry> = Vec::new();
+            let fst_entries: Vec<FstNode> = {
+                let mut fst_entries: Vec<FstNode> = Vec::new();
                 for i in 0..num_entries {
-                    let kind = FstNodeType::try_from(fst_list_buf[i * 12])
-                        .unwrap_or(FstNodeType::Directory);
+                    let mut entry = FstNode::from_fstnode(&FstEntry::try_from(&fst_list_buf[i * FstEntry::BLOCK_SIZE..])?, &str_tbl_buf)?;
 
-                    let string_offset =
-                        (BE::read_u32(&fst_list_buf[i * 12..]) & 0x00ffffff) as usize;
-
-                    let pos = string_offset;
-                    let mut end = pos;
-                    while str_tbl_buf[end] != 0 {
-                        end += 1;
+                    match &mut entry {
+                        FstNode::File { file_offset, .. } => {
+                            *file_offset <<= if is_wii { 2 } else { 0 };
+                        }
+                        FstNode::Directory { parent_dir, .. } => {
+                            *parent_dir <<= if is_wii { 2 } else { 0 };
+                        }
                     }
-                    crate::trace!("entry #{} string size: {}", i, end - pos);
-                    let mut str_buf = Vec::new();
-                    str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
-                    let relative_file_name = String::from_utf8(str_buf)?;
 
-                    let file_offset_parent_dir = (BE::read_u32(&fst_list_buf[i * 12 + 4..])
-                        as usize)
-                        << (if is_wii { 2 } else { 0 });
-                    let file_size_next_dir_index =
-                        BE::read_u32(&fst_list_buf[i * 12 + 8..]) as usize;
-
-                    fst_entries.push(FstEntry {
-                        kind,
-                        relative_file_name,
-                        file_offset_parent_dir,
-                        file_size_next_dir_index,
-                        file_name_offset: string_offset,
-                    });
+                    fst_entries.push(entry);
                     crate::trace!("parsed entry #{}: {:?}", i, fst_entries.last());
                 }
                 fst_entries
@@ -299,28 +281,24 @@ where
                 "iso.hdr",
                 0,
                 consts::HEADER_LENGTH,
-                0,
             ));
             system.add_file(File::new(
                 FileDataSource::Reader(arc_reader.clone()),
                 "AppLoader.ldr",
-                consts::HEADER_LENGTH,
+                consts::HEADER_LENGTH as u64,
                 dol_offset - consts::HEADER_LENGTH,
-                0,
             ));
             system.add_file(File::new(
                 FileDataSource::Reader(arc_reader.clone()),
                 "Start.dol",
-                dol_offset,
+                dol_offset as u64,
                 fst_offset as usize - dol_offset,
-                0,
             ));
             system.add_file(File::new(
                 FileDataSource::Reader(arc_reader.clone()),
                 "Game.toc",
-                fst_offset as usize,
+                fst_offset as u64,
                 fst_size,
-                0,
             ));
 
             let mut count = 1;
@@ -358,19 +336,15 @@ where
     fn visitor_fst_entries(
         node: &mut dyn Node<R>,
         output_fst: &mut Vec<FstEntry>,
-        files: &mut Vec<File<R>>,
+        files: &mut Vec<(File<R>, u64)>,
         fst_name_bank: &mut Vec<u8>,
         cur_parent_dir_index: usize,
         offset: &mut u64,
-    ) {
+        is_wii: bool,
+    ) -> Result<()> {
         match node.as_enum_mut() {
             NodeEnumMut::Directory(dir) => {
-                let fst_entry = FstEntry {
-                    kind: FstNodeType::Directory,
-                    file_name_offset: fst_name_bank.len(),
-                    file_offset_parent_dir: cur_parent_dir_index,
-                    ..Default::default()
-                };
+                let fst_entry = FstEntry::new_directory(fst_name_bank.len() as u32, cur_parent_dir_index as u64, 0, is_wii)?;
 
                 fst_name_bank.extend_from_slice(dir.name().as_bytes());
                 fst_name_bank.push(0);
@@ -387,22 +361,18 @@ where
                         fst_name_bank,
                         this_dir_index,
                         offset,
-                    );
+                        is_wii,
+                    )?;
                 }
 
-                output_fst[this_dir_index].file_size_next_dir_index = output_fst.len();
+                let next_dir_index = output_fst.len() as u32;
+                output_fst[this_dir_index].set_file_size_next_dir_index(next_dir_index);
             }
             NodeEnumMut::File(file) => {
                 let pos = align_addr(*offset, 5);
                 *offset = pos;
 
-                let fst_entry = FstEntry {
-                    kind: FstNodeType::File,
-                    file_size_next_dir_index: file.len(),
-                    file_name_offset: fst_name_bank.len(),
-                    file_offset_parent_dir: pos as usize,
-                    relative_file_name: file.name().to_string(),
-                };
+                let fst_entry = FstEntry::new_file(fst_name_bank.len() as u32, pos as u64, file.len() as u32, is_wii)?;
 
                 fst_name_bank.extend_from_slice(file.name().as_bytes());
                 fst_name_bank.push(0);
@@ -410,11 +380,11 @@ where
                 *offset += file.len() as u64;
                 *offset = align_addr(*offset, 2);
 
-                file.new_offset = pos;
                 output_fst.push(fst_entry);
-                files.push(file.clone());
+                files.push((file.clone(), pos));
             }
         };
+        Ok(())
     }
 
     pub async fn serialize<W>(&mut self, writer: &mut W, is_wii: bool) -> Result<()>
@@ -477,11 +447,7 @@ where
         writer.write_all(&vec![0u8; fst_list_padding_size]).await?;
         pos += fst_list_padding_size.to_u64().ok_or(eyre::eyre!("FST list padding too large"))?;
 
-        let mut output_fst = vec![FstEntry {
-            kind: FstNodeType::Directory,
-            file_size_next_dir_index: 0,
-            ..Default::default()
-        }];
+        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
         let mut fst_name_bank = Vec::new();
         let mut files = Vec::new();
 
@@ -495,17 +461,21 @@ where
                 &mut fst_name_bank,
                 l,
                 &mut offset,
-            );
+                is_wii,
+            )?;
         }
-        output_fst[0].file_size_next_dir_index = output_fst.len();
+        {
+            let next_dir_index = output_fst.len() as u32;
+            output_fst[0].set_file_size_next_dir_index(next_dir_index);
+        }
         crate::debug!("output_fst size = {}", output_fst.len());
         crate::debug!("first fst_name entry = {}", fst_name_bank[0]);
         #[cfg(feature = "progress")]
         let write_total_size: u64 = output_fst
             .iter()
             .filter_map(|f| {
-                if f.kind == FstNodeType::File {
-                    Some(f.file_size_next_dir_index as u64)
+                if let FstNodeType::File = f.get_node_type() {
+                    Some(f.get_file_size_next_dir_index() as u64)
                 } else {
                     None
                 }
@@ -513,17 +483,8 @@ where
             .sum();
 
         for entry in output_fst {
-            let mut buf = [0u8; 12];
-            BE::write_u32_into(
-                &[
-                    ((entry.kind as u32) << 24) | (entry.file_name_offset as u32 & 0x00FFFFFF),
-                    (entry.file_offset_parent_dir >> if is_wii { 2u8 } else { 0u8 }) as u32,
-                    entry.file_size_next_dir_index as u32,
-                ],
-                &mut buf,
-            );
-            writer.write_all(&buf).await?;
-            pos += buf.len() as u64;
+            writer.write_all(&entry.pack()).await?;
+            pos += FstEntry::BLOCK_SIZE as u64;
         }
 
         writer.write_all(&fst_name_bank).await?;
@@ -539,7 +500,7 @@ where
         let mut offset = pos.to_usize().ok_or(eyre::eyre!("Offset too large"))?;
         #[cfg(feature = "progress")]
         let mut inc_buffer = 0usize;
-        for mut file in files {
+        for (mut file, file_offset) in files {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.try_lock() {
                 updater.set_message(format!(
@@ -548,7 +509,7 @@ where
                     human_bytes(file.len() as f64)
                 ))?;
             }
-            let padding_size = file.new_offset as usize - offset;
+            let padding_size = file_offset as usize - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
             // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
@@ -574,7 +535,7 @@ where
                     _ => (),
                 }
             }
-            offset += file.len() + padding_size;
+            offset = (file_offset + file.len() as u64) as usize;
         }
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
@@ -926,8 +887,7 @@ impl<R> Clone for FileDataSource<R> {
 
 #[derive(Debug)]
 pub struct File<R> {
-    fst: FstEntry,
-    new_offset: u64,
+    fst: FstNode,
     state: FileState,
     data: FileDataSource<R>,
 }
@@ -936,7 +896,6 @@ impl<R> Clone for File<R> {
     fn clone(&self) -> Self {
         Self {
             fst: self.fst.clone(),
-            new_offset: self.new_offset,
             state: self.state,
             data: self.data.clone(),
         }
@@ -947,31 +906,23 @@ impl<R> File<R> {
     pub fn new<S: Into<String>>(
         data: FileDataSource<R>,
         name: S,
-        file_offset_parent_dir: usize,
-        file_size_next_dir_index: usize,
-        file_name_offset: usize,
+        file_offset: u64,
+        file_size: usize,
     ) -> Self {
         Self {
-            fst: FstEntry {
-                kind: FstNodeType::File,
-                relative_file_name: name.into(),
-                file_offset_parent_dir,
-                file_size_next_dir_index,
-                file_name_offset,
-            },
-            new_offset: 0,
+            fst: FstNode::File { relative_file_name: name.into(), file_offset, file_size },
             state: Default::default(),
             data,
         }
     }
 
     pub fn set_data(&mut self, data: Box<[u8]>) {
-        self.fst.file_size_next_dir_index = data.len();
+        *self.fst.get_file_size_mut().unwrap() = data.len();
         self.data = FileDataSource::Box(Arc::new(Mutex::new(data)));
     }
 
     pub fn len(&self) -> usize {
-        self.fst.file_size_next_dir_index
+        self.fst.get_file_size().unwrap()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1026,14 +977,14 @@ impl<R: AsyncSeek> AsyncSeek for File<R> {
                         cx,
                         match pos {
                             SeekFrom::Start(pos) => {
-                                SeekFrom::Start(self.fst.file_offset_parent_dir as u64 + pos)
+                                SeekFrom::Start(self.fst.get_file_offset().unwrap() + pos)
                             }
                             SeekFrom::End(pos) => SeekFrom::Start(
-                                ((self.fst.file_offset_parent_dir as i64 + self.len() as i64) + pos)
+                                ((self.fst.get_file_offset().unwrap() as i64 + self.len() as i64) + pos)
                                     as u64,
                             ),
                             SeekFrom::Current(pos) => SeekFrom::Start(
-                                (self.fst.file_offset_parent_dir as i64
+                                (self.fst.get_file_offset().unwrap() as i64
                                     + self.state.cursor as i64
                                     + pos) as u64,
                             ),
@@ -1103,7 +1054,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
                         match guard_pin.poll_seek(
                             cx,
                             SeekFrom::Start(
-                                self.fst.file_offset_parent_dir as u64 + self.state.cursor,
+                                self.fst.get_file_offset().unwrap() + self.state.cursor,
                             ),
                         ) {
                             Poll::Ready(Ok(_)) => {
@@ -1174,7 +1125,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
 
 impl<R> Node<R> for File<R> {
     fn name(&self) -> &str {
-        &self.fst.relative_file_name
+        &self.fst.get_relative_file_name()
     }
 
     fn get_type(&self) -> NodeType {
