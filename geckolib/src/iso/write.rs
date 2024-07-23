@@ -96,9 +96,7 @@ enum WiiDiscWriterWriteState {
     Setup,
     /// Parse the data to be written
     Parse(u64, usize, Vec<u8>),
-    /// Seek for writing accumulated data
-    SeekToGroup(u64, usize, Vec<u8>),
-    /// Writing the data
+    /// Writing the accumulated data
     Writing(u64, usize, Vec<u8>, Vec<u8>),
 }
 
@@ -563,8 +561,15 @@ where
                             .ticket,
                     );
                     encrypt_group(&mut state_guard.group, part_key);
-                    state_guard.state =
-                        WiiDiscWriterWriteState::SeekToGroup(cursor, group_idx, curr_buf.to_vec());
+
+                    state_guard.state = WiiDiscWriterWriteState::Writing(
+                        cursor,
+                        group_idx,
+                        state_guard.group.to_vec(),
+                        curr_buf.to_vec(),
+                    );
+                    state_guard.group.reset();
+
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 } else {
@@ -574,32 +579,6 @@ where
                     state_guard.state = WiiDiscWriterWriteState::Setup;
                     Poll::Ready(Ok(buf.len()))
                 }
-            }
-            WiiDiscWriterWriteState::SeekToGroup(cursor, group_idx, curr_buf) => {
-                let group_addr = state_guard.disc.partitions.partitions[part_idx].part_offset
-                    + state_guard.disc.partitions.partitions[part_idx]
-                        .header
-                        .data_offset
-                    + (group_idx * 64 * consts::WII_SECTOR_SIZE) as u64;
-                crate::trace!("Seeking to 0x{:08X}", group_addr);
-                if pin!(&mut this.writer)
-                    .poll_seek(cx, SeekFrom::Start(group_addr))
-                    .is_pending()
-                {
-                    state_guard.state =
-                        WiiDiscWriterWriteState::SeekToGroup(cursor, group_idx, curr_buf);
-                    return Poll::Pending;
-                }
-                crate::trace!("Seeking succeeded");
-                state_guard.state = WiiDiscWriterWriteState::Writing(
-                    cursor,
-                    group_idx,
-                    state_guard.group.to_vec(),
-                    curr_buf,
-                );
-                state_guard.group.reset();
-                cx.waker().wake_by_ref();
-                Poll::Pending
             }
             WiiDiscWriterWriteState::Writing(mut cursor, group_idx, group_buf, curr_buf) => {
                 crate::trace!("Writing group #{}", group_idx);
