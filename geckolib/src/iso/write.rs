@@ -25,70 +25,6 @@ use super::disc::{
     decrypt_title_key, DiscType, WiiDisc, WiiGroup, WiiPartition, WiiSector, WiiSectorHash,
 };
 
-#[derive(Debug)]
-pub struct GCDiscWriter<W> {
-    writer: W,
-}
-
-impl<W> GCDiscWriter<W> {
-    pub fn new(writer: W) -> Self {
-        Self { writer }
-    }
-}
-
-impl<W> Clone for GCDiscWriter<W>
-where
-    W: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            writer: self.writer.clone(),
-        }
-    }
-}
-
-impl<W> AsyncSeek for GCDiscWriter<W>
-where
-    W: AsyncSeek + Unpin,
-{
-    fn poll_seek(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        pos: SeekFrom,
-    ) -> Poll<Result<u64, std::io::Error>> {
-        pin!(&mut self.get_mut().writer).poll_seek(cx, pos)
-    }
-}
-
-impl<W> AsyncWrite for GCDiscWriter<W>
-where
-    W: AsyncWrite + Unpin,
-{
-    fn poll_write(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        pin!(&mut self.get_mut().writer).poll_write(cx, buf)
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        pin!(&mut self.get_mut().writer).poll_flush(cx)
-    }
-
-    fn poll_close(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        pin!(&mut self.get_mut().writer).poll_close(cx)
-    }
-}
-
-// ---
-
 #[derive(Debug, Clone, Default)]
 enum WiiDiscWriterWriteState {
     #[default]
@@ -813,7 +749,7 @@ where
 
 #[derive(Debug, Clone)]
 pub enum DiscWriter<W> {
-    Gamecube(GCDiscWriter<W>),
+    Gamecube(W),
     Wii(WiiDiscWriter<W>),
 }
 
@@ -855,7 +791,7 @@ where
 
 impl<W> DiscWriter<W> {
     pub fn new_gc(writer: W) -> Self {
-        Self::Gamecube(GCDiscWriter { writer })
+        Self::Gamecube(writer)
     }
 
     pub fn get_type(&self) -> DiscType {
