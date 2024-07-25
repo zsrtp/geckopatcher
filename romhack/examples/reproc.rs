@@ -67,6 +67,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             async_std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
+                .truncate(true)
                 .open(args.dest)
                 .await?,
             disc_info,
