@@ -20,7 +20,7 @@ The web patcher needs some specific HTTP headers in order to work properly on th
 
 - Cross-Origin-Resource-Policy: same-site
 - Cross-Origin-Opener-Policy: same-origin
-- Cross-Origin-Embedder-Policy:r equire-corp
+- Cross-Origin-Embedder-Policy: require-corp
 - Control: no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate
 
 The last header is optional and is only useful during development to avoid the client caching the application.

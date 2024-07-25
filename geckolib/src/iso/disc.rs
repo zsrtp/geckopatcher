@@ -342,7 +342,7 @@ impl Ticket {
                 break;
             }
 
-            if val == std::u32::MAX {
+            if val == u32::MAX {
                 return Err(eyre::eyre!("Could not re-sign the partition ticket"));
             }
             val += 1;
@@ -441,7 +441,7 @@ impl From<&Ticket> for [u8; Ticket::BLOCK_SIZE] {
 
 impl Default for Ticket {
     fn default() -> Self {
-        Ticket::try_from(&[0_u8; Ticket::BLOCK_SIZE]).unwrap()
+        Ticket::from(&[0_u8; Ticket::BLOCK_SIZE])
     }
 }
 
@@ -644,7 +644,7 @@ impl TitleMetaData {
                 break;
             }
 
-            if val == std::u32::MAX {
+            if val == u32::MAX {
                 return Err(eyre::eyre!("Could not re-sign the partition's TMD"));
             }
             val += 1;

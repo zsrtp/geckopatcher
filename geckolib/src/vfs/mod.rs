@@ -297,7 +297,7 @@ where
             system.add_file(File::new(
                 FileDataSource::Reader(arc_reader.clone()),
                 "Game.toc",
-                fst_offset as u64,
+                fst_offset,
                 fst_size,
             ));
 
@@ -1131,7 +1131,7 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
 
 impl<R> Node<R> for File<R> {
     fn name(&self) -> &str {
-        &self.fst.get_relative_file_name()
+        self.fst.get_relative_file_name()
     }
 
     fn get_type(&self) -> NodeType {
