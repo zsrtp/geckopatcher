@@ -118,6 +118,16 @@ fn set_pos_cb(length: usize) -> color_eyre::Result<()> {
     }
 }
 
+fn set_len_cb(length: usize) -> color_eyre::Result<()> {
+    match BAR.lock() {
+        Ok(progress) => {
+            progress.bar.set_length(length as u64);
+            Ok(())
+        }
+        Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
+    }
+}
+
 fn on_msg_cb(message: String) -> color_eyre::Result<()> {
     match BAR.lock() {
         Ok(progress) => {
@@ -152,9 +162,11 @@ fn on_type_cb(type_: UpdaterType) -> color_eyre::Result<()> {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
-                    "{spinner} {prefix:.bold.dim} {msg} {wide_bar} {percent}% {human_pos}/{human_len:6}",
+                    "{prefix:.bold.dim} {msg} {spinner} {wide_bar} {percent}% {human_pos}/{human_len:6}",
                 )?,
-            });
+            }
+            .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
+            .progress_chars("█▉▊▋▌▍▎▏ "));
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),
@@ -172,7 +184,8 @@ pub fn init_cli_progress() {
             .set_pos(Some(set_pos_cb))
             .set_message(Some(on_msg_cb))
             .set_title(Some(on_title_cb))
-            .set_type(Some(on_type_cb));
+            .set_type(Some(on_type_cb))
+            .set_len(Some(set_len_cb));
         *updater = ub.build();
     }
 }

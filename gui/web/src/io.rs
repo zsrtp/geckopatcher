@@ -25,7 +25,7 @@ impl WebFile {
     }
 }
 
-impl async_std::io::Read for WebFile {
+impl AsyncRead for WebFile {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -60,7 +60,7 @@ impl async_std::io::Read for WebFile {
     }
 }
 
-impl async_std::io::Seek for WebFile {
+impl AsyncSeek for WebFile {
     fn poll_seek(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
@@ -124,7 +124,7 @@ impl async_std::io::Seek for WebFile {
     }
 }
 
-impl async_std::io::Write for WebFile {
+impl AsyncWrite for WebFile {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

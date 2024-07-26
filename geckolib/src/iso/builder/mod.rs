@@ -1,23 +1,22 @@
 #[cfg(not(target_os = "unknown"))]
-use async_std::{
-    fs::{read, OpenOptions},
-    io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek},
-};
+use async_std::fs::read;
+use async_std::io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek};
 use eyre::Context;
-#[cfg(not(target_os = "unknown"))]
+use futures::AsyncWrite;
 use std::collections::HashMap;
 #[cfg(not(target_os = "unknown"))]
 use std::{
     fs::File as StdFile,
-    io::{BufWriter, Read, Seek, Write},
-    path::{Path, PathBuf},
+    io::{BufWriter, Write},
 };
+use std::io::{Read, Seek};
+use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 #[cfg(not(target_os = "unknown"))]
 use zip::ZipWriter;
 
 use self::fs_source::FSSource;
-use crate::assembler::{Assembler, Instruction};
+use crate::{assembler::{Assembler, Instruction}, update};
 use crate::banner::Banner;
 use crate::config::Config;
 
@@ -28,8 +27,7 @@ use crate::vfs::{self, Directory, GeckoFS};
 use crate::UPDATER;
 use crate::{framework_map, linker, warn};
 
-use super::disc::DiscType;
-use super::read::DiscReader;
+use super::disc::{DiscType, WiiDisc};
 
 mod fs_source;
 
@@ -40,23 +38,56 @@ pub trait Builder {
 }
 
 /// A builder for creating an ISO
-pub struct IsoBuilder<R> {
+pub struct IsoBuilder<R1, R2, W> {
     config: Config,
-    fs: FSSource<R>,
+    fs: FSSource<R1>,
+    gfs: GeckoFS<R2>,
+    disc_info: Option<WiiDisc>,
+    writer: W,
 }
 
-impl<R> IsoBuilder<R> {
-    pub fn new_with_zip(config: Config, zip: ZipArchive<R>) -> Self {
-        Self::internal_new(config, FSSource::Zip(Box::new(zip)))
+impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
+    pub fn new_with_zip(
+        config: Config,
+        zip: ZipArchive<RConfig>,
+        gfs: GeckoFS<RDisc>,
+        disc_info: Option<WiiDisc>,
+        writer: W,
+    ) -> Self {
+        Self::internal_new(config, FSSource::Zip(Box::new(zip)), gfs, disc_info, writer)
     }
 
     #[cfg(not(target_os = "unknown"))]
-    pub fn new_with_fs<P: AsRef<Path>>(config: Config, path: P) -> Self {
-        Self::internal_new(config, FSSource::FS(path.as_ref().to_path_buf()))
+    pub fn new_with_fs<P: AsRef<Path>>(
+        config: Config,
+        path: P,
+        gfs: GeckoFS<RDisc>,
+        disc_info: Option<WiiDisc>,
+        writer: W,
+    ) -> Self {
+        Self::internal_new(
+            config,
+            FSSource::FS(path.as_ref().to_path_buf()),
+            gfs,
+            disc_info,
+            writer,
+        )
     }
 
-    fn internal_new(config: Config, fs: FSSource<R>) -> Self {
-        Self { config, fs }
+    fn internal_new(
+        config: Config,
+        fs: FSSource<RConfig>,
+        gfs: GeckoFS<RDisc>,
+        disc_info: Option<WiiDisc>,
+        writer: W,
+    ) -> Self {
+        Self {
+            config,
+            fs,
+            gfs,
+            disc_info,
+            writer,
+        }
     }
 
     pub fn config_mut(&mut self) -> &mut Config {
@@ -68,22 +99,13 @@ impl<R> IsoBuilder<R> {
     }
 }
 
-#[cfg(not(target_os = "unknown"))]
-fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
+fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: std::io::Read + std::io::Seek, P: AsRef<Path>>(
     iso_path: &String,
-    actual_path: &PathBuf,
+    actual_path: &P,
     iso: &mut Directory<R>,
     files: &mut FSSource<R2>,
 ) -> eyre::Result<()> {
-    if files.is_dir(actual_path) {
-        let names = files.get_names(actual_path)?;
-        for name in names {
-            let iso_path = String::from(iso_path) + &String::from('/') + &name;
-            let mut actual_path = actual_path.clone();
-            actual_path.push(name);
-            add_file_to_iso(&iso_path, &actual_path, iso, files)?;
-        }
-    } else {
+    if files.is_file(actual_path) {
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_message(iso_path.to_string())?;
         }
@@ -113,12 +135,35 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
     Ok(())
 }
 
+#[cfg(not(target_os = "unknown"))]
+fn add_node_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
+    iso_path: &String,
+    actual_path: &PathBuf,
+    iso: &mut Directory<R>,
+    files: &mut FSSource<R2>,
+) -> eyre::Result<()> {
+    if files.is_dir(actual_path) {
+        let names = files.get_names(actual_path)?;
+        for name in names {
+            let iso_path = String::from(iso_path) + &String::from('/') + &name;
+            let mut actual_path = actual_path.clone();
+            actual_path.push(name);
+            add_node_to_iso(&iso_path, &actual_path, iso, files)?;
+        }
+    } else {
+        add_file_to_iso(iso_path, actual_path, iso, files)?;
+    }
+    Ok(())
+}
+
 fn patch_instructions(
     mut original: DolFile,
-    intermediate: DolFile,
+    intermediate: Option<DolFile>,
     instructions: &[Instruction],
 ) -> eyre::Result<Vec<u8>> {
-    original.append(intermediate);
+    if let Some(intermediate) = intermediate {
+        original.append(intermediate);
+    }
     original
         .patch(instructions)
         .context("Couldn't patch the DOL")?;
@@ -126,32 +171,34 @@ fn patch_instructions(
     Ok(original.to_bytes())
 }
 
-#[cfg(not(target_os = "unknown"))]
-impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
+impl<RConfig, RDisc, W> Builder for IsoBuilder<RConfig, RDisc, W>
+where
+    RConfig: Read + Seek,
+    RDisc: AsyncRead + AsyncSeek + Clone + Unpin + 'static,
+    W: AsyncWrite + AsyncSeek + Clone + Unpin,
+{
     type Error = eyre::Report;
 
     async fn build(&mut self) -> eyre::Result<()> {
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_message("Loading game...".into())?;
         }
 
-        let reader = DiscReader::new(
-            OpenOptions::new()
-                .read(true)
-                .open(&self.config.src.iso)
-                .await?,
-        )
-        .await?;
-        let wii_disc_info = reader.get_disc_info();
-        let mut disc = GeckoFS::parse(reader).await?;
+        let wii_disc_info = self.disc_info.clone();
+        let disc = &mut self.gfs;
 
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_title("Replacing files...".into())?;
             updater.set_message("".into())?;
         }
 
         for (iso_path, actual_path) in &self.config.files {
+            #[cfg(target_os = "unknown")]
             add_file_to_iso(iso_path, actual_path, disc.root_mut(), &mut self.fs)?;
+            #[cfg(not(target_os = "unknown"))]
+            add_node_to_iso(iso_path, actual_path, disc.root_mut(), &mut self.fs)?;
         }
 
         let original_symbols = if let Some(framework_map) = self
@@ -162,6 +209,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
             .and_then(|m| disc.root_mut().resolve_node_mut(m))
             .and_then(|n| n.as_file_mut())
         {
+            #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_title("Parsing symbol map...".into())?;
                 updater.set_message("".into())?;
@@ -169,6 +217,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
 
             framework_map::parse(framework_map).await?
         } else {
+            #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_title("[Warning] No symbol map specified or it wasn't found".into())?;
                 updater.set_message("".into())?;
@@ -176,49 +225,57 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
             HashMap::new()
         };
 
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_title("Linking...".into())?;
             updater.set_message("".into())?;
         }
 
-        let link = &self.config.link;
+        let mut libs_to_link;
+        let linked = if let Some(link) = &self.config.link {
+            libs_to_link = Vec::with_capacity(link.libs.len() + 1);
 
-        let mut libs_to_link = Vec::with_capacity(link.libs.len() + 1);
+            for lib_path in &link.libs {
+                let file_buf = {
+                    let mut buf = Vec::new();
+                    self.fs
+                        .get_file(lib_path)
+                        .context(format!(
+                            "Couldn't load \"{}\". Did you build the project correctly?",
+                            lib_path.display()
+                        ))?
+                        .read_to_end(&mut buf)?;
+                    buf
+                };
+                libs_to_link.push(file_buf);
+            }
 
-        for lib_path in &link.libs {
-            let file_buf = {
-                let mut buf = Vec::new();
-                self.fs
-                    .get_file(lib_path)
-                    .context(format!(
-                        "Couldn't load \"{}\". Did you build the project correctly?",
-                        lib_path.display()
-                    ))?
-                    .read_to_end(&mut buf)?;
-                buf
-            };
-            libs_to_link.push(file_buf);
-        }
+            libs_to_link.push(linker::BASIC_LIB.to_owned());
 
-        libs_to_link.push(linker::BASIC_LIB.to_owned());
+            let base_address: syn::LitInt =
+                syn::parse_str(&link.base).context("Invalid Base Address")?;
 
-        let base_address: syn::LitInt =
-            syn::parse_str(&link.base).context("Invalid Base Address")?;
+            let linked = linker::link(
+                &libs_to_link,
+                base_address.value() as u32,
+                link.entries.clone(),
+                &original_symbols,
+            )
+            .context("Couldn't link the Rom Hack")?;
 
-        let linked = linker::link(
-            &libs_to_link,
-            base_address.value() as u32,
-            link.entries.clone(),
-            &original_symbols,
-        )
-        .context("Couldn't link the Rom Hack")?;
+            Some(linked)
+        } else {
+            None
+        };
 
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_title("Creating symbol map...".into())?;
             updater.set_message("".into())?;
         }
 
         let instructions = if let Some(patch) = self.config.src.patch.take() {
+            #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_message("Parsing patch".into())?;
             }
@@ -233,7 +290,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
 
             let lines = &buf.lines().collect::<Vec<_>>();
 
-            let mut assembler = Assembler::new(linked.symbol_table, &original_symbols);
+            let mut assembler = Assembler::new(linked.as_ref().map(|l| l.symbol_table.clone()), &original_symbols);
             assembler
                 .assemble_all_lines(lines)
                 .context("Couldn't assemble the patch file lines")?
@@ -242,6 +299,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
         };
 
         {
+            #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_title("Patching game...".into())?;
                 updater.set_message("".into())?;
@@ -254,13 +312,14 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
 
             let original = DolFile::parse(main_dol).await?;
             main_dol.set_data(
-                patch_instructions(original, linked.dol, &instructions)
+                patch_instructions(original, linked.map(|l| l.dol), &instructions)
                     .context("Couldn't patch the game")?
                     .into(),
             )?;
         }
 
         if wii_disc_info.is_none() {
+            #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_title("Patching banner...".into())?;
                 updater.set_message("".into())?;
@@ -303,6 +362,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
                 banner_file.set_data(banner.to_bytes(is_japanese).to_vec().into())?;
             } else {
                 warn!("No banner to patch");
+                #[cfg(feature = "progress")]
                 if let Ok(mut updater) = UPDATER.lock() {
                     updater.set_title("Patching banner...".into())?;
                     updater.set_message("".into())?;
@@ -312,28 +372,17 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
 
         // Finalize disc and write it back into a file
 
-        let out = {
-            DiscWriter::new(
-                // async_std::io::BufWriter::with_capacity(
-                //     1 << 22u8,
-                async_std::fs::OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create(true)
-                    .open(self.config.build.iso.clone())
-                    .await?,
-                // ),
-                wii_disc_info,
-            )
-        };
+        let out = { DiscWriter::new(self.writer.clone(), wii_disc_info) };
 
+        let mut out = std::pin::pin!(out);
+        let is_wii = out.get_type() == DiscType::Wii;
+        disc.serialize(&mut out, is_wii).await?;
+
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.finish()?;
             updater.reset()?;
         }
-        let mut out = std::pin::pin!(out);
-        let is_wii = out.get_type() == DiscType::Wii;
-        disc.serialize(&mut out, is_wii).await?;
 
         Ok(())
     }
@@ -450,8 +499,8 @@ impl Builder for PatchBuilder {
             updater.set_message("".into())?;
         }
 
-        {
-            let libs = &mut config.link.libs;
+        if let Some(link) = &mut config.link {
+            let libs = &mut link.libs;
             if !libs.is_empty() {
                 write_file_to_zip(
                     &mut zip,

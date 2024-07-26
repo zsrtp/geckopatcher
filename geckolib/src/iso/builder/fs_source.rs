@@ -116,7 +116,9 @@ impl<R: Read + Seek> FSSource<R> {
             }
         }
     }
+}
 
+impl<R> FSSource<R> {
     #[cfg(not(target_os = "unknown"))]
     pub fn get_names<P: AsRef<Path>>(&self, path: P) -> eyre::Result<Vec<String>> {
         let mut names: Vec<String> = Vec::new();

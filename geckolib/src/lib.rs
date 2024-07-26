@@ -35,13 +35,18 @@ use std::fs::{File, OpenOptions};
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
+use async_std::io::{Read as AsyncRead, Seek as AsyncSeek};
 #[cfg(not(target_arch = "wasm32"))]
 use async_std::{fs, path::PathBuf};
 use config::Config;
+#[cfg(not(target_arch = "wasm32"))]
 use eyre::Context;
+use futures::AsyncWrite;
 use iso::builder::IsoBuilder;
 #[cfg(not(target_os = "unknown"))]
 use iso::builder::PatchBuilder;
+use iso::read::DiscReader;
+use vfs::GeckoFS;
 use zip::ZipArchive;
 
 #[cfg(feature = "progress")]
@@ -52,25 +57,55 @@ lazy_static! {
 }
 
 /// Open a config from a patch file
-pub async fn open_config_from_patch<R: std::io::Read + std::io::Seek>(
-    patch_reader: R,
-) -> eyre::Result<IsoBuilder<R>> {
-    let mut zip: ZipArchive<R> = ZipArchive::new(patch_reader)?;
+pub async fn open_config_from_patch<RConfig, RDisc, W>(
+    patch_reader: RConfig,
+    iso_reader: RDisc,
+    writer: W,
+) -> eyre::Result<IsoBuilder<RConfig, RDisc, W>>
+where
+    RConfig: std::io::Read + std::io::Seek,
+    RDisc: AsyncRead + AsyncSeek + Clone + Unpin + 'static,
+    W: AsyncWrite + Clone + Unpin,
+{
+    let mut zip: ZipArchive<RConfig> = ZipArchive::new(patch_reader)?;
 
-    let config: Config = {
+    let mut config: Config = {
         let toml_file = zip.by_name("RomHack.toml")?;
 
         toml::from_str(&std::io::read_to_string(toml_file)?)?
     };
 
-    Ok(IsoBuilder::new_with_zip(config, zip))
+    if let Some(link) = &mut config.link {
+        link.libs.insert(0, "libcompiled.a".into());
+    };
+
+    let disc_reader = DiscReader::new(iso_reader).await?;
+    let disc_info = disc_reader.get_disc_info();
+    Ok(IsoBuilder::new_with_zip(
+        config,
+        zip,
+        GeckoFS::parse(disc_reader).await?,
+        disc_info,
+        writer,
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Open a config from a file on the FileSystem to return an IsoBuilder
-pub async fn open_config_from_fs_iso(config_file: &PathBuf) -> eyre::Result<IsoBuilder<File>> {
+pub async fn open_config_from_fs_iso(
+    config_file: &PathBuf,
+) -> eyre::Result<IsoBuilder<File, async_std::fs::File, async_std::fs::File>> {
     let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
-    Ok(IsoBuilder::new_with_fs(config, PathBuf::new()))
+    let writer = async_std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&config.build.iso)
+        .await?;
+    let disc_reader = DiscReader::new(async_std::fs::File::open(&config.src.iso).await?).await?;
+    let disc_info = disc_reader.get_disc_info();
+    let gfs = GeckoFS::parse(disc_reader).await?;
+    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_info, writer))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -659,6 +659,7 @@ dependencies = [
  "cbc",
  "encoding_rs",
  "eyre",
+ "futures",
  "goblin",
  "human_bytes",
  "image",

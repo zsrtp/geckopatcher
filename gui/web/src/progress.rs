@@ -150,6 +150,24 @@ fn set_pos_cb(pos: usize) -> eyre::Result<()> {
     }
 }
 
+fn set_len_cb(len: usize) -> eyre::Result<()> {
+    match BAR.lock() {
+        Ok(mut progress) => {
+            progress.len = len;
+            send_progress(
+                &progress.status,
+                if progress.type_ == UpdaterType::Progress {
+                    Some(progress.pos as f64 / progress.len as f64 * 100.0f64)
+                } else {
+                    None
+                },
+            );
+            Ok(())
+        }
+        Err(err) => Err(eyre::eyre!("{:?}", err)),
+    }
+}
+
 fn on_title_cb(title: String) -> eyre::Result<()> {
     match BAR.lock() {
         Ok(mut progress) => {
@@ -195,7 +213,8 @@ pub fn init_web_progress() {
             .reset(Some(reset_cb))
             .set_pos(Some(set_pos_cb))
             .set_title(Some(on_title_cb))
-            .set_type(Some(on_type_cb));
+            .set_type(Some(on_type_cb))
+            .set_len(Some(set_len_cb));
         *updater = ub.build();
     }
 }

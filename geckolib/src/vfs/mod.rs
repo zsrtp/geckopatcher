@@ -5,12 +5,13 @@ use crate::iso::read::DiscReader;
 use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
+use async_std::io::prelude::{ReadExt, SeekExt};
 use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
 use async_std::path::PathBuf;
 use async_std::sync::Arc;
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+use futures::AsyncWriteExt;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
 use num::ToPrimitive;
@@ -203,12 +204,14 @@ where
                 let entry = FstEntry::try_from(entry_buf).unwrap();
                 let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
 
-                match &mut node {
-                    FstNode::File { file_offset, .. } => {
-                        *file_offset <<= if is_wii { 2 } else { 0 };
-                    }
-                    FstNode::Directory { parent_dir, .. } => {
-                        *parent_dir <<= if is_wii { 2 } else { 0 };
+                if is_wii {
+                    match &mut node {
+                        FstNode::File { file_offset, .. } => {
+                            *file_offset <<= 2;
+                        }
+                        FstNode::Directory { parent_dir, .. } => {
+                            *parent_dir <<= 2;
+                        }
                     }
                 }
 
@@ -466,9 +469,9 @@ where
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_type(crate::update::UpdaterType::Progress)?;
-            updater.init(Some(write_total_size as usize))?;
+            updater.set_len(write_total_size as usize)?;
             updater.set_title("Writing virtual FileSystem".to_string())?;
+            updater.set_type(crate::update::UpdaterType::Progress)?;
         }
         let mut offset = pos.to_usize().ok_or(eyre::eyre!("Offset too large"))?;
         #[cfg(feature = "progress")]
@@ -487,6 +490,7 @@ where
             // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
             let mut rem = file.len()?;
+            file.seek(SeekFrom::Start(0)).await?;
             loop {
                 if rem == 0 {
                     break;
@@ -520,6 +524,8 @@ where
         if let Ok(mut updater) = UPDATER.lock() {
             updater.finish()?;
         }
+
+        writer.close().await?;
 
         Ok(())
     }
@@ -955,12 +961,7 @@ where
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
         let pos = match pos {
             SeekFrom::Start(pos) => {
-                if pos
-                    > self
-                        .len()
-                        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
-                        as u64
-                {
+                if pos > status.data.len() as u64 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -1116,8 +1117,7 @@ where
             },
             FileState::Reading => match status.data {
                 FileDataSource::Reader { ref mut reader, .. } => {
-                    let guard_pin = std::pin::pin!(reader);
-                    match guard_pin.poll_read(cx, &mut buf[..end]) {
+                    match std::pin::pin!(reader).poll_read(cx, &mut buf[..end]) {
                         Poll::Ready(Ok(num_read)) => {
                             status.cursor += num_read as u64;
                             status.state = FileState::Seeking;

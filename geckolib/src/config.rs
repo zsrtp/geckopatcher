@@ -11,7 +11,7 @@ pub struct Config {
     #[serde(default)]
     pub files: HashMap<String, PathBuf>,
     pub build: Build,
-    pub link: Link,
+    pub link: Option<Link>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]

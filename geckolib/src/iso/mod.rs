@@ -1,3 +1,5 @@
+use std::ffi::CStr;
+
 use crate::crypto::Unpackable;
 
 pub mod builder;
@@ -204,13 +206,7 @@ impl FstNode {
     pub fn from_fstnode(node: &FstEntry, file_name_table: &[u8]) -> eyre::Result<Self> {
         // Get the file name
         let pos = (node.node_type_file_name_offset & 0x00FFFFFF) as usize;
-        let mut end = pos;
-        while file_name_table[end] != 0 {
-            end += 1;
-        }
-        let mut str_buf = Vec::new();
-        str_buf.extend_from_slice(&file_name_table[pos..end]);
-        let relative_file_name = String::from_utf8(str_buf)?;
+        let relative_file_name = CStr::from_bytes_until_nul(&file_name_table[pos..])?.to_string_lossy().to_string();
         match FstNodeType::try_from((node.node_type_file_name_offset >> 24) as u8)? {
             FstNodeType::File => {
                 let file_offset = node.file_offset_parent_dir as u64;

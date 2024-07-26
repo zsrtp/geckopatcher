@@ -26,10 +26,9 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
-        updater.init(Some(4))?;
         updater.set_type(UpdaterType::Spinner)?;
+        updater.init(Some(4))?;
         updater.set_title("Initializing...".into())?;
-        updater.set_message("".into())?;
     }
 
     match args.cmd {
@@ -55,13 +54,15 @@ fn main() -> color_eyre::eyre::Result<()> {
             original_game,
             output,
         } => task::block_on::<_, color_eyre::eyre::Result<()>>(async {
-            let mut builder =
-                open_config_from_patch(std::fs::OpenOptions::new().read(true).open(patch)?).await?;
-            {
-                let config = builder.config_mut();
-                config.src.iso = original_game;
-                config.build.iso = output;
-            }
+            let mut builder = open_config_from_patch(
+                std::fs::OpenOptions::new().read(true).open(patch)?,
+                async_std::fs::OpenOptions::new()
+                    .read(true)
+                    .open(original_game)
+                    .await?,
+                    async_std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(output).await?,
+            )
+            .await?;
             builder.build().await
         }),
         Commands::New { name } => {

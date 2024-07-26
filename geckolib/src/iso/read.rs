@@ -14,54 +14,6 @@ use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::Poll;
 
-#[derive(Debug)]
-pub struct GCDiscReader<R> {
-    reader: R,
-}
-
-impl<R> GCDiscReader<R> {
-    pub fn new(reader: R) -> Self {
-        Self { reader }
-    }
-}
-
-impl<R> Clone for GCDiscReader<R>
-where
-    R: Clone,
-{
-    fn clone(&self) -> Self {
-        Self {
-            reader: self.reader.clone(),
-        }
-    }
-}
-
-impl<R> AsyncSeek for GCDiscReader<R>
-where
-    R: AsyncSeek + Unpin,
-{
-    fn poll_seek(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        pos: std::io::SeekFrom,
-    ) -> std::task::Poll<std::io::Result<u64>> {
-        pin!(&mut self.get_mut().reader).poll_seek(cx, pos)
-    }
-}
-
-impl<R> AsyncRead for GCDiscReader<R>
-where
-    R: AsyncRead + Unpin,
-{
-    fn poll_read(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        pin!(&mut self.get_mut().reader).poll_read(cx, buf)
-    }
-}
-
 #[derive(Debug, Clone)]
 enum WiiDiscReaderState {
     Seeking,
@@ -377,7 +329,7 @@ where
 
 #[derive(Debug)]
 pub enum DiscReader<R> {
-    Gamecube(GCDiscReader<R>),
+    Gamecube(R),
     Wii(WiiDiscReader<R>),
 }
 
@@ -436,7 +388,7 @@ where
         crate::debug!("Magics: {:?}", buf);
         if BE::read_u32(&buf[4..][..4]) == iso_consts::GC_MAGIC {
             crate::debug!("Loading Gamecube disc");
-            Ok(Self::Gamecube(GCDiscReader::new(reader)))
+            Ok(Self::Gamecube(reader))
         } else if BE::read_u32(&buf[..][..4]) == iso_consts::WII_MAGIC {
             crate::debug!("Loading Wii disc");
             Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))

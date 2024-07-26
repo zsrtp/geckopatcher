@@ -20,6 +20,7 @@ pub struct Updater<E, U: num::Unsigned = usize> {
     finish_cb: Option<DefaultCallback<E>>,
     reset_cb: Option<DefaultCallback<E>>,
     set_pos_cb: Option<SizeCallback<E, U>>,
+    set_len_cb: Option<SizeCallback<E, U>>,
 
     on_msg_cb: Option<StringCallback<E>>,
     on_type_cb: Option<TypeCallback<E>>,
@@ -36,6 +37,7 @@ impl<E, U: num::Unsigned> Default for Updater<E, U> {
             finish_cb: Default::default(),
             reset_cb: Default::default(),
             set_pos_cb: Default::default(),
+            set_len_cb: Default::default(),
             on_msg_cb: Default::default(),
             on_type_cb: Default::default(),
             on_title_cb: Default::default(),
@@ -104,6 +106,12 @@ impl<E, U: num::Unsigned> Updater<E, U> {
         }
         Ok(())
     }
+    pub fn set_len(&mut self, len: U) -> Result<(), E> {
+        if let Some(set_len_cb) = self.set_len_cb {
+            return set_len_cb(len);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -115,6 +123,7 @@ pub struct UpdaterBuilder<E, U: num::Unsigned = usize> {
     finish_cb: Option<DefaultCallback<E>>,
     reset_cb: Option<DefaultCallback<E>>,
     set_pos_cb: Option<SizeCallback<E, U>>,
+    set_len_cb: Option<SizeCallback<E, U>>,
     on_msg_cb: Option<StringCallback<E>>,
     on_type_cb: Option<TypeCallback<E>>,
     on_title_cb: Option<StringCallback<E>>,
@@ -130,6 +139,7 @@ impl<E, U: num::Unsigned> Default for UpdaterBuilder<E, U> {
             finish_cb: Default::default(),
             reset_cb: Default::default(),
             set_pos_cb: Default::default(),
+            set_len_cb: Default::default(),
             on_msg_cb: Default::default(),
             on_type_cb: Default::default(),
             on_title_cb: Default::default(),
@@ -170,6 +180,10 @@ impl<E, U: num::Unsigned> UpdaterBuilder<E, U> {
         self.set_pos_cb = set_pos_cb;
         self
     }
+    pub fn set_len(&mut self, set_len_cb: Option<SizeCallback<E, U>>) -> &mut Self {
+        self.set_len_cb = set_len_cb;
+        self
+    }
 
     pub fn set_message(&mut self, on_msg_cb: Option<fn(String) -> Result<(), E>>) -> &mut Self {
         self.on_msg_cb = on_msg_cb;
@@ -193,6 +207,7 @@ impl<E, U: num::Unsigned> UpdaterBuilder<E, U> {
             finish_cb: self.finish_cb,
             reset_cb: self.reset_cb,
             set_pos_cb: self.set_pos_cb,
+            set_len_cb: self.set_len_cb,
             on_msg_cb: self.on_msg_cb,
             on_type_cb: self.on_type_cb,
             on_title_cb: self.on_title_cb,

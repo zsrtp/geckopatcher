@@ -52,7 +52,6 @@ async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek
         if is_wii {
             log::info!("Encrypting the ISO");
         }
-        out.flush().await?;
         out.close().await?;
         log::info!("ISO writing done");
     }

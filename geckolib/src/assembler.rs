@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use syn::{self, synom::ParseError};
 
 pub struct Assembler<'a> {
-    symbol_table: BTreeMap<&'a str, u32>,
+    symbol_table: Option<BTreeMap<&'a str, u32>>,
     prelinked_symbols: &'a HashMap<String, u32>,
     program_counter: u32,
 }
@@ -15,7 +15,7 @@ pub struct Instruction {
 
 impl<'a> Assembler<'a> {
     pub fn new(
-        symbol_table: BTreeMap<&'a str, u32>,
+        symbol_table: Option<BTreeMap<&'a str, u32>>,
         prelinked_symbols: &'a HashMap<String, u32>,
     ) -> Assembler<'a> {
         Assembler {
@@ -92,7 +92,7 @@ impl<'a> Assembler<'a> {
             return Ok(address);
         }
 
-        if let Some(&symbol) = self.symbol_table.get(symbol) {
+        if let Some(&symbol) = self.symbol_table.as_ref().and_then(|s| s.get(symbol)) {
             return Ok(symbol);
         }
 
