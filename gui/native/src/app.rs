@@ -1,7 +1,6 @@
 use std::io::{Read, Seek};
 
 use async_std::fs;
-use async_std::io::BufReader;
 use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use futures_lite::AsyncWriteExt;
@@ -90,12 +89,11 @@ pub struct PatcherApp {
 
 async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
     // let patch = fs::OpenOptions::new().read(true).open(patch_path).await;
-    let file = 
-        fs::OpenOptions::new()
-            .read(true)
-            .open(file_path)
-            .await
-            .unwrap();
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .open(file_path)
+        .await
+        .unwrap();
     let save = fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -117,9 +115,7 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
                 .expect("This game has no title")
         );
     }
-    let out = {
-        DiscWriter::new(save, f.get_disc_info())
-    };
+    let out = { DiscWriter::new(save, f.get_disc_info()) };
     if let DiscWriter::Wii(wii_out) = out.clone() {
         std::pin::pin!(wii_out).init().await?;
     }

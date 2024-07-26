@@ -716,7 +716,10 @@ pub struct WiiSectorHash {
     pub(crate) h2: [[u8; consts::WII_HASH_SIZE]; 8],
     _h2_padding: [u8; 32],
 }
-const_assert_eq!(std::mem::size_of::<WiiSectorHash>(), consts::WII_SECTOR_HASH_SIZE);
+const_assert_eq!(
+    std::mem::size_of::<WiiSectorHash>(),
+    consts::WII_SECTOR_HASH_SIZE
+);
 
 impl Default for WiiSectorHash {
     fn default() -> Self {
@@ -756,7 +759,9 @@ impl WiiSectorHash {
         unsafe { std::mem::transmute(&self.h2) }
     }
 
-    pub fn get_h0_mut(&mut self) -> &mut [u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
+    pub fn get_h0_mut(
+        &mut self,
+    ) -> &mut [u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
         unsafe { std::mem::transmute(&mut self.h0) }
     }
 
@@ -825,19 +830,33 @@ impl WiiGroup {
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
-        self.as_sectors_ref().iter().flat_map(|sector| sector.hash.as_array_ref().iter().chain(sector.data.iter())).copied().collect()
+        self.as_sectors_ref()
+            .iter()
+            .flat_map(|sector| sector.hash.as_array_ref().iter().chain(sector.data.iter()))
+            .copied()
+            .collect()
     }
 
     pub fn as_sectors(self) -> Vec<WiiSector> {
-        self.sub_groups.iter().flat_map(|sub_group| sub_group.sectors.iter()).copied().collect()
+        self.sub_groups
+            .iter()
+            .flat_map(|sub_group| sub_group.sectors.iter())
+            .copied()
+            .collect()
     }
 
     pub fn as_sectors_ref(&self) -> Vec<&WiiSector> {
-        self.sub_groups.iter().flat_map(|sub_group| sub_group.sectors.iter()).collect()
+        self.sub_groups
+            .iter()
+            .flat_map(|sub_group| sub_group.sectors.iter())
+            .collect()
     }
 
     pub fn as_sectors_mut(&mut self) -> Vec<&mut WiiSector> {
-        self.sub_groups.iter_mut().flat_map(|sub_group| sub_group.sectors.iter_mut()).collect()
+        self.sub_groups
+            .iter_mut()
+            .flat_map(|sub_group| sub_group.sectors.iter_mut())
+            .collect()
     }
 }
 
@@ -890,7 +909,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::iso::disc::{to_virtual_addr, to_raw_addr};
+    use crate::iso::disc::{to_raw_addr, to_virtual_addr};
 
     #[test]
     fn works_normally() {

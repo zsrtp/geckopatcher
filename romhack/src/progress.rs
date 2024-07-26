@@ -3,11 +3,11 @@ use std::{
     time::Duration,
 };
 
-use geckolib::update::{UpdaterType, UpdaterBuilder};
+use colored::Colorize;
+use geckolib::update::{UpdaterBuilder, UpdaterType};
 use geckolib::UPDATER;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use lazy_static::lazy_static;
-use colored::Colorize;
 
 lazy_static! {
     static ref BAR: Arc<Mutex<CLIProgressBar>> = Arc::new(Mutex::new(CLIProgressBar::new()));
@@ -133,10 +133,10 @@ fn on_title_cb(title: String) -> color_eyre::Result<()> {
         Ok(mut progress) => {
             progress.title_idx += 1;
             let prefix = format!("[{}/?]", progress.title_idx);
+            progress.bar.set_prefix(prefix.clone());
             progress
                 .bar
-                .set_prefix(prefix.clone());
-            progress.bar.println(format!("{} {}", prefix.bold().dimmed(), title));
+                .println(format!("{} {}", prefix.bold().dimmed(), title));
             Ok(())
         }
         Err(err) => Err(color_eyre::eyre::eyre!("{:?}", err)),

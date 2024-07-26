@@ -1,5 +1,5 @@
 use crate::assembler::Instruction;
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, ReadExt, prelude::*};
+use async_std::io::{prelude::*, Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use byteorder::{ByteOrder, BE};
 use std::fmt::{self, Debug};
 
@@ -53,14 +53,21 @@ entry_point: {:x}",
     }
 }
 
-async fn read<R: AsyncRead + AsyncSeek + Unpin>(data: &mut R, offset: usize, length: usize) -> eyre::Result<Vec<u8>> {
+async fn read<R: AsyncRead + AsyncSeek + Unpin>(
+    data: &mut R,
+    offset: usize,
+    length: usize,
+) -> eyre::Result<Vec<u8>> {
     let mut buf = vec![0u8; length];
     data.seek(std::io::SeekFrom::Start(offset as u64)).await?;
     data.read_exact(&mut buf).await?;
     Ok(buf)
 }
 
-async fn read_u32<R: AsyncRead + AsyncSeek + Unpin>(data: &mut R, offset: usize) -> eyre::Result<u32> {
+async fn read_u32<R: AsyncRead + AsyncSeek + Unpin>(
+    data: &mut R,
+    offset: usize,
+) -> eyre::Result<u32> {
     let mut buf = vec![0u8; 4];
     data.seek(std::io::SeekFrom::Start(offset as u64)).await?;
     data.read_exact(&mut buf).await?;
@@ -86,7 +93,9 @@ async fn read_sections<R: AsyncRead + AsyncSeek + Unpin>(
         if length == 0 {
             break;
         }
-        let section_data = read(data, offset as usize, length as usize).await?.into_boxed_slice();
+        let section_data = read(data, offset as usize, length as usize)
+            .await?
+            .into_boxed_slice();
         let section = Section {
             address: address,
             data: section_data,

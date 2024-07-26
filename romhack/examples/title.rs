@@ -70,7 +70,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                         .map(|x| format!("{:02X}", x))
                         .collect::<Vec<String>>()
                         .join("")
-                    );
+                );
                 log::info!(
                     "Has banner: {:?}",
                     fs.root_mut().get_file("opening.bnr").is_ok()
@@ -78,7 +78,11 @@ fn main() -> color_eyre::eyre::Result<()> {
             }
             if let Some(banner_out_path) = args.banner_out {
                 if let Ok(banner) = fs.root_mut().get_file_mut("opening.bnr") {
-                    let mut out_file = async_std::fs::OpenOptions::new().write(true).create(true).open(banner_out_path).await?;
+                    let mut out_file = async_std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .open(banner_out_path)
+                        .await?;
                     async_std::io::copy(banner, &mut out_file).await?;
                 }
             }

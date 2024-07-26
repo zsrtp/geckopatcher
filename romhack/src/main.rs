@@ -2,10 +2,13 @@ use std::str::FromStr;
 
 use async_std::task;
 use clap::Parser;
-use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_fs_patch, open_config_from_patch};
+use geckolib::{
+    iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_fs_patch,
+    open_config_from_patch,
+};
 
 #[cfg(feature = "progress")]
-use geckolib::{UPDATER, update::UpdaterType};
+use geckolib::{update::UpdaterType, UPDATER};
 
 #[cfg(feature = "progress")]
 mod progress;
@@ -33,28 +36,37 @@ fn main() -> color_eyre::eyre::Result<()> {
         Commands::Build { debug, patch, raw } => {
             task::block_on::<_, color_eyre::eyre::Result<()>>(async {
                 if patch {
-                    let mut builder = open_config_from_fs_patch(&async_std::path::PathBuf::from_str("RomHack.toml")?).await?;
+                    let mut builder = open_config_from_fs_patch(
+                        &async_std::path::PathBuf::from_str("RomHack.toml")?,
+                    )
+                    .await?;
                     builder.build().await
                 } else {
-                    let mut builder = open_config_from_fs_iso(&async_std::path::PathBuf::from_str("RomHack.toml")?).await?;
+                    let mut builder = open_config_from_fs_iso(&async_std::path::PathBuf::from_str(
+                        "RomHack.toml",
+                    )?)
+                    .await?;
                     builder.build().await
                 }
             })
-        },
-        Commands::Apply { patch, original_game, output } => {
-            task::block_on::<_, color_eyre::eyre::Result<()>>(async {
-                let mut builder = open_config_from_patch(std::fs::OpenOptions::new().read(true).open(patch)?).await?;
-                {
-                    let config = builder.config_mut();
-                    config.src.iso = original_game;
-                    config.build.iso = output;
-                }
-                builder.build().await
-            })
-        },
+        }
+        Commands::Apply {
+            patch,
+            original_game,
+            output,
+        } => task::block_on::<_, color_eyre::eyre::Result<()>>(async {
+            let mut builder =
+                open_config_from_patch(std::fs::OpenOptions::new().read(true).open(patch)?).await?;
+            {
+                let config = builder.config_mut();
+                config.src.iso = original_game;
+                config.build.iso = output;
+            }
+            builder.build().await
+        }),
         Commands::New { name } => {
             new(&name)?;
             Ok(())
-        },
+        }
     }
 }

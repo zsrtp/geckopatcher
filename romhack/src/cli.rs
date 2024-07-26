@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueHint};
 
-
 #[derive(Debug, Parser)]
 #[command(author, version)]
 /// Patches a game file
@@ -13,7 +12,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
-/// Command from 
+/// Command from
 pub enum Commands {
     /// Builds the Rom Hack
     Build {
@@ -25,7 +24,7 @@ pub enum Commands {
         patch: bool,
         #[arg(short, long)]
         /// Compiles the Rom Hack from local files
-        raw: bool
+        raw: bool,
     },
     /// Applies a patch file to a game to create a Rom Hack
     Apply {
@@ -42,6 +41,6 @@ pub enum Commands {
     /// Creates a new Rom Hack with the given name
     New {
         #[arg(value_hint = ValueHint::Other)]
-        name: String
+        name: String,
     },
 }

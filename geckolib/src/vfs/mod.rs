@@ -2,7 +2,7 @@ use crate::crypto::Unpackable;
 use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
-use crate::iso::{consts, FstNode, FstEntry, FstNodeType};
+use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
 use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
@@ -14,6 +14,8 @@ use eyre::Result;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
 use num::ToPrimitive;
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use std::io::{Error, SeekFrom};
 use std::path::Path;
 #[cfg(feature = "progress")]
@@ -112,7 +114,11 @@ where
         let entry = &fst[*cur_index];
 
         match entry.clone() {
-            FstNode::Directory { relative_file_name, parent_dir: _, next_dir_index } => {
+            FstNode::Directory {
+                relative_file_name,
+                parent_dir: _,
+                next_dir_index,
+            } => {
                 let dir = parent_dir.mkdir(relative_file_name.clone());
 
                 while *cur_index < next_dir_index - 1 {
@@ -120,10 +126,19 @@ where
                     GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, reader);
                 }
             }
-            FstNode::File { relative_file_name, file_offset, file_size } => {
-                parent_dir.add_file(File::new(
-                    FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name, file_offset, file_size } },
-                ));
+            FstNode::File {
+                relative_file_name,
+                file_offset,
+                file_size,
+            } => {
+                parent_dir.add_file(File::new(FileDataSource::Reader {
+                    reader: reader.clone(),
+                    fst: FstNode::File {
+                        relative_file_name,
+                        file_offset,
+                        file_size,
+                    },
+                }));
             }
         }
     }
@@ -177,90 +192,29 @@ where
                 str_tbl_buf.split(|b| *b == 0).count()
             );
 
-            // let root_name = (0, "".into());
-            // let name_it = {
-            //     let offsets = std::iter::once(0).chain(
-            //         str_tbl_buf
-            //             .iter()
-            //             .enumerate()
-            //             .filter_map(|(i, b)| if *b == 0 { Some(i + 1) } else { None })
-            //             .take(num_entries - 1),
-            //     );
-            //     std::iter::once(root_name).chain(
-            //         offsets.zip(
-            //             str_tbl_buf
-            //                 .split(|b| *b == 0)
-            //                 .map(String::from_utf8_lossy)
-            //                 .map(|s| s.to_string()),
-            //         ),
-            //     )
-            // };
-
-            #[cfg(disabled)]
             let fst_entries: Vec<FstNode> = {
-                fst_list_buf
-                    .chunks_exact(FstNode::BLOCK_SIZE)
-                    .zip(name_it)
-                    .enumerate()
+                #[cfg(feature = "parallel")]
+                let chunks = fst_list_buf.par_chunks_exact(FstEntry::BLOCK_SIZE);
+                #[cfg(not(feature = "parallel"))]
+                let chunks = fst_list_buf.chunks_exact(FstEntry::BLOCK_SIZE);
+                chunks
             }
-            .map(|(i, (entry_buf, (name_off, name)))| {
-                let kind = FstNodeType::try_from(entry_buf[0]).unwrap_or(FstNodeType::Directory);
+            .map(|entry_buf| {
+                let entry = FstEntry::try_from(entry_buf).unwrap();
+                let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
 
-                let string_offset = (BE::read_u32(entry_buf) & 0x00ffffff) as usize;
-                if string_offset != name_off {
-                    crate::warn!(
-                        "String offset for file \"{}\" differs (extracted {}, calculated: {}",
-                        name,
-                        string_offset,
-                        name_off
-                    );
+                match &mut node {
+                    FstNode::File { file_offset, .. } => {
+                        *file_offset <<= if is_wii { 2 } else { 0 };
+                    }
+                    FstNode::Directory { parent_dir, .. } => {
+                        *parent_dir <<= if is_wii { 2 } else { 0 };
+                    }
                 }
 
-                // let pos = string_offset;
-                // let mut end = pos;
-                // while str_tbl_buf[end] != 0 {
-                //     end += 1;
-                // }
-                // crate::trace!("entry #{} string size: {}", i, end - pos);
-                // let mut str_buf = Vec::new();
-                // str_buf.extend_from_slice(&str_tbl_buf[pos..end]);
-                // let relative_file_name = String::from_utf8_lossy(&str_buf).to_string();
-                let relative_file_name = name;
-
-                let file_offset_parent_dir =
-                    (BE::read_u32(&entry_buf[4..]) as usize) << (if is_wii { 2 } else { 0 });
-                let file_size_next_dir_index = BE::read_u32(&entry_buf[8..]) as usize;
-
-                let fst_entry = FstNode {
-                    kind,
-                    relative_file_name,
-                    file_offset_parent_dir,
-                    file_size_next_dir_index,
-                    file_name_offset: string_offset,
-                };
-                crate::trace!("parsed entry #{}: {:?}", i, fst_entry);
-                fst_entry
+                node
             })
             .collect();
-            let fst_entries: Vec<FstNode> = {
-                let mut fst_entries: Vec<FstNode> = Vec::new();
-                for i in 0..num_entries {
-                    let mut entry = FstNode::from_fstnode(&FstEntry::try_from(&fst_list_buf[i * FstEntry::BLOCK_SIZE..])?, &str_tbl_buf)?;
-
-                    match &mut entry {
-                        FstNode::File { file_offset, .. } => {
-                            *file_offset <<= if is_wii { 2 } else { 0 };
-                        }
-                        FstNode::Directory { parent_dir, .. } => {
-                            *parent_dir <<= if is_wii { 2 } else { 0 };
-                        }
-                    }
-
-                    fst_entries.push(entry);
-                    crate::trace!("parsed entry #{}: {:?}", i, fst_entries.last());
-                }
-                fst_entries
-            };
 
             GeckoFS::read_exact(
                 &mut reader,
@@ -275,27 +229,42 @@ where
                 num_entries * FstEntry::BLOCK_SIZE
             );
 
-            system.add_file(File::new(
-                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "iso.hdr".to_owned(), file_offset: 0, file_size: consts::HEADER_LENGTH } },
-            ));
-            system.add_file(File::new(
-                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "AppLoader.ldr".to_owned(), file_offset: consts::HEADER_LENGTH as u64, file_size: dol_offset - consts::HEADER_LENGTH } },
-            ));
-            system.add_file(File::new(
-                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "Start.dol".to_owned(), file_offset: dol_offset as u64, file_size: fst_offset as usize - dol_offset } },
-            ));
-            system.add_file(File::new(
-                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "Game.toc".to_owned(), file_offset: fst_offset, file_size: fst_size } },
-            ));
+            system.add_file(File::new(FileDataSource::Reader {
+                reader: reader.clone(),
+                fst: FstNode::File {
+                    relative_file_name: "iso.hdr".to_owned(),
+                    file_offset: 0,
+                    file_size: consts::HEADER_LENGTH,
+                },
+            }));
+            system.add_file(File::new(FileDataSource::Reader {
+                reader: reader.clone(),
+                fst: FstNode::File {
+                    relative_file_name: "AppLoader.ldr".to_owned(),
+                    file_offset: consts::HEADER_LENGTH as u64,
+                    file_size: dol_offset - consts::HEADER_LENGTH,
+                },
+            }));
+            system.add_file(File::new(FileDataSource::Reader {
+                reader: reader.clone(),
+                fst: FstNode::File {
+                    relative_file_name: "Start.dol".to_owned(),
+                    file_offset: dol_offset as u64,
+                    file_size: fst_offset as usize - dol_offset,
+                },
+            }));
+            system.add_file(File::new(FileDataSource::Reader {
+                reader: reader.clone(),
+                fst: FstNode::File {
+                    relative_file_name: "Game.toc".to_owned(),
+                    file_offset: fst_offset,
+                    file_size: fst_size,
+                },
+            }));
 
             let mut count = 1;
             while count < num_entries {
-                GeckoFS::get_dir_structure_recursive(
-                    &mut count,
-                    &fst_entries,
-                    &mut root,
-                    &reader,
-                );
+                GeckoFS::get_dir_structure_recursive(&mut count, &fst_entries, &mut root, &reader);
                 count += 1;
             }
         }
@@ -331,7 +300,12 @@ where
     ) -> Result<()> {
         match node.as_enum_mut() {
             NodeEnumMut::Directory(dir) => {
-                let fst_entry = FstEntry::new_directory(fst_name_bank.len() as u32, cur_parent_dir_index as u64, 0, is_wii)?;
+                let fst_entry = FstEntry::new_directory(
+                    fst_name_bank.len() as u32,
+                    cur_parent_dir_index as u64,
+                    0,
+                    is_wii,
+                )?;
 
                 fst_name_bank.extend_from_slice(dir.name().as_bytes());
                 fst_name_bank.push(0);
@@ -359,7 +333,12 @@ where
                 let pos = align_addr(*offset, 5);
                 *offset = pos;
 
-                let fst_entry = FstEntry::new_file(fst_name_bank.len() as u32, pos as u64, file.len()? as u32, is_wii)?;
+                let fst_entry = FstEntry::new_file(
+                    fst_name_bank.len() as u32,
+                    pos as u64,
+                    file.len()? as u32,
+                    is_wii,
+                )?;
 
                 fst_name_bank.extend_from_slice(file.name().as_bytes());
                 fst_name_bank.push(0);
@@ -422,7 +401,9 @@ where
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
         writer.write_all(&vec![0u8; dol_padding_size]).await?;
-        pos += dol_padding_size.to_u64().ok_or(eyre::eyre!("DOL padding too large"))?;
+        pos += dol_padding_size
+            .to_u64()
+            .ok_or(eyre::eyre!("DOL padding too large"))?;
 
         buf.clear();
         self.sys_mut()
@@ -432,7 +413,9 @@ where
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
         writer.write_all(&vec![0u8; fst_list_padding_size]).await?;
-        pos += fst_list_padding_size.to_u64().ok_or(eyre::eyre!("FST list padding too large"))?;
+        pos += fst_list_padding_size
+            .to_u64()
+            .ok_or(eyre::eyre!("FST list padding too large"))?;
 
         let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
         let mut fst_name_bank = Vec::new();
@@ -475,7 +458,10 @@ where
         }
 
         writer.write_all(&fst_name_bank).await?;
-        pos += fst_name_bank.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
+        pos += fst_name_bank
+            .len()
+            .to_u64()
+            .ok_or(eyre::eyre!("Buffer too large"))?;
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
@@ -705,7 +691,10 @@ where
                 dir.mkdir(component);
             }
         }
-        Ok(self.resolve_node_mut(path).and_then(|node| node.as_directory_mut()).unwrap())
+        Ok(self
+            .resolve_node_mut(path)
+            .and_then(|node| node.as_directory_mut())
+            .unwrap())
     }
 
     pub fn add_file(&mut self, file: File<R>) -> &mut File<R> {
@@ -852,14 +841,8 @@ impl<R> Node<R> for Directory<R> {
 
 #[derive(Debug)]
 pub(crate) enum FileDataSource<R> {
-    Reader{
-        reader: DiscReader<R>,
-        fst: FstNode,
-    },
-    Box {
-        data: Box<[u8]>,
-        name: String,
-    },
+    Reader { reader: DiscReader<R>, fst: FstNode },
+    Box { data: Box<[u8]>, name: String },
 }
 
 impl<R> FileDataSource<R> {
@@ -880,12 +863,18 @@ impl<R> FileDataSource<R> {
 
 impl<R> Clone for FileDataSource<R>
 where
-    R: Clone
+    R: Clone,
 {
     fn clone(&self) -> Self {
         match self {
-            Self::Reader { reader, fst } => Self::Reader { reader: reader.clone(), fst: fst.clone() },
-            Self::Box { data, name } => Self::Box { data: data.clone(), name: name.clone() },
+            Self::Reader { reader, fst } => Self::Reader {
+                reader: reader.clone(),
+                fst: fst.clone(),
+            },
+            Self::Box { data, name } => Self::Box {
+                data: data.clone(),
+                name: name.clone(),
+            },
         }
     }
 }
@@ -902,7 +891,7 @@ enum FileState {
 struct FileStatus<R> {
     cursor: u64,
     state: FileState,
-    data: FileDataSource<R>
+    data: FileDataSource<R>,
 }
 
 #[derive(Debug, Clone)]
@@ -911,18 +900,23 @@ pub struct File<R> {
 }
 
 impl<R> File<R> {
-    pub(crate) fn new(
-        data: FileDataSource<R>,
-    ) -> Self {
+    pub(crate) fn new(data: FileDataSource<R>) -> Self {
         Self {
-            status: Arc::new(std::sync::Mutex::new(FileStatus { cursor: 0, state: FileState::Init, data })),
+            status: Arc::new(std::sync::Mutex::new(FileStatus {
+                cursor: 0,
+                state: FileState::Init,
+                data,
+            })),
         }
     }
 
     pub fn set_data(&mut self, data: Box<[u8]>) -> eyre::Result<()> {
         match self.status.lock() {
             Ok(mut status) => {
-                status.data = FileDataSource::Box {data, name: status.data.name()};
+                status.data = FileDataSource::Box {
+                    data,
+                    name: status.data.name(),
+                };
                 Ok(())
             }
             Err(_) => Err(eyre::eyre!("Failed to lock the file status")),
@@ -930,7 +924,10 @@ impl<R> File<R> {
     }
 
     pub fn len(&self) -> eyre::Result<usize> {
-        self.status.lock().map(|status| status.data.len()).map_err(|_| eyre::eyre!("Failed to lock the file status"))
+        self.status
+            .lock()
+            .map(|status| status.data.len())
+            .map_err(|_| eyre::eyre!("Failed to lock the file status"))
     }
 
     pub fn is_empty(&self) -> eyre::Result<bool> {
@@ -948,10 +945,18 @@ where
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
         crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos);
-        let mut status = self.status.lock().map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
+        let mut status = self
+            .status
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
         let pos = match pos {
             SeekFrom::Start(pos) => {
-                if pos > self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as u64 {
+                if pos
+                    > self
+                        .len()
+                        .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
+                        as u64
+                {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -960,7 +965,11 @@ where
                 SeekFrom::Start(pos)
             }
             SeekFrom::End(pos) => {
-                let new_pos = self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as i64 + pos;
+                let new_pos = self
+                    .len()
+                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
+                    as i64
+                    + pos;
                 if new_pos < 0 || pos > 0 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
@@ -971,7 +980,13 @@ where
             }
             SeekFrom::Current(pos) => {
                 let new_pos = status.cursor as i64 + pos;
-                if new_pos < 0 || new_pos > self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as i64 {
+                if new_pos < 0
+                    || new_pos
+                        > self
+                            .len()
+                            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
+                            as i64
+                {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -990,13 +1005,12 @@ where
                             SeekFrom::Start(fst.get_file_offset().unwrap() + pos)
                         }
                         SeekFrom::End(pos) => SeekFrom::Start(
-                            ((fst.get_file_offset().unwrap() as i64 + fst.get_file_size().unwrap() as i64) + pos)
-                                as u64,
+                            ((fst.get_file_offset().unwrap() as i64
+                                + fst.get_file_size().unwrap() as i64)
+                                + pos) as u64,
                         ),
                         SeekFrom::Current(pos) => SeekFrom::Start(
-                            (fst.get_file_offset().unwrap() as i64
-                                + cursor as i64
-                                + pos) as u64,
+                            (fst.get_file_offset().unwrap() as i64 + cursor as i64 + pos) as u64,
                         ),
                     },
                 ) {
@@ -1017,7 +1031,7 @@ where
                     Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
                     Poll::Pending => Poll::Pending,
                 }
-            },
+            }
             FileDataSource::Box { data, .. } => match pos {
                 SeekFrom::Start(pos) => {
                     status.cursor = pos;
@@ -1050,13 +1064,15 @@ where
             self.name(),
             buf.len()
         );
-        let mut status = self.status.lock().map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
+        let mut status = self
+            .status
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
         let cursor = status.cursor;
-        let end = 
-            std::cmp::min(
-                buf.len(),
-                (status.data.len() as i64 - cursor as i64) as usize,
-            );
+        let end = std::cmp::min(
+            buf.len(),
+            (status.data.len() as i64 - cursor as i64) as usize,
+        );
         match status.state {
             FileState::Init => {
                 status.state = FileState::Seeking;
@@ -1064,26 +1080,26 @@ where
                 Poll::Pending
             }
             FileState::Seeking => match status.data {
-                FileDataSource::Reader { ref mut reader, ref fst } => {
-                        let guard_pin = std::pin::pin!(reader);
-                        match guard_pin.poll_seek(
-                            cx,
-                            SeekFrom::Start(
-                                fst.get_file_offset().unwrap() + cursor,
-                            ),
-                        ) {
-                            Poll::Ready(Ok(_)) => {
-                                status.state = FileState::Reading;
-                                cx.waker().wake_by_ref();
-                                Poll::Pending
-                            }
-                            Poll::Ready(Err(err)) => {
-                                status.state = FileState::Seeking;
-                                Poll::Ready(Err(err))
-                            }
-                            Poll::Pending => Poll::Pending,
+                FileDataSource::Reader {
+                    ref mut reader,
+                    ref fst,
+                } => {
+                    let guard_pin = std::pin::pin!(reader);
+                    match guard_pin
+                        .poll_seek(cx, SeekFrom::Start(fst.get_file_offset().unwrap() + cursor))
+                    {
+                        Poll::Ready(Ok(_)) => {
+                            status.state = FileState::Reading;
+                            cx.waker().wake_by_ref();
+                            Poll::Pending
                         }
-                    },
+                        Poll::Ready(Err(err)) => {
+                            status.state = FileState::Seeking;
+                            Poll::Ready(Err(err))
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                }
                 FileDataSource::Box { ref data, .. } => {
                     if cursor > data.len() as u64 {
                         Poll::Ready(Err(io::Error::from(io::ErrorKind::InvalidInput)))
@@ -1094,39 +1110,40 @@ where
                     }
                 }
             },
-            FileState::Reading => {
-                match status.data {
+            FileState::Reading => match status.data {
                 FileDataSource::Reader { ref mut reader, .. } => {
-                        let guard_pin = std::pin::pin!(reader);
-                        match guard_pin.poll_read(cx, &mut buf[..end]) {
-                            Poll::Ready(Ok(num_read)) => {
-                                status.cursor += num_read as u64;
-                                status.state = FileState::Seeking;
-                                Poll::Ready(Ok(num_read))
-                            }
-                            Poll::Ready(Err(err)) => {
-                                status.state = FileState::Seeking;
-                                Poll::Ready(Err(err))
-                            }
-                            Poll::Pending => Poll::Pending,
+                    let guard_pin = std::pin::pin!(reader);
+                    match guard_pin.poll_read(cx, &mut buf[..end]) {
+                        Poll::Ready(Ok(num_read)) => {
+                            status.cursor += num_read as u64;
+                            status.state = FileState::Seeking;
+                            Poll::Ready(Ok(num_read))
                         }
-                    },
+                        Poll::Ready(Err(err)) => {
+                            status.state = FileState::Seeking;
+                            Poll::Ready(Err(err))
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                }
                 FileDataSource::Box { ref data, .. } => {
-                    let num_read =
-                        std::cmp::min(buf.len(), (data.len() as u64 - cursor) as usize);
+                    let num_read = std::cmp::min(buf.len(), (data.len() as u64 - cursor) as usize);
                     buf[..num_read].copy_from_slice(&data[cursor as usize..][..num_read]);
                     status.cursor += num_read as u64;
                     status.state = FileState::Seeking;
                     Poll::Ready(Ok(num_read))
                 }
-            }},
+            },
         }
     }
 }
 
 impl<R> Node<R> for File<R> {
     fn name(&self) -> String {
-        self.status.lock().map(|status| status.data.name()).unwrap_or_default()
+        self.status
+            .lock()
+            .map(|status| status.data.name())
+            .unwrap_or_default()
     }
 
     fn get_type(&self) -> NodeType {

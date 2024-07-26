@@ -1,5 +1,8 @@
 #[cfg(not(target_os = "unknown"))]
-use async_std::{fs::{read, OpenOptions}, io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek}};
+use async_std::{
+    fs::{read, OpenOptions},
+    io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek},
+};
 use eyre::Context;
 #[cfg(not(target_os = "unknown"))]
 use std::collections::HashMap;
@@ -86,10 +89,7 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
         }
 
         let mut file = files.get_file(actual_path)?;
-        if let Some(f) = iso
-            .resolve_node_mut(iso_path)
-            .and_then(|n| n.as_file_mut())
-        {
+        if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
             f.set_data(buffer.into_boxed_slice())?;
@@ -104,9 +104,10 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
             let dir = iso.mkdirs(p)?;
             let mut data = Vec::new();
             file.read_to_end(&mut data)?;
-            dir.add_file(vfs::File::new(
-                vfs::FileDataSource::Box { data: data.into_boxed_slice(), name: file_name },
-            ));
+            dir.add_file(vfs::File::new(vfs::FileDataSource::Box {
+                data: data.into_boxed_slice(),
+                name: file_name,
+            }));
         }
     }
     Ok(())
@@ -315,12 +316,12 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
             DiscWriter::new(
                 // async_std::io::BufWriter::with_capacity(
                 //     1 << 22u8,
-                    async_std::fs::OpenOptions::new()
-                        .write(true)
-                        .read(true)
-                        .create(true)
-                        .open(self.config.build.iso.clone())
-                        .await?,
+                async_std::fs::OpenOptions::new()
+                    .write(true)
+                    .read(true)
+                    .create(true)
+                    .open(self.config.build.iso.clone())
+                    .await?,
                 // ),
                 wii_disc_info,
             )

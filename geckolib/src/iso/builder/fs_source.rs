@@ -1,7 +1,10 @@
-use std::{fs, io::{Read, Seek}};
+use std::path::Path;
 #[cfg(not(target_os = "unknown"))]
 use std::path::PathBuf;
-use std::path::Path;
+use std::{
+    fs,
+    io::{Read, Seek},
+};
 use zip::{read::ZipFile, ZipArchive};
 
 /// A file from an arbitrary source
@@ -53,44 +56,40 @@ impl<R> FSSource<R> {
 impl<R: Read + Seek> FSSource<R> {
     pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
         match self {
-            FSSource::Zip(zip) => {
-                zip.index_for_path(path).is_some()
-            },
+            FSSource::Zip(zip) => zip.index_for_path(path).is_some(),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.exists()
-            },
+            }
         }
     }
 
     pub fn is_dir<P: AsRef<Path>>(&mut self, path: P) -> bool {
         match self {
-            FSSource::Zip(zip) => {
-                zip.index_for_path(path)
-                    .and_then(|idx| zip.by_index(idx).ok())
-                    .map_or(false, |entry| entry.is_dir())
-            },
+            FSSource::Zip(zip) => zip
+                .index_for_path(path)
+                .and_then(|idx| zip.by_index(idx).ok())
+                .map_or(false, |entry| entry.is_dir()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.is_dir()
-            },
+            }
         }
     }
 
     pub fn is_file<P: AsRef<Path>>(&mut self, path: P) -> bool {
         match self {
-            FSSource::Zip(zip) => {
-                zip.index_for_path(path)
-                    .and_then(|idx| zip.by_index(idx).ok())
-                    .map_or(false, |entry| entry.is_file())
-            },
+            FSSource::Zip(zip) => zip
+                .index_for_path(path)
+                .and_then(|idx| zip.by_index(idx).ok())
+                .map_or(false, |entry| entry.is_file()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 p.is_file()
-            },
+            }
         }
     }
 
@@ -108,9 +107,9 @@ impl<R: Read + Seek> FSSource<R> {
                 let p = inner_path.join(path);
                 Ok(File::FS(
                     p.file_name()
-                        .ok_or(eyre::eyre!("Could get get path as &OsStr"))?
+                        .ok_or(eyre::eyre!("Could not get path as &OsStr"))?
                         .to_str()
-                        .ok_or(eyre::eyre!("Could get get &OsStr as &str"))?
+                        .ok_or(eyre::eyre!("Could not get &OsStr as &str"))?
                         .to_string(),
                     std::fs::OpenOptions::new().read(true).open(&p)?,
                 ))
@@ -123,9 +122,10 @@ impl<R: Read + Seek> FSSource<R> {
         let mut names: Vec<String> = Vec::new();
         match self {
             FSSource::Zip(_) => {
-                return Err(eyre::eyre!("Unsupported operation on ZipArchive: get_names"))
-            },
-            #[cfg(not(target_os = "unknown"))]
+                return Err(eyre::eyre!(
+                    "Unsupported operation on ZipArchive: get_names"
+                ))
+            }
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
                 for entry in fs::read_dir(p)? {
@@ -134,7 +134,7 @@ impl<R: Read + Seek> FSSource<R> {
                     let file_name = entry_path.file_name().expect("Entry has no name");
                     names.push(String::from(file_name.to_str().unwrap()));
                 }
-            },
+            }
         }
         Ok(names)
     }

@@ -288,7 +288,8 @@ pub fn demangle(function: &str) -> Result<Cow<str>, Cow<'static, str>> {
             Err(format!(
                 "Unexpected Type {} for signature {}, expected Function",
                 typ, signature
-            ).into())
+            )
+            .into())
         }
     }
 

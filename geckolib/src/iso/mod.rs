@@ -100,8 +100,8 @@ impl FstEntry {
     }
 
     pub(crate) fn set_node_type(&mut self, node_type: FstNodeType) {
-        self.node_type_file_name_offset = (self.node_type_file_name_offset & 0x00FFFFFF)
-            | ((node_type as u32) << 24);
+        self.node_type_file_name_offset =
+            (self.node_type_file_name_offset & 0x00FFFFFF) | ((node_type as u32) << 24);
     }
 
     pub(crate) fn get_file_name_offset(&self) -> u32 {
@@ -109,15 +109,19 @@ impl FstEntry {
     }
 
     pub(crate) fn set_file_name_offset(&mut self, file_name_offset: u32) {
-        self.node_type_file_name_offset = (self.node_type_file_name_offset & 0xFF000000)
-            | (file_name_offset & 0x00FFFFFF);
+        self.node_type_file_name_offset =
+            (self.node_type_file_name_offset & 0xFF000000) | (file_name_offset & 0x00FFFFFF);
     }
 
     pub(crate) fn get_file_offset(&self, is_wii: bool) -> u64 {
         (self.file_offset_parent_dir as u64) << if is_wii { 2 } else { 0 }
     }
 
-    pub(crate) fn set_file_offset_parent_dir(&mut self, file_offset_parent_dir: u64, is_wii: bool) -> eyre::Result<()> {
+    pub(crate) fn set_file_offset_parent_dir(
+        &mut self,
+        file_offset_parent_dir: u64,
+        is_wii: bool,
+    ) -> eyre::Result<()> {
         if file_offset_parent_dir > ((u32::MAX as u64) << 2) as u64 {
             return Err(eyre::eyre!(
                 "File offset is too large [offset = 0x{:X}; max = 0x{:X}]",
@@ -137,7 +141,12 @@ impl FstEntry {
         self.file_size_next_dir_index = file_size_next_dir_index;
     }
 
-    pub(crate) fn new_file(file_name_offset: u32, file_offset: u64, file_size: u32, is_wii: bool) -> eyre::Result<Self> {
+    pub(crate) fn new_file(
+        file_name_offset: u32,
+        file_offset: u64,
+        file_size: u32,
+        is_wii: bool,
+    ) -> eyre::Result<Self> {
         let mut node = Self::default();
         node.set_node_type(FstNodeType::File);
         node.set_file_name_offset(file_name_offset);
@@ -146,7 +155,12 @@ impl FstEntry {
         Ok(node)
     }
 
-    pub(crate) fn new_directory(file_name_offset: u32, parent_dir: u64, next_dir_index: u32, is_wii: bool) -> eyre::Result<Self> {
+    pub(crate) fn new_directory(
+        file_name_offset: u32,
+        parent_dir: u64,
+        next_dir_index: u32,
+        is_wii: bool,
+    ) -> eyre::Result<Self> {
         let mut node = Self::default();
         node.set_node_type(FstNodeType::Directory);
         node.set_file_name_offset(file_name_offset);
@@ -221,8 +235,12 @@ impl FstNode {
 
     pub(crate) fn get_relative_file_name(&self) -> &str {
         match self {
-            Self::File { relative_file_name, .. } => relative_file_name,
-            Self::Directory { relative_file_name, .. } => relative_file_name,
+            Self::File {
+                relative_file_name, ..
+            } => relative_file_name,
+            Self::Directory {
+                relative_file_name, ..
+            } => relative_file_name,
         }
     }
 

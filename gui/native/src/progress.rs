@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use flume::Sender;
-use geckolib::{update::{UpdaterType, UpdaterBuilder}, UPDATER};
+use geckolib::{
+    update::{UpdaterBuilder, UpdaterType},
+    UPDATER,
+};
 use lazy_static::lazy_static;
 
 use crate::app::FromAppMsg;

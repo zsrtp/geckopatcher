@@ -1,6 +1,6 @@
 //! Based on http://www.gc-forever.com/yagcd/chap14.html#sec14.1
 
-use encoding_rs::{UTF_8, SHIFT_JIS};
+use encoding_rs::{SHIFT_JIS, UTF_8};
 
 const COLUMNS: usize = 24;
 const ROWS: usize = 8;

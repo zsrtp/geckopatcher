@@ -9,12 +9,16 @@ use geckolib::{
     },
     vfs::GeckoFS,
 };
+use lazy_static::lazy_static;
 #[cfg(feature = "progress")]
 use romhack::progress;
-use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref DEFAULT_ISO_HDR: Box<[u8]> = {let mut vec = Vec::from(b"RZDE01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x5D\x1C\x9E\xA3\x00\x00\x00\x00Test Wii ISO\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01".as_slice()); vec.extend(std::iter::repeat(0).take(0x39E)); vec.into_boxed_slice()};
+    static ref DEFAULT_ISO_HDR: Box<[u8]> = {
+        let mut vec = Vec::from(b"RZDE01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x5D\x1C\x9E\xA3\x00\x00\x00\x00Test Wii ISO\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01".as_slice());
+        vec.extend(std::iter::repeat(0).take(0x39E));
+        vec.into_boxed_slice()
+    };
 }
 
 struct DummyReaderWriter {}
@@ -138,7 +142,9 @@ fn main() -> color_eyre::eyre::Result<()> {
             0,
         ));
         fs.root_mut().add_file(geckolib::vfs::File::new(
-            geckolib::vfs::FileDataSource::Box(Arc::new(Mutex::new(vec![b't', b'e', b's', b't'].into_boxed_slice()))),
+            geckolib::vfs::FileDataSource::Box(Arc::new(Mutex::new(
+                vec![b't', b'e', b's', b't'].into_boxed_slice(),
+            ))),
             "test.txt",
             0,
             4,

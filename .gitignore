@@ -2,3 +2,5 @@ target
 **/*/target
 /.vscode/**/*
 **/*/dist
+*.patch
+*.iso

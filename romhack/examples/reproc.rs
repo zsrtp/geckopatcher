@@ -38,8 +38,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     let args = Args::parse();
 
     futures::executor::block_on(async {
-        let file = 
-            async_std::fs::File::open(args.source).await?;
+        let file = async_std::fs::File::open(args.source).await?;
         #[cfg(feature = "log")]
         let mut f;
         #[cfg(not(feature = "log"))]
