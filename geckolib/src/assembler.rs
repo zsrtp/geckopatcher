@@ -51,18 +51,16 @@ impl<'a> Assembler<'a> {
     fn parse_instruction(&self, line: &str) -> eyre::Result<Instruction> {
         let data;
 
-        if line.starts_with("bl ") {
-            let operand = &line[3..];
+        if let Some(operand) = line.strip_prefix("bl ") {
             let destination = self.resolve_symbol(operand)?;
             data = build_branch_instruction(self.program_counter, destination, false, true);
-        } else if line.starts_with("b ") {
-            let operand = &line[2..];
+        } else if let Some(operand) = line.strip_prefix("b ") {
             let destination = self.resolve_symbol(operand)?;
             data = build_branch_instruction(self.program_counter, destination, false, false);
-        } else if line.starts_with("u32 ") {
-            data = parse_u32_literal(&line[4..]).context("Couldn't parse the u32 literal")?;
-        } else if line.starts_with("lis ") {
-            let mut splits = line[4..].split(',').map(|s| s.trim());
+        } else if let Some(operand) = line.strip_prefix("u32 ") {
+            data = parse_u32_literal(operand).context("Couldn't parse the u32 literal")?;
+        } else if let Some(operand) = line.strip_prefix("lis ") {
+            let mut splits = operand.split(',').map(|s| s.trim());
             let register = splits
                 .next()
                 .ok_or_else(|| eyre::eyre!("Expected register"))?;

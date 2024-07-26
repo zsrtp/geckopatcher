@@ -466,20 +466,14 @@ fn relocate_and_collect<'a>(
         }
 
         if section_kind == SectionKind::TextSection {
-            for _ in 0..located_section_padding {
-                text_section.push(0);
-            }
+            text_section.extend(vec![0; located_section_padding as usize]);
             text_section.extend(section_slice);
         } else {
-            for _ in 0..located_section_padding {
-                data_section.push(0);
-            }
+            data_section.extend(vec![0; located_section_padding as usize]);
             if section_kind == SectionKind::DataSection {
                 data_section.extend(section_slice);
             } else {
-                for _ in 0..section.sh_size {
-                    data_section.push(0);
-                }
+                data_section.extend(vec![0; section.sh_size as usize]);
             }
         }
     }
