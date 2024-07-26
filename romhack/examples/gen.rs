@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use async_std::sync::Mutex;
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use geckolib::{
     iso::{
@@ -21,6 +18,7 @@ lazy_static! {
     };
 }
 
+#[derive(Debug, Clone, Default)]
 struct DummyReaderWriter {}
 
 impl AsyncRead for DummyReaderWriter {
@@ -76,7 +74,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     progress::init_cli_progress();
 
     async_std::task::block_on(async {
-        let out = {
+        let mut out = {
             let mut game_title = [0u8; 64];
             let title_string = "Test Wii ISO";
             game_title[..title_string.len()].copy_from_slice(title_string.as_bytes());
@@ -131,24 +129,19 @@ fn main() -> color_eyre::eyre::Result<()> {
             )
         };
 
-        let mut out = std::pin::pin!(out);
         let mut fs = GeckoFS::<DummyReaderWriter>::new();
 
         fs.sys_mut().add_file(geckolib::vfs::File::new(
-            geckolib::vfs::FileDataSource::Box(Arc::new(Mutex::new(DEFAULT_ISO_HDR.clone()))),
-            "iso.hdr",
-            0,
-            DEFAULT_ISO_HDR.len(),
-            0,
+            geckolib::vfs::FileDataSource::Box {
+                data: DEFAULT_ISO_HDR.clone(),
+                name: "uso.hdr".into(),
+            },
         ));
         fs.root_mut().add_file(geckolib::vfs::File::new(
-            geckolib::vfs::FileDataSource::Box(Arc::new(Mutex::new(
-                vec![b't', b'e', b's', b't'].into_boxed_slice(),
-            ))),
-            "test.txt",
-            0,
-            4,
-            0,
+            geckolib::vfs::FileDataSource::Box {
+                data: vec![b't', b'e', b's', b't'].into_boxed_slice(),
+                name: "test".into(),
+            },
         ));
         {
             let is_wii = out.get_type() == DiscType::Wii;

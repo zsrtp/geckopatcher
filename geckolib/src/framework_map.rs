@@ -57,7 +57,7 @@ pub fn create(
         writeln!(file)?;
 
         for line in str::from_utf8(original)?.lines() {
-            let line = regex.replace(&line, |c: &Captures| {
+            let line = regex.replace(line, |c: &Captures| {
                 let demangled = demangle_tww(&c[2]);
                 format!("{}{}{}", &c[1], demangled.unwrap_or(c[2].into()), &c[3])
             });

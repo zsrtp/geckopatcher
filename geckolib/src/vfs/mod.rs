@@ -840,7 +840,7 @@ impl<R> Node<R> for Directory<R> {
 }
 
 #[derive(Debug)]
-pub(crate) enum FileDataSource<R> {
+pub enum FileDataSource<R> {
     Reader { reader: DiscReader<R>, fst: FstNode },
     Box { data: Box<[u8]>, name: String },
 }
@@ -858,6 +858,10 @@ impl<R> FileDataSource<R> {
             Self::Reader { fst, .. } => fst.get_file_size().unwrap(),
             Self::Box { data, .. } => data.len(),
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -900,7 +904,7 @@ pub struct File<R> {
 }
 
 impl<R> File<R> {
-    pub(crate) fn new(data: FileDataSource<R>) -> Self {
+    pub fn new(data: FileDataSource<R>) -> Self {
         Self {
             status: Arc::new(std::sync::Mutex::new(FileStatus {
                 cursor: 0,

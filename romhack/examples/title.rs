@@ -1,9 +1,8 @@
 use std::io::SeekFrom;
 
 use async_std::path::PathBuf;
-use async_std::sync::{Arc, Mutex};
 use async_std::{
-    io::{prelude::*, BufReader},
+    io::prelude::*,
     task,
 };
 use clap::{Parser, ValueHint};
@@ -35,8 +34,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     let args = Args::parse();
 
     task::block_on(async {
-        let f =
-            BufReader::with_capacity(0x7C00 * 64 * 8, async_std::fs::File::open(args.file).await?);
+        let f = async_std::fs::File::open(args.file).await?;
         let mut f = DiscReader::new(f).await?;
         let is_wii = f.get_type() == DiscType::Wii;
 
@@ -53,7 +51,6 @@ fn main() -> color_eyre::eyre::Result<()> {
                 .expect("This game has no title")
         );
         {
-            let f = f;
             let mut fs = GeckoFS::parse(f).await?;
             let file = fs.sys_mut().get_file_mut("Start.dol")?;
             let size = file.seek(SeekFrom::End(0)).await? as usize;

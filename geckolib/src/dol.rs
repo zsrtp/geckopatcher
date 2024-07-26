@@ -97,7 +97,7 @@ async fn read_sections<R: AsyncRead + AsyncSeek + Unpin>(
             .await?
             .into_boxed_slice();
         let section = Section {
-            address: address,
+            address,
             data: section_data,
         };
         sections.push(section);
@@ -114,11 +114,11 @@ impl DolFile {
         let entry_point = read_u32(data, 0xe0).await?;
 
         Ok(DolFile {
-            text_sections: text_sections,
-            data_sections: data_sections,
-            bss_address: bss_address,
-            bss_size: bss_size,
-            entry_point: entry_point,
+            text_sections,
+            data_sections,
+            bss_address,
+            bss_size,
+            entry_point,
         })
     }
 
@@ -185,6 +185,12 @@ impl DolFile {
         }
 
         Ok(())
+    }
+}
+
+impl Default for DolHeader {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

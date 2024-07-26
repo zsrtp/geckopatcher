@@ -85,7 +85,7 @@ pub fn new(name: &str) -> eyre::Result<()> {
     use std::io::Write;
 
     let exit_code = Command::new("cargo")
-        .args(["new", "--lib", &name])
+        .args(["new", "--lib", name])
         .spawn()
         .context("Couldn't create the cargo project")?
         .wait()?;

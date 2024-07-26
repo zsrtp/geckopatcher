@@ -85,7 +85,7 @@ impl<'a> Assembler<'a> {
 
         Ok(Instruction {
             address: self.program_counter,
-            data: data,
+            data,
         })
     }
 

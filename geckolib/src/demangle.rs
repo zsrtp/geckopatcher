@@ -102,7 +102,7 @@ fn parse_count(text: &str) -> Result<(usize, &str), Cow<'static, str>> {
 
     let count = text
         .chars()
-        .take_while(|c| c.is_digit(10))
+        .take_while(|c| c.is_ascii_digit())
         .collect::<String>();
     text = &text[count.len()..];
     let count = count.parse().map_err(|_| "Couldn't parse count")?;
@@ -262,7 +262,7 @@ fn base_name(function: &str) -> (&str, Option<&str>) {
 pub fn demangle(function: &str) -> Result<Cow<str>, Cow<'static, str>> {
     fn extend_by_params(signature: &mut String, typ: Type) -> Result<(), Cow<'static, str>> {
         if let Type::Function(is_const, return_value, params) = typ {
-            signature.push_str("(");
+            signature.push('(');
             for (i, param) in params.iter().enumerate() {
                 if param == &Type::Normal(false, "void") {
                     continue;
@@ -272,7 +272,7 @@ pub fn demangle(function: &str) -> Result<Cow<str>, Cow<'static, str>> {
                 }
                 signature.push_str(&param.to_string());
             }
-            signature.push_str(")");
+            signature.push(')');
 
             if return_value.as_ref() != &Type::Normal(false, "void") {
                 signature.push_str(" -> ");

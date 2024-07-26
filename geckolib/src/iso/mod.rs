@@ -28,7 +28,7 @@ pub mod consts {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
 #[repr(u8)]
-pub(crate) enum FstNodeType {
+pub enum FstNodeType {
     #[default]
     File = 0,
     Directory = 1,
@@ -51,7 +51,7 @@ impl TryFrom<u8> for FstNodeType {
 
 #[derive(Debug, Clone, Default)]
 #[repr(C)]
-pub(crate) struct FstEntry {
+pub struct FstEntry {
     node_type_file_name_offset: u32,
     file_offset_parent_dir: u32,
     file_size_next_dir_index: u32,
@@ -87,7 +87,7 @@ impl TryFrom<&[u8]> for FstEntry {
 }
 
 impl FstEntry {
-    pub(crate) fn pack(&self) -> [u8; Self::BLOCK_SIZE] {
+    pub fn pack(&self) -> [u8; Self::BLOCK_SIZE] {
         let mut buf = [0u8; Self::BLOCK_SIZE];
         buf[0..4].copy_from_slice(&self.node_type_file_name_offset.to_be_bytes());
         buf[4..8].copy_from_slice(&self.file_offset_parent_dir.to_be_bytes());
@@ -95,34 +95,34 @@ impl FstEntry {
         buf
     }
 
-    pub(crate) fn get_node_type(&self) -> FstNodeType {
+    pub fn get_node_type(&self) -> FstNodeType {
         FstNodeType::try_from((self.node_type_file_name_offset >> 24) as u8).unwrap()
     }
 
-    pub(crate) fn set_node_type(&mut self, node_type: FstNodeType) {
+    pub fn set_node_type(&mut self, node_type: FstNodeType) {
         self.node_type_file_name_offset =
             (self.node_type_file_name_offset & 0x00FFFFFF) | ((node_type as u32) << 24);
     }
 
-    pub(crate) fn get_file_name_offset(&self) -> u32 {
+    pub fn get_file_name_offset(&self) -> u32 {
         self.node_type_file_name_offset & 0x00FFFFFF
     }
 
-    pub(crate) fn set_file_name_offset(&mut self, file_name_offset: u32) {
+    pub fn set_file_name_offset(&mut self, file_name_offset: u32) {
         self.node_type_file_name_offset =
             (self.node_type_file_name_offset & 0xFF000000) | (file_name_offset & 0x00FFFFFF);
     }
 
-    pub(crate) fn get_file_offset(&self, is_wii: bool) -> u64 {
+    pub fn get_file_offset(&self, is_wii: bool) -> u64 {
         (self.file_offset_parent_dir as u64) << if is_wii { 2 } else { 0 }
     }
 
-    pub(crate) fn set_file_offset_parent_dir(
+    pub fn set_file_offset_parent_dir(
         &mut self,
         file_offset_parent_dir: u64,
         is_wii: bool,
     ) -> eyre::Result<()> {
-        if file_offset_parent_dir > ((u32::MAX as u64) << 2) as u64 {
+        if file_offset_parent_dir > ((u32::MAX as u64) << 2) {
             return Err(eyre::eyre!(
                 "File offset is too large [offset = 0x{:X}; max = 0x{:X}]",
                 file_offset_parent_dir,
@@ -133,15 +133,15 @@ impl FstEntry {
         Ok(())
     }
 
-    pub(crate) fn get_file_size_next_dir_index(&self) -> u32 {
+    pub fn get_file_size_next_dir_index(&self) -> u32 {
         self.file_size_next_dir_index
     }
 
-    pub(crate) fn set_file_size_next_dir_index(&mut self, file_size_next_dir_index: u32) {
+    pub fn set_file_size_next_dir_index(&mut self, file_size_next_dir_index: u32) {
         self.file_size_next_dir_index = file_size_next_dir_index;
     }
 
-    pub(crate) fn new_file(
+    pub fn new_file(
         file_name_offset: u32,
         file_offset: u64,
         file_size: u32,
@@ -155,7 +155,7 @@ impl FstEntry {
         Ok(node)
     }
 
-    pub(crate) fn new_directory(
+    pub fn new_directory(
         file_name_offset: u32,
         parent_dir: u64,
         next_dir_index: u32,
@@ -171,7 +171,7 @@ impl FstEntry {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum FstNode {
+pub enum FstNode {
     File {
         // Name of the file
         relative_file_name: String,
@@ -201,7 +201,7 @@ impl Default for FstNode {
 }
 
 impl FstNode {
-    pub(crate) fn from_fstnode(node: &FstEntry, file_name_table: &[u8]) -> eyre::Result<Self> {
+    pub fn from_fstnode(node: &FstEntry, file_name_table: &[u8]) -> eyre::Result<Self> {
         // Get the file name
         let pos = (node.node_type_file_name_offset & 0x00FFFFFF) as usize;
         let mut end = pos;
@@ -233,7 +233,7 @@ impl FstNode {
         }
     }
 
-    pub(crate) fn get_relative_file_name(&self) -> &str {
+    pub fn get_relative_file_name(&self) -> &str {
         match self {
             Self::File {
                 relative_file_name, ..
@@ -244,43 +244,43 @@ impl FstNode {
         }
     }
 
-    pub(crate) fn get_file_offset(&self) -> Option<u64> {
+    pub fn get_file_offset(&self) -> Option<u64> {
         match self {
             Self::File { file_offset, .. } => Some(*file_offset),
             _ => None,
         }
     }
 
-    pub(crate) fn get_file_size(&self) -> Option<usize> {
+    pub fn get_file_size(&self) -> Option<usize> {
         match self {
             Self::File { file_size, .. } => Some(*file_size),
             _ => None,
         }
     }
 
-    pub(crate) fn get_parent_dir(&self) -> Option<u64> {
+    pub fn get_parent_dir(&self) -> Option<u64> {
         match self {
             Self::Directory { parent_dir, .. } => Some(*parent_dir),
             _ => None,
         }
     }
 
-    pub(crate) fn get_next_dir_index(&self) -> Option<usize> {
+    pub fn get_next_dir_index(&self) -> Option<usize> {
         match self {
             Self::Directory { next_dir_index, .. } => Some(*next_dir_index),
             _ => None,
         }
     }
 
-    pub(crate) fn is_file(&self) -> bool {
+    pub fn is_file(&self) -> bool {
         matches!(self, Self::File { .. })
     }
 
-    pub(crate) fn is_directory(&self) -> bool {
+    pub fn is_directory(&self) -> bool {
         matches!(self, Self::Directory { .. })
     }
 
-    pub(crate) fn get_relative_file_name_mut(&mut self) -> &mut String {
+    pub fn get_relative_file_name_mut(&mut self) -> &mut String {
         match self {
             Self::File {
                 relative_file_name, ..
@@ -291,28 +291,28 @@ impl FstNode {
         }
     }
 
-    pub(crate) fn get_file_offset_mut(&mut self) -> Option<&mut u64> {
+    pub fn get_file_offset_mut(&mut self) -> Option<&mut u64> {
         match self {
             Self::File { file_offset, .. } => Some(file_offset),
             _ => None,
         }
     }
 
-    pub(crate) fn get_file_size_mut(&mut self) -> Option<&mut usize> {
+    pub fn get_file_size_mut(&mut self) -> Option<&mut usize> {
         match self {
             Self::File { file_size, .. } => Some(file_size),
             _ => None,
         }
     }
 
-    pub(crate) fn get_parent_dir_mut(&mut self) -> Option<&mut u64> {
+    pub fn get_parent_dir_mut(&mut self) -> Option<&mut u64> {
         match self {
             Self::Directory { parent_dir, .. } => Some(parent_dir),
             _ => None,
         }
     }
 
-    pub(crate) fn get_next_dir_index_mut(&mut self) -> Option<&mut usize> {
+    pub fn get_next_dir_index_mut(&mut self) -> Option<&mut usize> {
         match self {
             Self::Directory { next_dir_index, .. } => Some(next_dir_index),
             _ => None,

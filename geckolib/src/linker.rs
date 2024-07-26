@@ -13,7 +13,7 @@ where
 {
     let reloc_table = reloc_table_for_section(section_index, elf);
     for relocation in reloc_table {
-        let symbol_index = relocation.r_sym as usize;
+        let symbol_index = relocation.r_sym;
         f(symbol_index);
     }
 }
@@ -22,9 +22,9 @@ fn reloc_table_for_section(section_index: usize, elf: &Elf) -> Vec<Reloc> {
     elf.shdr_relocs
         .iter()
         .find(|&&(reloc_index, _)| {
-            section_index == elf.section_headers[reloc_index as usize].sh_info as usize
+            section_index == elf.section_headers[reloc_index].sh_info as usize
         })
-        .map_or(Vec::new(), |&(_, ref r)| r.to_vec())
+        .map_or(Vec::new(), |(_, r)| r.to_vec())
 }
 
 fn function_symbols_for_section<'a>(
@@ -34,7 +34,7 @@ fn function_symbols_for_section<'a>(
     Box::new(
         elf.syms
             .iter()
-            .filter(move |sym| section_index == sym.st_shndx as usize && sym.is_function()),
+            .filter(move |sym| section_index == sym.st_shndx && sym.is_function()),
     )
 }
 
@@ -172,7 +172,7 @@ fn traverse_archive<'a>(
         };
 
         let member = archive.get(member_name).unwrap();
-        let elf_buf = &archive_buf[member.offset as usize..][..member.header.size as usize];
+        let elf_buf = &archive_buf[member.offset as usize..][..member.header.size];
         let elf = parsed_elfs
             .entry((archive_index, member_name))
             .or_insert_with(|| Elf::parse(elf_buf).unwrap());
@@ -187,7 +187,7 @@ fn traverse_archive<'a>(
 
         while let Some(symbol_index) = symbols_to_visit.pop() {
             let symbol = elf.syms.get(symbol_index).unwrap();
-            let section_index = symbol.st_shndx as usize;
+            let section_index = symbol.st_shndx;
             let name_index = symbol.st_name;
             let name = elf.strtab.get_at(name_index).unwrap();
 
@@ -195,23 +195,21 @@ fn traverse_archive<'a>(
 
             if symbol.is_import() && section.sh_type == section_header::SHT_NULL {
                 archive_symbols_to_visit.push(name.to_string());
-            } else {
-                if visited_sections.insert(SectionInfo {
-                    archive_index,
-                    member_name,
-                    section_index,
-                    kind: if section.is_executable() {
-                        SectionKind::TextSection
-                    } else if section.sh_type == section_header::SHT_NOBITS {
-                        SectionKind::BlockStartedBySymbol
-                    } else {
-                        SectionKind::DataSection
-                    },
-                }) {
-                    symbols_referenced_in_section(section_index, &elf, |symbol_index| {
-                        symbols_to_visit.push(symbol_index);
-                    });
-                }
+            } else if visited_sections.insert(SectionInfo {
+                archive_index,
+                member_name,
+                section_index,
+                kind: if section.is_executable() {
+                    SectionKind::TextSection
+                } else if section.sh_type == section_header::SHT_NOBITS {
+                    SectionKind::BlockStartedBySymbol
+                } else {
+                    SectionKind::DataSection
+                },
+            }) {
+                symbols_referenced_in_section(section_index, elf, |symbol_index| {
+                    symbols_to_visit.push(symbol_index);
+                });
             }
         }
     }
@@ -323,7 +321,7 @@ fn relocate_and_collect<'a>(
         let archive = archives[archive_index].as_ref().unwrap();
         let archive_buf = &archive_bufs[archive_index];
         let member = archive.get(member_name).unwrap();
-        let elf_buf = &archive_buf[member.offset as usize..][..member.header.size as usize];
+        let elf_buf = &archive_buf[member.offset as usize..][..member.header.size];
 
         let elf = &parsed_elfs[&(archive_index, member_name)];
         let section = &elf.section_headers[section_index];
@@ -334,15 +332,15 @@ fn relocate_and_collect<'a>(
             &[]
         };
 
-        let reloc_table = reloc_table_for_section(section_index, &elf);
+        let reloc_table = reloc_table_for_section(section_index, elf);
         if !reloc_table.is_empty() {
             section_buf = section_slice.to_owned();
 
             for reloc in reloc_table {
                 let instruction = &mut section_buf[reloc.r_offset as usize..][..4];
-                let symbol_index = reloc.r_sym as usize;
+                let symbol_index = reloc.r_sym;
                 let symbol = elf.syms.get(symbol_index).unwrap();
-                let symbol_section_index = symbol.st_shndx as usize;
+                let symbol_section_index = symbol.st_shndx;
                 let (section_address, symbol_offset) = layout
                     .lookup
                     .get(&LookupKey {
@@ -372,7 +370,7 @@ fn relocate_and_collect<'a>(
                                 let name = elf.strtab.get_at(name_index).unwrap();
                                 if name == archive_symbol_name {
                                     let symbol = elf.syms.get(symbol_index).unwrap();
-                                    let section_index = symbol.st_shndx as usize;
+                                    let section_index = symbol.st_shndx;
                                     let located_section_index = layout.lookup[&LookupKey {
                                         archive_index,
                                         member_name,
@@ -390,17 +388,17 @@ fn relocate_and_collect<'a>(
                                 let _ = updater.set_message(format!(
                                     "Game Symbol {} at addr: {:08x}",
                                     archive_symbol_name,
-                                    (located_section_address as u32)
+                                    located_section_address
                                         .wrapping_add(reloc.r_offset as u32)
                                 ));
                             }
                             info!(
                                 "Game Symbol {} at addr: {:08x}",
                                 archive_symbol_name,
-                                (located_section_address as u32)
+                                located_section_address
                                     .wrapping_add(reloc.r_offset as u32)
                             );
-                            return (prelinked_symbols[archive_symbol_name], 0);
+                            (prelinked_symbols[archive_symbol_name], 0)
                         }
                     });
 
@@ -413,7 +411,7 @@ fn relocate_and_collect<'a>(
                 let a = reloc.r_addend.unwrap_or(0) as u32;
                 // P -> getVA(Rel.Offset)
                 // getVa(Offset) => (Out ? Out->Addr : 0) + getOffset(Offset)
-                let p = (located_section_address as u32).wrapping_add(reloc.r_offset as u32);
+                let p = located_section_address.wrapping_add(reloc.r_offset as u32);
 
                 // The enum can be found here:
                 // https://github.com/vocho/openqnx/blob/master/trunk/lib/elf/public/sys/elf_ppc.h#L50
@@ -519,7 +517,7 @@ pub fn link<'a>(
     let (text_section, data_section) = relocate_and_collect(
         &layout,
         &archives,
-        &archive_bufs,
+        archive_bufs,
         &parsed_elfs,
         prelinked_symbols,
     );
@@ -548,7 +546,7 @@ pub fn link<'a>(
                 let section_index = s.section_info.section_index;
                 let elf = &parsed_elfs[&(s.section_info.archive_index, s.section_info.member_name)];
                 let section = &elf.section_headers[section_index];
-                let section_name = elf.shdr_strtab.get_at(section.sh_name as usize).unwrap();
+                let section_name = elf.shdr_strtab.get_at(section.sh_name).unwrap();
 
                 let sym_offset =
                     if let Some(sym) = function_symbols_for_section(section_index, elf).next() {
@@ -561,7 +559,7 @@ pub fn link<'a>(
                     address: s.address,
                     len: s.len,
                     member_name: s.section_info.member_name,
-                    section_name: section_name,
+                    section_name,
                     kind: s.section_info.kind,
                     sym_offset,
                 }
