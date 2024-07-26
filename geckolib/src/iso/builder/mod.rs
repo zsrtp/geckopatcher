@@ -1,12 +1,8 @@
 #[cfg(not(target_os = "unknown"))]
 use async_std::{fs::{read, OpenOptions}, io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek}};
-#[cfg(not(target_os = "unknown"))]
-use async_std::sync::Mutex;
 use eyre::Context;
 #[cfg(not(target_os = "unknown"))]
 use std::collections::HashMap;
-#[cfg(not(target_os = "unknown"))]
-use std::sync::Arc;
 #[cfg(not(target_os = "unknown"))]
 use std::{
     fs::File as StdFile,
@@ -86,17 +82,17 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
         }
     } else {
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message(format!("{}", iso_path))?;
+            updater.set_message(iso_path.to_string())?;
         }
 
         let mut file = files.get_file(actual_path)?;
         if let Some(f) = iso
-            .resolve_node_mut(&iso_path)
+            .resolve_node_mut(iso_path)
             .and_then(|n| n.as_file_mut())
         {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
-            f.set_data(buffer.into_boxed_slice());
+            f.set_data(buffer.into_boxed_slice())?;
         } else {
             let mut p = PathBuf::from(iso_path);
             let file_name = p
@@ -109,10 +105,7 @@ fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
             let mut data = Vec::new();
             file.read_to_end(&mut data)?;
             dir.add_file(vfs::File::new(
-                vfs::FileDataSource::Box(Arc::new(Mutex::new(data.into_boxed_slice()))),
-                file_name,
-                0,
-                0,
+                vfs::FileDataSource::Box { data: data.into_boxed_slice(), name: file_name },
             ));
         }
     }
@@ -263,7 +256,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
                 patch_instructions(original, linked.dol, &instructions)
                     .context("Couldn't patch the game")?
                     .into(),
-            );
+            )?;
         }
 
         if wii_disc_info.is_none() {
@@ -306,7 +299,7 @@ impl<R: Send + Read + Seek> Builder for IsoBuilder<R> {
                     };
                     banner.image.copy_from_slice(&image);
                 }
-                banner_file.set_data(banner.to_bytes(is_japanese).to_vec().into());
+                banner_file.set_data(banner.to_bytes(is_japanese).to_vec().into())?;
             } else {
                 warn!("No banner to patch");
                 if let Ok(mut updater) = UPDATER.lock() {
@@ -462,7 +455,7 @@ impl Builder for PatchBuilder {
                 write_file_to_zip(
                     &mut zip,
                     "libcompiled.a",
-                    &async_std::fs::read(libs.get(0).unwrap()).await?,
+                    &async_std::fs::read(libs.first().unwrap()).await?,
                 )?;
                 libs.remove(0);
             }

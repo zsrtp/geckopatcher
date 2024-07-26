@@ -10,206 +10,14 @@ use geckolib::iso::write::DiscWriter;
 use geckolib::vfs::GeckoFS;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
+use web_gui_patcher::io::WebFile;
 
 #[cfg(feature = "debug_alloc")]
 #[global_allocator]
 static ALLOC: wasm_tracing_allocator::WasmTracingAllocator<std::alloc::System> =
     wasm_tracing_allocator::WasmTracingAllocator(std::alloc::System);
 
-#[derive(Debug)]
-struct WebFileState {
-    handle: web_sys::FileSystemSyncAccessHandle,
-    cursor: u64,
-}
-
-#[derive(Debug, Clone)]
-struct WebFile {
-    state: Arc<Mutex<WebFileState>>,
-}
-
-impl WebFile {
-    fn new(handle: web_sys::FileSystemSyncAccessHandle) -> Self {
-        Self {
-            state: Arc::new(Mutex::new(WebFileState { handle, cursor: 0 })),
-        }
-    }
-}
-
-impl async_std::io::Read for WebFile {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
-            Some(guard) => guard,
-            None => {
-                cx.waker().wake_by_ref();
-                return std::task::Poll::Pending;
-            }
-        };
-        if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
-        };
-        let mut options = web_sys::FileSystemReadWriteOptions::new();
-        options.at(state.cursor as f64);
-        match state.handle.read_with_u8_array_and_options(buf, &options) {
-            Ok(n) => {
-                state.cursor += n as u64;
-                std::task::Poll::Ready(Ok(n as usize))
-            }
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
-        }
-    }
-}
-
-impl async_std::io::Seek for WebFile {
-    fn poll_seek(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        pos: std::io::SeekFrom,
-    ) -> std::task::Poll<std::io::Result<u64>> {
-        let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
-            Some(guard) => guard,
-            None => {
-                cx.waker().wake_by_ref();
-                return std::task::Poll::Pending;
-            }
-        };
-        if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
-        };
-        let len = match state.handle.get_size() {
-            Ok(size) => size as u64,
-            Err(err) => {
-                return std::task::Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{err:?}"),
-                )))
-            }
-        };
-        match pos {
-            std::io::SeekFrom::Start(pos) => {
-                if pos > len {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor past end of stream",
-                    )));
-                }
-                state.cursor = pos;
-            }
-            std::io::SeekFrom::End(pos) => {
-                let new_pos = len as i64 + pos;
-                if !(0..=len as i64).contains(&new_pos) {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor outside of stream range",
-                    )));
-                }
-                state.cursor = new_pos as u64;
-            }
-            std::io::SeekFrom::Current(pos) => {
-                let new_pos = state.cursor as i64 + pos;
-                if !(0..=len as i64).contains(&new_pos) {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor outside of stream range",
-                    )));
-                }
-                state.cursor = new_pos as u64;
-            }
-        };
-        std::task::Poll::Ready(Ok(state.cursor))
-    }
-}
-
-impl async_std::io::Write for WebFile {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
-            Some(guard) => guard,
-            None => {
-                cx.waker().wake_by_ref();
-                return std::task::Poll::Pending;
-            }
-        };
-        if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
-        };
-        let mut options = web_sys::FileSystemReadWriteOptions::new();
-        options.at(state.cursor as f64);
-        match state
-            .handle
-            .write_with_u8_array_and_options(buf, &options)
-        {
-            Ok(n) => {
-                state.cursor += n as u64;
-                std::task::Poll::Ready(Ok(n as usize))
-            }
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
-        }
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        let state = match this.state.try_lock_arc() {
-            Some(guard) => guard,
-            None => {
-                cx.waker().wake_by_ref();
-                return std::task::Poll::Pending;
-            }
-        };
-        match state.handle.flush() {
-            Ok(_) => std::task::Poll::Ready(Ok(())),
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
-        }
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let this = self.get_mut();
-        let state = match this.state.try_lock_arc() {
-            Some(guard) => guard,
-            None => {
-                cx.waker().wake_by_ref();
-                return std::task::Poll::Pending;
-            }
-        };
-        state.handle.close();
-        std::task::Poll::Ready(Ok(()))
-    }
-}
-
-async fn reproc<R: AsyncRead + AsyncSeek + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
+async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
     file: R,
     save: W,
 ) -> Result<(), eyre::Error> {
@@ -294,11 +102,11 @@ pub async extern "C" fn run_patch(
 
     let _ = patch_access.flush();
     let _ = file_access.flush();
-    let _ = save_access.flush();
+    // let _ = save_access.flush();
 
     patch_access.close();
     file_access.close();
-    save_access.close();
+    // save_access.close();
 
     Ok(())
 }

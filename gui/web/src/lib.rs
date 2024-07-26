@@ -14,6 +14,7 @@ use web_sys::{File, HtmlInputElement, MessageEvent, Worker};
 use yew::prelude::*;
 
 pub mod progress;
+pub mod io;
 
 #[wasm_bindgen]
 extern "C" {

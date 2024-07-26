@@ -26,20 +26,16 @@ use super::disc::{
 };
 
 #[derive(Debug, Clone, Default)]
-enum WiiDiscWriterWriteState {
+enum WiiDiscWriterState {
     #[default]
     /// Setups the data to be written
-    Setup,
+    Init,
     /// Parse the data to be written
     Parse(u64, usize, Vec<u8>),
     /// Writing the accumulated data
     Writing(u64, usize, Vec<u8>, Vec<u8>),
-}
 
-#[derive(Debug, Clone, Default)]
-enum WiiDiscWriterCloseState {
-    #[default]
-    Init,
+    // States for the closing process
     SeekToLastGroup(u64, Vec<u8>),
     WriteLastGroup(u64, Vec<u8>),
 
@@ -51,20 +47,19 @@ enum WiiDiscWriterCloseState {
 }
 
 #[derive(Debug)]
-struct WiiDiscWriterState {
+struct WiiDiscWriterStatus {
     initialized: bool,
     hashes: Vec<[u8; consts::WII_HASH_SIZE]>,
     // Virtual cursor which tracks where in the decrypted partition we are writing from.
     cursor: u64,
-    state: WiiDiscWriterWriteState,
+    state: WiiDiscWriterState,
     group: Box<WiiGroup>,
-    finalize_state: WiiDiscWriterCloseState,
 }
 
 #[derive(Debug)]
 pub struct WiiDiscWriter<W> {
     writer: W,
-    state: Arc<Mutex<WiiDiscWriterState>>,
+    status: Arc<Mutex<WiiDiscWriterStatus>>,
     pub disc: WiiDisc,
 }
 
@@ -75,7 +70,7 @@ where
     fn clone(&self) -> Self {
         Self {
             writer: self.writer.clone(),
-            state: self.state.clone(),
+            status: self.status.clone(),
             disc: self.disc.clone(),
         }
     }
@@ -215,12 +210,11 @@ where
     pub fn new(disc: WiiDisc, writer: W) -> Self {
         Self {
             writer,
-            state: Arc::new(Mutex::new(WiiDiscWriterState {
+            status: Arc::new(Mutex::new(WiiDiscWriterStatus {
                 initialized: false,
                 cursor: 0,
-                state: WiiDiscWriterWriteState::default(),
+                state: WiiDiscWriterState::default(),
                 group: Box::new(WiiGroup::default()),
-                finalize_state: WiiDiscWriterCloseState::default(),
                 hashes: Vec::new(),
             })),
             disc,
@@ -230,7 +224,7 @@ where
     pub async fn init(self: &mut Pin<&mut Self>) -> Result<()> {
         crate::trace!("Writing Wii Disc and Partition headers");
         let this = self;
-        let mut state = this.state.lock_arc().await;
+        let mut state = this.status.lock_arc().await;
 
         if state.initialized {
             return Ok(());
@@ -381,7 +375,7 @@ where
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut state_guard = match this.state.try_lock_arc() {
+        let mut state_guard = match this.status.try_lock_arc() {
             Some(state) => state,
             None => {
                 cx.waker().wake_by_ref();
@@ -389,7 +383,7 @@ where
             }
         };
         let part_idx = this.disc.partitions.data_idx;
-        if let WiiDiscWriterWriteState::Setup = state_guard.state {
+        if let WiiDiscWriterState::Init = state_guard.state {
             crate::trace!("Pooling WiiDiscWriter for write ({} byte(s))", buf.len());
         }
         // If the requested size is 0, or if we are done reading, return without changing buf.
@@ -405,7 +399,7 @@ where
         let start_block_idx_in_group = start_blk_idx % 64;
         let end_group_idx = end_blk_idx / 64;
         let end_block_idx_in_group = end_blk_idx % 64;
-        if let WiiDiscWriterWriteState::Setup = state_guard.state {
+        if let WiiDiscWriterState::Init = state_guard.state {
             crate::trace!(
                 "Writing data from 0x{:08X} to 0x{:08X} (spanning {} block(s), from {} to {})",
                 vstart,
@@ -432,8 +426,8 @@ where
 
         let state = std::mem::take(&mut state_guard.state);
         match state {
-            WiiDiscWriterWriteState::Setup => {
-                state_guard.state = WiiDiscWriterWriteState::Parse(
+            WiiDiscWriterState::Init => {
+                state_guard.state = WiiDiscWriterState::Parse(
                     state_guard.cursor,
                     start_group_idx,
                     buf.to_vec(),
@@ -441,7 +435,7 @@ where
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterWriteState::Parse(mut cursor, group_idx, in_buf) => {
+            WiiDiscWriterState::Parse(mut cursor, group_idx, in_buf) => {
                 let start_blk = std::cmp::max(
                     start_group_idx * 64 + start_block_idx_in_group,
                     group_idx * 64,
@@ -499,7 +493,7 @@ where
                     );
                     encrypt_group(&mut state_guard.group, part_key);
 
-                    state_guard.state = WiiDiscWriterWriteState::Writing(
+                    state_guard.state = WiiDiscWriterState::Writing(
                         cursor,
                         group_idx,
                         state_guard.group.to_vec(),
@@ -513,16 +507,16 @@ where
                     // We are in the middle of a group. We need to read the rest of the group.
                     cursor += in_buf.len() as u64;
                     state_guard.cursor = cursor;
-                    state_guard.state = WiiDiscWriterWriteState::Setup;
+                    state_guard.state = WiiDiscWriterState::Init;
                     Poll::Ready(Ok(buf.len()))
                 }
             }
-            WiiDiscWriterWriteState::Writing(mut cursor, group_idx, group_buf, curr_buf) => {
+            WiiDiscWriterState::Writing(mut cursor, group_idx, group_buf, curr_buf) => {
                 crate::trace!("Writing group #{}", group_idx);
                 let n_written = match pin!(&mut this.writer).poll_write(cx, &group_buf) {
                     Poll::Ready(result) => result?,
                     Poll::Pending => {
-                        state_guard.state = WiiDiscWriterWriteState::Writing(
+                        state_guard.state = WiiDiscWriterState::Writing(
                             cursor, group_idx, group_buf, curr_buf,
                         );
                         return Poll::Pending;
@@ -530,7 +524,7 @@ where
                 };
                 crate::trace!("Writing succeeded");
                 if n_written < group_buf.len() {
-                    state_guard.state = WiiDiscWriterWriteState::Writing(
+                    state_guard.state = WiiDiscWriterState::Writing(
                         cursor,
                         group_idx,
                         group_buf.split_at(n_written).1.to_vec(),
@@ -550,16 +544,23 @@ where
                         // The write is done.
                         crate::trace!("Write done at block #{}", group_idx);
                         state_guard.cursor = cursor;
-                        state_guard.state = WiiDiscWriterWriteState::Setup;
+                        state_guard.state = WiiDiscWriterState::Init;
                         Poll::Ready(Ok(buf.len()))
                     } else {
                         // We need to write the rest of the buffer
                         state_guard.state =
-                            WiiDiscWriterWriteState::Parse(cursor, group_idx + 1, curr_buf);
+                            WiiDiscWriterState::Parse(cursor, group_idx + 1, curr_buf);
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     }
                 }
+            }
+            _ => {
+                crate::error!("Unexpected state: {:?}", state);
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Unexpected state",
+                )))
             }
         }
     }
@@ -577,25 +578,25 @@ where
     ) -> Poll<std::io::Result<()>> {
         crate::debug!("poll_close of WiiDiscWriter");
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
-            Some(state) => state,
+        let mut status = match this.status.try_lock_arc() {
+            Some(status) => status,
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending;
             }
         };
         let part_idx = this.disc.partitions.data_idx;
-        let finalize_state = std::mem::take(&mut state.finalize_state);
+        let state = std::mem::take(&mut status.state);
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.tick();
         }
-        match finalize_state {
-            WiiDiscWriterCloseState::Init => {
+        match state {
+            WiiDiscWriterState::Init => {
                 crate::trace!("WiiDiscWriterFinalizeState::Init");
                 // Align the encrypted data size to 21 bits
                 this.disc.partitions.partitions[part_idx].header.data_size =
-                    align_addr(to_raw_addr(state.cursor), 21);
+                    align_addr(to_raw_addr(status.cursor), 21);
 
                 // Hash and encrypt the last group
                 let n_group = this.disc.partitions.partitions[part_idx].header.data_size
@@ -605,23 +606,23 @@ where
                     / consts::WII_SECTOR_SIZE as u64
                     / 64;
                 crate::trace!("Hashing and encrypting group #{}", group_idx);
-                if state.hashes.len() <= group_idx as usize {
-                    state
+                if status.hashes.len() <= group_idx as usize {
+                    status
                         .hashes
                         .resize(group_idx as usize + 1, [0u8; consts::WII_HASH_SIZE]);
                 }
-                let group_hash = hash_group(&mut state.group);
-                state.hashes[group_idx as usize].copy_from_slice(&group_hash);
+                let group_hash = hash_group(&mut status.group);
+                status.hashes[group_idx as usize].copy_from_slice(&group_hash);
                 let part_key =
                     decrypt_title_key(&this.disc.partitions.partitions[part_idx].header.ticket);
-                encrypt_group(&mut state.group, part_key);
+                encrypt_group(&mut status.group, part_key);
 
-                state.finalize_state =
-                    if state.cursor % (consts::WII_SECTOR_DATA_SIZE as u64 * 64) != 0 {
-                        WiiDiscWriterCloseState::SeekToLastGroup(n_group - 1, state.group.to_vec())
+                status.state =
+                    if status.cursor % (consts::WII_SECTOR_DATA_SIZE as u64 * 64) != 0 {
+                        WiiDiscWriterState::SeekToLastGroup(n_group - 1, status.group.to_vec())
                     } else {
-                        let hashes = state.hashes.clone();
-                        WiiDiscWriterCloseState::SeekToPartHeader(prepare_header(
+                        let hashes = status.hashes.clone();
+                        WiiDiscWriterState::SeekToPartHeader(prepare_header(
                             &mut this.disc.partitions.partitions[part_idx],
                             &hashes,
                         ))
@@ -629,7 +630,7 @@ where
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterCloseState::SeekToLastGroup(group_idx, group_buf) => {
+            WiiDiscWriterState::SeekToLastGroup(group_idx, group_buf) => {
                 crate::trace!(
                     "WiiDiscWriterFinalizeState::SeekToLastGroup(group_idx=0x{:08X})",
                     group_idx
@@ -644,16 +645,16 @@ where
                     .is_pending()
                 {
                     crate::trace!("Pending...");
-                    state.finalize_state =
-                        WiiDiscWriterCloseState::SeekToLastGroup(group_idx, group_buf);
+                    status.state =
+                        WiiDiscWriterState::SeekToLastGroup(group_idx, group_buf);
                     return Poll::Pending;
                 }
-                state.finalize_state =
-                    WiiDiscWriterCloseState::WriteLastGroup(group_idx, group_buf);
+                status.state =
+                    WiiDiscWriterState::WriteLastGroup(group_idx, group_buf);
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterCloseState::WriteLastGroup(group_idx, group_buf) => {
+            WiiDiscWriterState::WriteLastGroup(group_idx, group_buf) => {
                 crate::trace!(
                     "WiiDiscWriterFinalizeState::WriteLastGroup(group_idx=0x{:08X})",
                     group_idx
@@ -662,19 +663,19 @@ where
                     Poll::Ready(result) => result?,
                     Poll::Pending => {
                         crate::trace!("Pending...");
-                        state.finalize_state =
-                            WiiDiscWriterCloseState::WriteLastGroup(group_idx, group_buf);
+                        status.state =
+                            WiiDiscWriterState::WriteLastGroup(group_idx, group_buf);
                         return Poll::Pending;
                     }
                 };
-                state.finalize_state = if n_written < group_buf.len() {
-                    WiiDiscWriterCloseState::WriteLastGroup(
+                status.state = if n_written < group_buf.len() {
+                    WiiDiscWriterState::WriteLastGroup(
                         group_idx,
                         group_buf.split_at(n_written).1.to_vec(),
                     )
                 } else {
-                    let hashes = state.hashes.clone();
-                    WiiDiscWriterCloseState::SeekToPartHeader(prepare_header(
+                    let hashes = status.hashes.clone();
+                    WiiDiscWriterState::SeekToPartHeader(prepare_header(
                         &mut this.disc.partitions.partitions[part_idx],
                         &hashes,
                     ))
@@ -682,7 +683,7 @@ where
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterCloseState::SeekToPartHeader(buf) => {
+            WiiDiscWriterState::SeekToPartHeader(buf) => {
                 crate::trace!("WiiDiscWriterFinalizeState::SeekToPartHeader");
                 if pin!(&mut this.writer)
                     .poll_seek(
@@ -692,56 +693,63 @@ where
                     .is_pending()
                 {
                     crate::trace!("Pending...");
-                    state.finalize_state = WiiDiscWriterCloseState::SeekToPartHeader(buf);
+                    status.state = WiiDiscWriterState::SeekToPartHeader(buf);
                     return Poll::Pending;
                 }
-                state.finalize_state = WiiDiscWriterCloseState::WritePartHeader(buf);
+                status.state = WiiDiscWriterState::WritePartHeader(buf);
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscWriterCloseState::WritePartHeader(buf) => {
+            WiiDiscWriterState::WritePartHeader(buf) => {
                 crate::trace!("WiiDiscWriterFinalizeState::WritePartHeader");
                 match pin!(&mut this.writer).poll_write(cx, &buf) {
                     Poll::Ready(result) => match result {
                         Ok(n_written) => {
                             if n_written < buf.len() {
-                                state.finalize_state = WiiDiscWriterCloseState::WritePartHeader(
+                                status.state = WiiDiscWriterState::WritePartHeader(
                                     buf.split_at(n_written).1.to_vec(),
                                 );
                                 cx.waker().wake_by_ref();
                                 Poll::Pending
                             } else {
-                                state.finalize_state = WiiDiscWriterCloseState::CloseWriter;
+                                status.state = WiiDiscWriterState::CloseWriter;
                                 cx.waker().wake_by_ref();
                                 Poll::Pending
                             }
                         }
                         Err(err) => {
-                            state.finalize_state = WiiDiscWriterCloseState::Init;
+                            status.state = WiiDiscWriterState::Init;
                             Poll::Ready(Err(err))
                         }
                     },
                     Poll::Pending => {
                         crate::trace!("Pending...");
-                        state.finalize_state = WiiDiscWriterCloseState::WritePartHeader(buf);
+                        status.state = WiiDiscWriterState::WritePartHeader(buf);
                         Poll::Pending
                     }
                 }
             }
-            WiiDiscWriterCloseState::CloseWriter => {
+            WiiDiscWriterState::CloseWriter => {
                 crate::trace!("WiiDiscWriterFinalizeState::CloseWriter");
                 match pin!(&mut this.writer).poll_close(cx) {
                     Poll::Ready(result) => {
-                        state.finalize_state = WiiDiscWriterCloseState::Done;
+                        status.state = WiiDiscWriterState::Done;
                         Poll::Ready(result)
                     }
                     Poll::Pending => {
-                        state.finalize_state = WiiDiscWriterCloseState::CloseWriter;
+                        status.state = WiiDiscWriterState::CloseWriter;
                         Poll::Pending
                     }
                 }
             }
-            WiiDiscWriterCloseState::Done => Poll::Ready(Ok(())),
+            WiiDiscWriterState::Done => Poll::Ready(Ok(())),
+            _ => {
+                crate::error!("Unexpected state: {:?}", state);
+                Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Unexpected state",
+                )))
+            }
         }
     }
 }

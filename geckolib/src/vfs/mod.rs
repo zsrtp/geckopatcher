@@ -8,21 +8,20 @@ use crate::UPDATER;
 use async_std::io::prelude::{ReadExt, SeekExt, WriteExt};
 use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
 use async_std::path::PathBuf;
-use async_std::sync::{Arc, Mutex};
+use async_std::sync::Arc;
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
 use num::ToPrimitive;
 use std::io::{Error, SeekFrom};
-use std::ops::DerefMut;
 use std::path::Path;
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::task::{Context, Poll};
 
 pub trait Node<R> {
-    fn name(&self) -> &str;
+    fn name(&self) -> String;
     fn get_type(&self) -> NodeType;
     fn into_directory(self) -> Option<Directory<R>>;
     fn as_directory_ref(&self) -> Option<&Directory<R>>;
@@ -84,7 +83,7 @@ pub struct GeckoFS<R> {
 
 impl<R> GeckoFS<R>
 where
-    R: AsyncRead + AsyncSeek + 'static,
+    R: 'static,
 {
     pub fn new() -> Self {
         Self {
@@ -92,7 +91,12 @@ where
             system: Directory::new("&&systemdata"),
         }
     }
+}
 
+impl<R> GeckoFS<R>
+where
+    R: AsyncRead + AsyncSeek + Unpin + Clone + 'static,
+{
     #[doc = r"Utility function to read the disc."]
     async fn read_exact(reader: &mut DiscReader<R>, pos: SeekFrom, buf: &mut [u8]) -> Result<()> {
         reader.seek(pos).await?;
@@ -103,7 +107,7 @@ where
         cur_index: &mut usize,
         fst: &Vec<FstNode>,
         parent_dir: &mut Directory<R>,
-        reader: &Arc<Mutex<DiscReader<R>>>,
+        reader: &DiscReader<R>,
     ) {
         let entry = &fst[*cur_index];
 
@@ -118,10 +122,7 @@ where
             }
             FstNode::File { relative_file_name, file_offset, file_size } => {
                 parent_dir.add_file(File::new(
-                    FileDataSource::Reader(reader.clone()),
-                    relative_file_name.clone(),
-                    file_offset,
-                    file_size,
+                    FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name, file_offset, file_size } },
                 ));
             }
         }
@@ -274,31 +275,17 @@ where
                 num_entries * FstEntry::BLOCK_SIZE
             );
 
-            let arc_reader = Arc::new(Mutex::new(reader));
-
             system.add_file(File::new(
-                FileDataSource::Reader(arc_reader.clone()),
-                "iso.hdr",
-                0,
-                consts::HEADER_LENGTH,
+                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "iso.hdr".to_owned(), file_offset: 0, file_size: consts::HEADER_LENGTH } },
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(arc_reader.clone()),
-                "AppLoader.ldr",
-                consts::HEADER_LENGTH as u64,
-                dol_offset - consts::HEADER_LENGTH,
+                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "AppLoader.ldr".to_owned(), file_offset: consts::HEADER_LENGTH as u64, file_size: dol_offset - consts::HEADER_LENGTH } },
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(arc_reader.clone()),
-                "Start.dol",
-                dol_offset as u64,
-                fst_offset as usize - dol_offset,
+                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "Start.dol".to_owned(), file_offset: dol_offset as u64, file_size: fst_offset as usize - dol_offset } },
             ));
             system.add_file(File::new(
-                FileDataSource::Reader(arc_reader.clone()),
-                "Game.toc",
-                fst_offset,
-                fst_size,
+                FileDataSource::Reader { reader: reader.clone(), fst: FstNode::File { relative_file_name: "Game.toc".to_owned(), file_offset: fst_offset, file_size: fst_size } },
             ));
 
             let mut count = 1;
@@ -307,7 +294,7 @@ where
                     &mut count,
                     &fst_entries,
                     &mut root,
-                    &arc_reader,
+                    &reader,
                 );
                 count += 1;
             }
@@ -372,12 +359,12 @@ where
                 let pos = align_addr(*offset, 5);
                 *offset = pos;
 
-                let fst_entry = FstEntry::new_file(fst_name_bank.len() as u32, pos as u64, file.len() as u32, is_wii)?;
+                let fst_entry = FstEntry::new_file(fst_name_bank.len() as u32, pos as u64, file.len()? as u32, is_wii)?;
 
                 fst_name_bank.extend_from_slice(file.name().as_bytes());
                 fst_name_bank.push(0);
 
-                *offset += file.len() as u64;
+                *offset += file.len()? as u64;
                 *offset = align_addr(*offset, 2);
 
                 output_fst.push(fst_entry);
@@ -393,14 +380,14 @@ where
     {
         crate::debug!("Serializing the FileSystem");
         let mut pos: u64 = 0;
-        let header_size = self.sys().get_file("iso.hdr")?.len();
-        let apploader_size = self.sys().get_file("AppLoader.ldr")?.len();
+        let header_size = self.sys().get_file("iso.hdr")?.len()?;
+        let apploader_size = self.sys().get_file("AppLoader.ldr")?.len()?;
 
         // Calculate dynamic offsets
         let dol_offset_raw = header_size + apploader_size;
         let dol_offset = align_addr(dol_offset_raw, consts::DOL_ALIGNMENT_BIT);
         let dol_padding_size = dol_offset - dol_offset_raw;
-        let dol_size = self.sys().get_file("Start.dol")?.len();
+        let dol_size = self.sys().get_file("Start.dol")?.len()?;
 
         let fst_list_offset_raw = dol_offset + dol_size;
         let fst_list_offset = align_addr(fst_list_offset_raw, consts::FST_ALIGNMENT_BIT);
@@ -506,14 +493,14 @@ where
                 updater.set_message(format!(
                     "{:<32.32} ({:>8})",
                     file.name(),
-                    human_bytes(file.len() as f64)
+                    human_bytes(file.len()? as f64)
                 ))?;
             }
             let padding_size = file_offset as usize - offset;
             writer.write_all(&vec![0u8; padding_size]).await?;
             // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
-            let mut rem = file.len();
+            let mut rem = file.len()?;
             loop {
                 if rem == 0 {
                     break;
@@ -535,7 +522,7 @@ where
                     _ => (),
                 }
             }
-            offset = (file_offset + file.len() as u64) as usize;
+            offset = (file_offset + file.len()? as u64) as usize;
         }
 
         // The disc apparently needs to be aligned to 8 bits
@@ -570,7 +557,7 @@ where
 
 impl<R> Default for GeckoFS<R>
 where
-    R: AsyncRead + AsyncSeek + 'static,
+    R: AsyncRead + AsyncSeek + Unpin + 'static,
 {
     fn default() -> Self {
         Self::new()
@@ -581,7 +568,7 @@ impl<R> Node<R> for GeckoFS<R>
 where
     R: AsyncRead + AsyncSeek,
 {
-    fn name(&self) -> &str {
+    fn name(&self) -> String {
         self.root.name()
     }
 
@@ -830,8 +817,8 @@ where
 }
 
 impl<R> Node<R> for Directory<R> {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> String {
+        self.name.clone()
     }
 
     fn get_type(&self) -> NodeType {
@@ -863,89 +850,108 @@ impl<R> Node<R> for Directory<R> {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum FileDataSource<R> {
+    Reader{
+        reader: DiscReader<R>,
+        fst: FstNode,
+    },
+    Box {
+        data: Box<[u8]>,
+        name: String,
+    },
+}
+
+impl<R> FileDataSource<R> {
+    pub fn name(&self) -> String {
+        match self {
+            Self::Reader { fst, .. } => fst.get_relative_file_name().to_owned(),
+            Self::Box { name, .. } => name.clone(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Reader { fst, .. } => fst.get_file_size().unwrap(),
+            Self::Box { data, .. } => data.len(),
+        }
+    }
+}
+
+impl<R> Clone for FileDataSource<R>
+where
+    R: Clone
+{
+    fn clone(&self) -> Self {
+        match self {
+            Self::Reader { reader, fst } => Self::Reader { reader: reader.clone(), fst: fst.clone() },
+            Self::Box { data, name } => Self::Box { data: data.clone(), name: name.clone() },
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
-enum FileReadState {
+enum FileState {
     #[default]
+    Init,
     Seeking,
     Reading,
 }
 
-#[derive(Debug, Clone, Copy, Default)]
-struct FileState {
+#[derive(Debug, Clone)]
+struct FileStatus<R> {
     cursor: u64,
-    state: FileReadState,
-}
-
-#[derive(Debug)]
-pub enum FileDataSource<R> {
-    Reader(Arc<Mutex<DiscReader<R>>>),
-    Box(Arc<Mutex<Box<[u8]>>>),
-}
-
-impl<R> Clone for FileDataSource<R> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Reader(arg0) => Self::Reader(arg0.clone()),
-            Self::Box(arg0) => Self::Box(arg0.clone()),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct File<R> {
-    fst: FstNode,
     state: FileState,
-    data: FileDataSource<R>,
+    data: FileDataSource<R>
 }
 
-impl<R> Clone for File<R> {
-    fn clone(&self) -> Self {
-        Self {
-            fst: self.fst.clone(),
-            state: self.state,
-            data: self.data.clone(),
-        }
-    }
+#[derive(Debug, Clone)]
+pub struct File<R> {
+    status: Arc<std::sync::Mutex<FileStatus<R>>>,
 }
 
 impl<R> File<R> {
-    pub fn new<S: Into<String>>(
+    pub(crate) fn new(
         data: FileDataSource<R>,
-        name: S,
-        file_offset: u64,
-        file_size: usize,
     ) -> Self {
         Self {
-            fst: FstNode::File { relative_file_name: name.into(), file_offset, file_size },
-            state: Default::default(),
-            data,
+            status: Arc::new(std::sync::Mutex::new(FileStatus { cursor: 0, state: FileState::Init, data })),
         }
     }
 
-    pub fn set_data(&mut self, data: Box<[u8]>) {
-        *self.fst.get_file_size_mut().unwrap() = data.len();
-        self.data = FileDataSource::Box(Arc::new(Mutex::new(data)));
+    pub fn set_data(&mut self, data: Box<[u8]>) -> eyre::Result<()> {
+        match self.status.lock() {
+            Ok(mut status) => {
+                status.data = FileDataSource::Box {data, name: status.data.name()};
+                Ok(())
+            }
+            Err(_) => Err(eyre::eyre!("Failed to lock the file status")),
+        }
     }
 
-    pub fn len(&self) -> usize {
-        self.fst.get_file_size().unwrap()
+    pub fn len(&self) -> eyre::Result<usize> {
+        self.status.lock().map(|status| status.data.len()).map_err(|_| eyre::eyre!("Failed to lock the file status"))
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
+    pub fn is_empty(&self) -> eyre::Result<bool> {
+        Ok(self.len()? == 0)
     }
 }
 
-impl<R: AsyncSeek> AsyncSeek for File<R> {
+impl<R> AsyncSeek for File<R>
+where
+    R: AsyncSeek + Unpin,
+{
     fn poll_seek(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
         crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos);
+        let mut status = self.status.lock().map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
         let pos = match pos {
             SeekFrom::Start(pos) => {
-                if pos > self.len() as u64 {
+                if pos > self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as u64 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -954,7 +960,7 @@ impl<R: AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Start(pos)
             }
             SeekFrom::End(pos) => {
-                let new_pos = self.len() as i64 + pos;
+                let new_pos = self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as i64 + pos;
                 if new_pos < 0 || pos > 0 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
@@ -964,8 +970,8 @@ impl<R: AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::End(pos)
             }
             SeekFrom::Current(pos) => {
-                let new_pos = self.state.cursor as i64 + pos;
-                if new_pos < 0 || new_pos > self.len() as i64 {
+                let new_pos = status.cursor as i64 + pos;
+                if new_pos < 0 || new_pos > self.len().map_err(|err| io::Error::new(io::ErrorKind::Other, err))? as i64 {
                     return Poll::Ready(Err(Error::new(
                         async_std::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
@@ -974,72 +980,68 @@ impl<R: AsyncSeek> AsyncSeek for File<R> {
                 SeekFrom::Current(pos)
             }
         };
-        match &self.data {
-            FileDataSource::Reader(reader) => match reader.try_lock_arc() {
-                Some(mut guard) => {
-                    let guard_mut = guard.deref_mut();
-                    let guard_pin = std::pin::pin!(guard_mut);
-                    match guard_pin.poll_seek(
-                        cx,
-                        match pos {
-                            SeekFrom::Start(pos) => {
-                                SeekFrom::Start(self.fst.get_file_offset().unwrap() + pos)
-                            }
-                            SeekFrom::End(pos) => SeekFrom::Start(
-                                ((self.fst.get_file_offset().unwrap() as i64 + self.len() as i64) + pos)
-                                    as u64,
-                            ),
-                            SeekFrom::Current(pos) => SeekFrom::Start(
-                                (self.fst.get_file_offset().unwrap() as i64
-                                    + self.state.cursor as i64
-                                    + pos) as u64,
-                            ),
-                        },
-                    ) {
-                        Poll::Ready(Ok(_)) => match pos {
-                            SeekFrom::Start(pos) => {
-                                self.state.cursor = pos;
-                                Poll::Ready(Ok(self.state.cursor))
-                            }
-                            SeekFrom::End(pos) => {
-                                self.state.cursor = (self.len() as i64 + pos) as u64;
-                                Poll::Ready(Ok(self.state.cursor))
-                            }
-                            SeekFrom::Current(pos) => {
-                                self.state.cursor = (self.state.cursor as i64 + pos) as u64;
-                                Poll::Ready(Ok(self.state.cursor))
-                            }
-                        },
-                        Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-                        Poll::Pending => Poll::Pending,
-                    }
-                }
-                None => {
-                    cx.waker().wake_by_ref();
-                    Poll::Pending
+        let cursor = status.cursor;
+        match &mut status.data {
+            FileDataSource::Reader { reader, fst } => {
+                match std::pin::pin!(reader).poll_seek(
+                    cx,
+                    match pos {
+                        SeekFrom::Start(pos) => {
+                            SeekFrom::Start(fst.get_file_offset().unwrap() + pos)
+                        }
+                        SeekFrom::End(pos) => SeekFrom::Start(
+                            ((fst.get_file_offset().unwrap() as i64 + fst.get_file_size().unwrap() as i64) + pos)
+                                as u64,
+                        ),
+                        SeekFrom::Current(pos) => SeekFrom::Start(
+                            (fst.get_file_offset().unwrap() as i64
+                                + cursor as i64
+                                + pos) as u64,
+                        ),
+                    },
+                ) {
+                    Poll::Ready(Ok(_)) => match pos {
+                        SeekFrom::Start(pos) => {
+                            status.cursor = pos;
+                            Poll::Ready(Ok(status.cursor))
+                        }
+                        SeekFrom::End(pos) => {
+                            status.cursor = (fst.get_file_size().unwrap() as i64 + pos) as u64;
+                            Poll::Ready(Ok(status.cursor))
+                        }
+                        SeekFrom::Current(pos) => {
+                            status.cursor = (status.cursor as i64 + pos) as u64;
+                            Poll::Ready(Ok(status.cursor))
+                        }
+                    },
+                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                    Poll::Pending => Poll::Pending,
                 }
             },
-            FileDataSource::Box(_) => match pos {
+            FileDataSource::Box { data, .. } => match pos {
                 SeekFrom::Start(pos) => {
-                    self.state.cursor = pos;
-                    Poll::Ready(Ok(self.state.cursor))
+                    status.cursor = pos;
+                    Poll::Ready(Ok(status.cursor))
                 }
                 SeekFrom::End(pos) => {
-                    self.state.cursor = (self.len() as i64 + pos) as u64;
-                    Poll::Ready(Ok(self.state.cursor))
+                    status.cursor = (data.len() as i64 + pos) as u64;
+                    Poll::Ready(Ok(status.cursor))
                 }
                 SeekFrom::Current(pos) => {
-                    self.state.cursor = (self.state.cursor as i64 + pos) as u64;
-                    Poll::Ready(Ok(self.state.cursor))
+                    status.cursor = (status.cursor as i64 + pos) as u64;
+                    Poll::Ready(Ok(status.cursor))
                 }
             },
         }
     }
 }
 
-impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
+impl<R> AsyncRead for File<R>
+where
+    R: AsyncRead + AsyncSeek + Unpin,
+{
     fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
+        self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
@@ -1048,90 +1050,83 @@ impl<R: AsyncRead + AsyncSeek> AsyncRead for File<R> {
             self.name(),
             buf.len()
         );
-        let end = std::cmp::min(
-            buf.len(),
-            (self.len() as i64 - self.state.cursor as i64) as usize,
-        );
-        match self.state.state {
-            FileReadState::Seeking => match &self.data {
-                FileDataSource::Reader(reader) => match reader.try_lock_arc() {
-                    Some(mut guard) => {
-                        let guard_pin = std::pin::pin!(guard.deref_mut());
+        let mut status = self.status.lock().map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
+        let cursor = status.cursor;
+        let end = 
+            std::cmp::min(
+                buf.len(),
+                (status.data.len() as i64 - cursor as i64) as usize,
+            );
+        match status.state {
+            FileState::Init => {
+                status.state = FileState::Seeking;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            }
+            FileState::Seeking => match status.data {
+                FileDataSource::Reader { ref mut reader, ref fst } => {
+                        let guard_pin = std::pin::pin!(reader);
                         match guard_pin.poll_seek(
                             cx,
                             SeekFrom::Start(
-                                self.fst.get_file_offset().unwrap() + self.state.cursor,
+                                fst.get_file_offset().unwrap() + cursor,
                             ),
                         ) {
                             Poll::Ready(Ok(_)) => {
-                                self.state.state = FileReadState::Reading;
+                                status.state = FileState::Reading;
                                 cx.waker().wake_by_ref();
                                 Poll::Pending
                             }
                             Poll::Ready(Err(err)) => {
-                                self.state.state = FileReadState::Seeking;
+                                status.state = FileState::Seeking;
                                 Poll::Ready(Err(err))
                             }
                             Poll::Pending => Poll::Pending,
                         }
-                    }
-                    None => {
-                        cx.waker().wake_by_ref();
-                        Poll::Pending
-                    }
-                },
-                FileDataSource::Box(_data) => {
-                    if self.state.cursor > self.len() as u64 {
+                    },
+                FileDataSource::Box { ref data, .. } => {
+                    if cursor > data.len() as u64 {
                         Poll::Ready(Err(io::Error::from(io::ErrorKind::InvalidInput)))
                     } else {
-                        self.state.state = FileReadState::Reading;
+                        status.state = FileState::Reading;
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     }
                 }
             },
-            FileReadState::Reading => match &self.data {
-                FileDataSource::Reader(reader) => match reader.try_lock_arc() {
-                    Some(mut guard) => {
-                        let guard_pin = std::pin::pin!(guard.deref_mut());
+            FileState::Reading => {
+                match status.data {
+                FileDataSource::Reader { ref mut reader, .. } => {
+                        let guard_pin = std::pin::pin!(reader);
                         match guard_pin.poll_read(cx, &mut buf[..end]) {
                             Poll::Ready(Ok(num_read)) => {
-                                self.state.cursor += num_read as u64;
-                                self.state.state = FileReadState::Seeking;
+                                status.cursor += num_read as u64;
+                                status.state = FileState::Seeking;
                                 Poll::Ready(Ok(num_read))
                             }
                             Poll::Ready(Err(err)) => {
-                                self.state.state = FileReadState::Seeking;
+                                status.state = FileState::Seeking;
                                 Poll::Ready(Err(err))
                             }
                             Poll::Pending => Poll::Pending,
                         }
-                    }
-                    None => {
-                        cx.waker().wake_by_ref();
-                        Poll::Pending
-                    }
-                },
-                FileDataSource::Box(data) => {
-                    let d: async_std::sync::MutexGuardArc<Box<[u8]>> = match data.try_lock_arc() {
-                        Some(data) => data,
-                        None => return Poll::Pending,
-                    };
+                    },
+                FileDataSource::Box { ref data, .. } => {
                     let num_read =
-                        std::cmp::min(buf.len(), (self.len() as u64 - self.state.cursor) as usize);
-                    buf[..num_read].copy_from_slice(&d[self.state.cursor as usize..][..num_read]);
-                    self.state.cursor += num_read as u64;
-                    self.state.state = FileReadState::Seeking;
+                        std::cmp::min(buf.len(), (data.len() as u64 - cursor) as usize);
+                    buf[..num_read].copy_from_slice(&data[cursor as usize..][..num_read]);
+                    status.cursor += num_read as u64;
+                    status.state = FileState::Seeking;
                     Poll::Ready(Ok(num_read))
                 }
-            },
+            }},
         }
     }
 }
 
 impl<R> Node<R> for File<R> {
-    fn name(&self) -> &str {
-        self.fst.get_relative_file_name()
+    fn name(&self) -> String {
+        self.status.lock().map(|status| status.data.name()).unwrap_or_default()
     }
 
     fn get_type(&self) -> NodeType {

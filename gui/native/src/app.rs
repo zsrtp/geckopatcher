@@ -90,14 +90,12 @@ pub struct PatcherApp {
 
 async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
     // let patch = fs::OpenOptions::new().read(true).open(patch_path).await;
-    let file = BufReader::with_capacity(
-        0x7C00 * 64 * 8,
+    let file = 
         fs::OpenOptions::new()
             .read(true)
             .open(file_path)
             .await
-            .unwrap(),
-    );
+            .unwrap();
     let save = fs::OpenOptions::new()
         .write(true)
         .create(true)

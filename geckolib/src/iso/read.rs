@@ -7,7 +7,6 @@ use async_std::sync::Mutex;
 use async_std::task::ready;
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
-use pin_project::pin_project;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::SeekFrom;
@@ -64,22 +63,22 @@ where
 }
 
 #[derive(Debug, Clone)]
-enum WiiDiscReaderReadState {
+enum WiiDiscReaderState {
     Seeking,
     Reading(Vec<u8>),
 }
 
 #[derive(Debug)]
-struct WiiDiscReaderState {
+struct WiiDiscReaderStatus {
     // Virtual cursor which tracks where in the decrypted partition we are reading from.
     cursor: u64,
-    state: WiiDiscReaderReadState,
+    state: WiiDiscReaderState,
 }
 
 #[derive(Debug)]
 pub struct WiiDiscReader<R> {
     reader: R,
-    state: Arc<Mutex<WiiDiscReaderState>>,
+    status: Arc<Mutex<WiiDiscReaderStatus>>,
     pub disc: WiiDisc,
 }
 
@@ -156,9 +155,9 @@ where
         crate::debug!("Trying to parse a Wii Disc from the reader");
         let mut this = Self {
             reader,
-            state: Arc::new(Mutex::new(WiiDiscReaderState {
+            status: Arc::new(Mutex::new(WiiDiscReaderStatus {
                 cursor: 0,
-                state: WiiDiscReaderReadState::Seeking,
+                state: WiiDiscReaderState::Seeking,
             })),
             disc: WiiDisc {
                 disc_header: Default::default(),
@@ -197,7 +196,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            state: self.state.clone(),
+            status: self.status.clone(),
             reader: self.reader.clone(),
             disc: self.disc.clone(),
         }
@@ -214,7 +213,7 @@ where
         pos: std::io::SeekFrom,
     ) -> std::task::Poll<std::io::Result<u64>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock() {
+        let mut state = match this.status.try_lock() {
             Some(state) => state,
             None => return Poll::Pending,
         };
@@ -266,7 +265,7 @@ where
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock() {
+        let mut state = match this.status.try_lock() {
             Some(state) => state,
             None => return Poll::Pending,
         };
@@ -292,7 +291,7 @@ where
         );
 
         match &mut state.state {
-            WiiDiscReaderReadState::Seeking => {
+            WiiDiscReaderState::Seeking => {
                 let start_blk_addr = part.part_offset
                     + part.header.data_offset
                     + (start_blk_idx * consts::WII_SECTOR_SIZE) as u64;
@@ -301,11 +300,11 @@ where
                 crate::trace!("Seeking succeeded");
                 let n_blk = end_blk_idx - start_blk_idx + 1;
                 let buf = vec![0u8; n_blk * consts::WII_SECTOR_SIZE];
-                state.state = WiiDiscReaderReadState::Reading(buf);
+                state.state = WiiDiscReaderState::Reading(buf);
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WiiDiscReaderReadState::Reading(buf2) => {
+            WiiDiscReaderState::Reading(buf2) => {
                 crate::trace!("Reading...");
                 ready!(pin!(&mut this.reader).poll_read(cx, buf2))?;
                 crate::trace!("Reading successful");
@@ -369,7 +368,7 @@ where
                     );
                 }
                 state.cursor += buf.len() as u64;
-                state.state = WiiDiscReaderReadState::Seeking;
+                state.state = WiiDiscReaderState::Seeking;
                 Poll::Ready(Ok(buf.len()))
             }
         }
@@ -377,13 +376,15 @@ where
 }
 
 #[derive(Debug)]
-#[pin_project(project = DiskReaderProj)]
 pub enum DiscReader<R> {
-    Gamecube(#[pin] GCDiscReader<Pin<Box<R>>>),
-    Wii(#[pin] WiiDiscReader<Pin<Box<R>>>),
+    Gamecube(GCDiscReader<R>),
+    Wii(WiiDiscReader<R>),
 }
 
-impl<R: Clone> Clone for DiscReader<R> {
+impl<R> Clone for DiscReader<R>
+where
+    R: Clone,
+{
     fn clone(&self) -> Self {
         match self {
             Self::Gamecube(reader) => Self::Gamecube(reader.clone()),
@@ -394,45 +395,44 @@ impl<R: Clone> Clone for DiscReader<R> {
 
 impl<R> AsyncSeek for DiscReader<R>
 where
-    R: AsyncSeek,
+    R: AsyncSeek + Unpin,
 {
     fn poll_seek(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
-        match self.project() {
-            DiskReaderProj::Gamecube(reader) => reader.poll_seek(cx, pos),
-            DiskReaderProj::Wii(reader) => reader.poll_seek(cx, pos),
+        match self.get_mut() {
+            DiscReader::Gamecube(reader) => pin!(reader).poll_seek(cx, pos),
+            DiscReader::Wii(reader) => pin!(reader).poll_seek(cx, pos),
         }
     }
 }
 
 impl<R> AsyncRead for DiscReader<R>
 where
-    R: AsyncRead + AsyncSeek,
+    R: AsyncRead + AsyncSeek + Unpin,
 {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
-        match self.project() {
-            DiskReaderProj::Gamecube(reader) => reader.poll_read(cx, buf),
-            DiskReaderProj::Wii(reader) => reader.poll_read(cx, buf),
+        match self.get_mut() {
+            DiscReader::Gamecube(reader) => pin!(reader).poll_read(cx, buf),
+            DiscReader::Wii(reader) => pin!(reader).poll_read(cx, buf),
         }
     }
 }
 
 impl<R> DiscReader<R>
 where
-    R: AsyncRead + AsyncSeek,
+    R: AsyncRead + AsyncSeek + Unpin,
 {
-    pub async fn new(reader: R) -> Result<Self> {
-        let mut reader = Box::pin(reader);
-        reader.seek(SeekFrom::Start(0x18)).await?;
+    pub async fn new(mut reader: R) -> Result<Self> {
+        pin!(&mut reader).seek(SeekFrom::Start(0x18)).await?;
         let mut buf = [0u8; 8];
-        reader.read(&mut buf).await?;
+        pin!(&mut reader).read(&mut buf).await?;
         crate::debug!("Magics: {:?}", buf);
         if BE::read_u32(&buf[4..][..4]) == iso_consts::GC_MAGIC {
             crate::debug!("Loading Gamecube disc");

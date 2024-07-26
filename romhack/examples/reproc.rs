@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use async_std::io::BufReader;
 #[cfg(feature = "log")]
 use async_std::io::{prelude::SeekExt, ReadExt};
 use clap::{arg, command, Parser, ValueHint};
@@ -39,10 +38,8 @@ fn main() -> color_eyre::eyre::Result<()> {
     let args = Args::parse();
 
     futures::executor::block_on(async {
-        let file = BufReader::with_capacity(
-            0x7C00 * 64 * 8,
-            async_std::fs::File::open(args.source).await?,
-        );
+        let file = 
+            async_std::fs::File::open(args.source).await?;
         #[cfg(feature = "log")]
         let mut f;
         #[cfg(not(feature = "log"))]
