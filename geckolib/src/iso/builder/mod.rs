@@ -190,8 +190,8 @@ where
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Replacing files...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Replacing files...".into())?;
         }
 
         for (iso_path, actual_path) in &self.config.files {
@@ -211,24 +211,24 @@ where
         {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_title("Parsing symbol map...".into())?;
                 updater.set_message("".into())?;
+                updater.set_title("Parsing symbol map...".into())?;
             }
 
             framework_map::parse(framework_map).await?
         } else {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_title("[Warning] No symbol map specified or it wasn't found".into())?;
                 updater.set_message("".into())?;
+                updater.set_title("[Warning] No symbol map specified or it wasn't found".into())?;
             }
             HashMap::new()
         };
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Linking...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Linking...".into())?;
         }
 
         let mut libs_to_link;
@@ -270,8 +270,8 @@ where
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Creating symbol map...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Creating symbol map...".into())?;
         }
 
         let instructions = if let Some(patch) = self.config.src.patch.take() {
@@ -301,8 +301,8 @@ where
         {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_title("Patching game...".into())?;
                 updater.set_message("".into())?;
+                updater.set_title("Patching game...".into())?;
             }
 
             let main_dol = disc
@@ -321,8 +321,8 @@ where
         if wii_disc_info.is_none() {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_title("Patching banner...".into())?;
                 updater.set_message("".into())?;
+                updater.set_title("Patching banner...".into())?;
             }
 
             if let Ok(banner_file) = disc.root_mut().get_file_mut("opening.bnr") {
@@ -364,15 +364,18 @@ where
                 warn!("No banner to patch");
                 #[cfg(feature = "progress")]
                 if let Ok(mut updater) = UPDATER.lock() {
-                    updater.set_title("Patching banner...".into())?;
                     updater.set_message("".into())?;
+                    updater.set_title("Patching banner...".into())?;
                 }
             }
         }
 
         // Finalize disc and write it back into a file
 
-        let out = { DiscWriter::new(self.writer.clone(), wii_disc_info) };
+        let out: DiscWriter<W> = { DiscWriter::new(self.writer.clone(), wii_disc_info) };
+        if let DiscWriter::Wii(wii_out) = out.clone() {
+            std::pin::pin!(wii_out).init().await?;
+        }
 
         let mut out = std::pin::pin!(out);
         let is_wii = out.get_type() == DiscType::Wii;

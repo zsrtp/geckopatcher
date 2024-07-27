@@ -343,6 +343,7 @@ where
 fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) -> Vec<u8> {
     // Hash the whole table and return the partition header
     fake_sign(part, hashes);
+    #[cfg(feature = "log")]
     let part_offset = part.part_offset;
     crate::debug!("Partition offset: 0x{part_offset:08X?}");
     crate::trace!("Partition Header: {:?}", part.header);
