@@ -32,7 +32,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     }
 
     match args.cmd {
-        Commands::Build { debug, patch, raw } => {
+        Commands::Build { patch, raw: _ } => {
             task::block_on::<_, color_eyre::eyre::Result<()>>(async {
                 if patch {
                     let mut builder = open_config_from_fs_patch(

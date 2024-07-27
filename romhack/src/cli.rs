@@ -17,13 +17,10 @@ pub enum Commands {
     /// Builds the Rom Hack
     Build {
         #[arg(short, long)]
-        /// Compiles the Rom Hack in Rust's debug mode
-        debug: bool,
-        #[arg(short, long)]
-        /// Compiles the Rom Hack as a patch
+        /// Compiles the Rom Hack into a patch file
         patch: bool,
         #[arg(short, long)]
-        /// Compiles the Rom Hack from local files
+        /// Legacy option kept for compatibility
         raw: bool,
     },
     /// Applies a patch file to a game to create a Rom Hack
@@ -34,7 +31,7 @@ pub enum Commands {
         #[arg(value_hint = ValueHint::FilePath)]
         /// Input path to original game (GCM or ISO format)
         original_game: PathBuf,
-        #[arg(value_hint = ValueHint::Other)]
+        #[arg(value_hint = ValueHint::Unknown)]
         /// Output path for Rom Hack
         output: PathBuf,
     },

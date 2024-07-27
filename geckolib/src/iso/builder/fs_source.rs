@@ -1,10 +1,7 @@
 use std::path::Path;
 #[cfg(not(target_os = "unknown"))]
 use std::path::PathBuf;
-use std::{
-    fs,
-    io::{Read, Seek},
-};
+use std::io::{Read, Seek};
 use zip::{read::ZipFile, ZipArchive};
 
 /// A file from an arbitrary source
@@ -130,7 +127,7 @@ impl<R> FSSource<R> {
             }
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
-                for entry in fs::read_dir(p)? {
+                for entry in std::fs::read_dir(p)? {
                     let entry = entry?;
                     let entry_path = entry.path();
                     let file_name = entry_path.file_name().expect("Entry has no name");

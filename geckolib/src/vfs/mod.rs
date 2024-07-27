@@ -752,7 +752,13 @@ where
             stack: &mut Vec<&'b mut File<R>>,
         ) {
             match start.as_enum_mut() {
-                NodeEnumMut::File(file) => stack.push(file),
+                NodeEnumMut::File(file) => {
+                    match file.status.lock() {
+                        Ok(mut status) => status.cursor = 0,
+                        Err(_) => return,
+                    }
+                    stack.push(file);
+                },
                 NodeEnumMut::Directory(dir) => {
                     for child in &mut dir.children {
                         traverse_depth(child.as_mut(), stack);
@@ -778,12 +784,21 @@ where
 
     pub fn get_file_mut(&mut self, path: &str) -> Result<&mut File<R>> {
         let self_name = self.name().to_owned();
-        self.resolve_node_mut(path)
+        let file = self.resolve_node_mut(path)
             .ok_or(eyre::eyre!(
                 "\"{path}\" not found in the directory \"{self_name}\""
             ))?
             .as_file_mut()
-            .ok_or(eyre::eyre!("\"{path}\" is not a File!"))
+            .ok_or(eyre::eyre!("\"{path}\" is not a File!"));
+        if let Ok(file) = file {
+            match file.status.lock() {
+                Ok(mut status) => status.cursor = 0,
+                Err(_) => return Err(eyre::eyre!("Failed to lock the file status")),
+            }
+            Ok(file)
+        } else {
+            file
+        }
     }
 
     pub fn get_dir<P: AsRef<Path>>(&self, path: P) -> Result<&Directory<R>> {
@@ -951,7 +966,7 @@ where
 {
     fn poll_seek(
         self: std::pin::Pin<&mut Self>,
-        cx: &mut Context<'_>,
+        _cx: &mut Context<'_>,
         pos: SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
         crate::trace!("Seeking \"{0}\" to {1:?} ({1:016X?})", self.name(), pos);
@@ -1000,41 +1015,21 @@ where
                 SeekFrom::Current(pos)
             }
         };
-        let cursor = status.cursor;
         match &mut status.data {
-            FileDataSource::Reader { reader, fst } => {
-                match std::pin::pin!(reader).poll_seek(
-                    cx,
-                    match pos {
-                        SeekFrom::Start(pos) => {
-                            SeekFrom::Start(fst.get_file_offset().unwrap() + pos)
-                        }
-                        SeekFrom::End(pos) => SeekFrom::Start(
-                            ((fst.get_file_offset().unwrap() as i64
-                                + fst.get_file_size().unwrap() as i64)
-                                + pos) as u64,
-                        ),
-                        SeekFrom::Current(pos) => SeekFrom::Start(
-                            (fst.get_file_offset().unwrap() as i64 + cursor as i64 + pos) as u64,
-                        ),
-                    },
-                ) {
-                    Poll::Ready(Ok(_)) => match pos {
-                        SeekFrom::Start(pos) => {
-                            status.cursor = pos;
-                            Poll::Ready(Ok(status.cursor))
-                        }
-                        SeekFrom::End(pos) => {
-                            status.cursor = (fst.get_file_size().unwrap() as i64 + pos) as u64;
-                            Poll::Ready(Ok(status.cursor))
-                        }
-                        SeekFrom::Current(pos) => {
-                            status.cursor = (status.cursor as i64 + pos) as u64;
-                            Poll::Ready(Ok(status.cursor))
-                        }
-                    },
-                    Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-                    Poll::Pending => Poll::Pending,
+            FileDataSource::Reader { fst, .. } => {
+                match pos {
+                    SeekFrom::Start(pos) => {
+                        status.cursor = pos;
+                        Poll::Ready(Ok(status.cursor))
+                    }
+                    SeekFrom::End(pos) => {
+                        status.cursor = (fst.get_file_size().unwrap() as i64 + pos) as u64;
+                        Poll::Ready(Ok(status.cursor))
+                    }
+                    SeekFrom::Current(pos) => {
+                        status.cursor = (status.cursor as i64 + pos) as u64;
+                        Poll::Ready(Ok(status.cursor))
+                    }
                 }
             }
             FileDataSource::Box { data, .. } => match pos {

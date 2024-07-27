@@ -181,29 +181,6 @@ pub struct PartInfo {
     pub entries: Vec<PartInfoEntry>,
 }
 
-#[cfg(disabled)]
-pub fn disc_get_part_info(buf: &[u8]) -> PartInfo {
-    crate::debug!("Parsing partition info");
-    let mut entries: Vec<PartInfoEntry> = Vec::new();
-    let n_part = BE::read_u32(&buf[consts::WII_PARTITION_INFO_OFF..]) as usize;
-    let part_info_offset = (BE::read_u32(&buf[consts::WII_PARTITION_INFO_OFF + 4..]) as u64) << 2;
-    crate::debug!(
-        "Found {:} entries, partition info at offset 0x{:08X}",
-        n_part,
-        part_info_offset
-    );
-    for i in 0..n_part {
-        entries.push(PartInfoEntry {
-            offset: (BE::read_u32(&buf[part_info_offset as usize + (8 * i)..]) as u64) << 2,
-            part_type: BE::read_u32(&buf[part_info_offset as usize + (8 * i) + 4..]),
-        });
-    }
-    PartInfo {
-        offset: part_info_offset,
-        entries,
-    }
-}
-
 pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     reader: &mut Pin<&mut R>,
 ) -> Result<PartInfo> {

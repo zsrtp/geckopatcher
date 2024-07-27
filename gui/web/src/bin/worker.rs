@@ -7,7 +7,9 @@ use futures::AsyncWriteExt;
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
+use geckolib::update::UpdaterType;
 use geckolib::vfs::GeckoFS;
+use geckolib::UPDATER;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use web_gui_patcher::io::WebFile;
@@ -38,6 +40,12 @@ async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek
     let mut out = {
         DiscWriter::new(save, f.get_disc_info())
     };
+
+    if let Ok(mut updater) = UPDATER.lock() {
+        updater.set_type(UpdaterType::Spinner)?;
+        updater.init(Some(4))?;
+        updater.set_title("Initializing...".into())?;
+    }
 
     log::info!("Loading virtual FileSystem...");
     if let DiscWriter::Wii(wii_out) = out.clone() {

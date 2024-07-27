@@ -16,7 +16,7 @@ use zip::ZipArchive;
 use zip::ZipWriter;
 
 use self::fs_source::FSSource;
-use crate::{assembler::{Assembler, Instruction}, update};
+use crate::assembler::{Assembler, Instruction};
 use crate::banner::Banner;
 use crate::config::Config;
 
@@ -381,7 +381,6 @@ where
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.finish()?;
-            updater.reset()?;
         }
 
         Ok(())

@@ -95,6 +95,12 @@ where
 pub async fn open_config_from_fs_iso(
     config_file: &PathBuf,
 ) -> eyre::Result<IsoBuilder<File, async_std::fs::File, async_std::fs::File>> {
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.lock() {
+        updater.set_message("Parsing RomHack.toml
+        ...".into())?;
+    }
+
     let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
     let writer = async_std::fs::OpenOptions::new()
         .write(true)
