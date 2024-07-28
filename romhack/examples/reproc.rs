@@ -5,8 +5,10 @@ use async_std::io::{prelude::SeekExt, ReadExt};
 use clap::{arg, command, Parser, ValueHint};
 use futures::AsyncWriteExt;
 use geckolib::{
-    iso::{disc::DiscType, read::DiscReader, write::DiscWriter}, update, vfs::GeckoFS, UPDATER
+    iso::{disc::DiscType, read::DiscReader, write::DiscWriter}, vfs::GeckoFS
 };
+#[cfg(feature = "progress")]
+use geckolib::UPDATER;
 #[cfg(feature = "progress")]
 use romhack::progress;
 
@@ -77,9 +79,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         log::info!("Encrypting the ISO");
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_type(update::UpdaterType::Progress)?;
             updater.init(None)?;
-            updater.set_title("Writing virtual FileSystem".to_string())?;
         }
         fs.serialize(&mut out, is_wii).await?;
         out.close().await?;

@@ -118,6 +118,7 @@ pub fn disc_set_header(buffer: &mut [u8], dh: &WiiDiscHeader) {
 pub struct WiiDiscRegionAgeRating {
     jp: u8,
     us: u8,
+    unknown1: u8,
     de: u8,
     pegi: u8,
     fi: u8,
@@ -144,6 +145,7 @@ impl WiiDiscRegion {
             age_rating: WiiDiscRegionAgeRating {
                 jp: raw[0x10],
                 us: raw[0x11],
+                unknown1: raw[0x12],
                 de: raw[0x13],
                 pegi: raw[0x14],
                 fi: raw[0x15],
@@ -159,6 +161,7 @@ impl WiiDiscRegion {
         BE::write_u32(&mut buf[..4], self.region);
         buf[0x10] = self.age_rating.jp;
         buf[0x11] = self.age_rating.us;
+        buf[0x12] = self.age_rating.unknown1;
         buf[0x13] = self.age_rating.de;
         buf[0x14] = self.age_rating.pegi;
         buf[0x15] = self.age_rating.fi;
