@@ -491,15 +491,15 @@ impl Builder for PatchBuilder {
         }
         config.files = new_map;
 
-        crate::info!("Storing libraries");
-
-        #[cfg(feature = "progress")]
-        if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Storing libraries...".into())?;
-        }
-
         if let Some(link) = &mut config.link {
+            crate::info!("Storing libraries");
+    
+            #[cfg(feature = "progress")]
+            if let Ok(mut updater) = UPDATER.lock() {
+                updater.set_message("".into())?;
+                updater.set_title("Storing libraries...".into())?;
+            }
+    
             let libs = &mut link.libs;
             if !libs.is_empty() {
                 write_file_to_zip(
@@ -523,17 +523,17 @@ impl Builder for PatchBuilder {
                 modified_libs.push(zip_path.clone());
                 write_file_to_zip(&mut zip, zip_path, &read(lib_path).await?)?;
             }
+        }
 
-            if let Some(path) = &mut config.src.patch {
-                crate::info!("Storing patch.asm");
+        if let Some(path) = &mut config.src.patch {
+            crate::info!("Storing patch.asm");
 
-                #[cfg(feature = "progress")]
-                if let Ok(mut updater) = UPDATER.lock() {
-                    updater.set_message("Storing patch.asm...".into())?;
-                }
-
-                write_file_to_zip(&mut zip, "patch.asm", &read(path).await?)?;
+            #[cfg(feature = "progress")]
+            if let Ok(mut updater) = UPDATER.lock() {
+                updater.set_message("Storing patch.asm...".into())?;
             }
+
+            write_file_to_zip(&mut zip, "patch.asm", &read(path).await?)?;
         }
 
         if let Some(path) = &config.info.image {
