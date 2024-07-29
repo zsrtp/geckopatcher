@@ -1,7 +1,7 @@
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use geckolib::{
     iso::{
-        disc::{DiscType, PartHeader, TitleMetaData, WiiDiscRegionAgeRating, WiiPartition},
+        disc::{PartHeader, TitleMetaData, WiiDiscRegionAgeRating, WiiPartition},
         write::DiscWriter,
     },
     vfs::GeckoFS,
@@ -103,12 +103,12 @@ fn main() -> color_eyre::eyre::Result<()> {
                         wii_magic: 0x5D1C9EA3,
                         gc_magic: 0,
                         game_title,
-                        disable_hash_verif: 0,
-                        disable_disc_encrypt: 0,
+                        disable_hash_verif: false,
+                        disable_disc_encrypt: false,
                         padding: [0; 0x39E],
                     },
                     disc_region: geckolib::iso::disc::WiiDiscRegion {
-                        region: 1,
+                        region: geckolib::iso::disc::WiiDiscRegions::NTSCU,
                         age_rating: WiiDiscRegionAgeRating::default(),
                     },
                     partitions: geckolib::iso::disc::WiiPartitions {
@@ -144,8 +144,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             },
         ));
         {
-            let is_wii = out.get_type() == DiscType::Wii;
-            fs.serialize(&mut out, is_wii).await?;
+            fs.serialize(&mut out).await?;
             #[cfg(feature = "log")]
             log::info!("Encrypting the ISO");
             out.close().await?;
