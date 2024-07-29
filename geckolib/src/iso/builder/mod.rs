@@ -27,7 +27,7 @@ use crate::vfs::{self, Directory, GeckoFS};
 use crate::UPDATER;
 use crate::{framework_map, linker, warn};
 
-use super::disc::{DiscType, WiiDisc};
+use super::{disc::DiscType, read::DiscReader};
 
 mod fs_source;
 
@@ -42,7 +42,7 @@ pub struct IsoBuilder<R1, R2, W> {
     config: Config,
     fs: FSSource<R1>,
     gfs: GeckoFS<R2>,
-    disc_info: Option<WiiDisc>,
+    reader: DiscReader<R2>,
     writer: W,
 }
 
@@ -51,10 +51,10 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         zip: ZipArchive<RConfig>,
         gfs: GeckoFS<RDisc>,
-        disc_info: Option<WiiDisc>,
+        reader: DiscReader<RDisc>,
         writer: W,
     ) -> Self {
-        Self::internal_new(config, FSSource::Zip(Box::new(zip)), gfs, disc_info, writer)
+        Self::internal_new(config, FSSource::Zip(Box::new(zip)), gfs, reader, writer)
     }
 
     #[cfg(not(target_os = "unknown"))]
@@ -62,14 +62,14 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         path: P,
         gfs: GeckoFS<RDisc>,
-        disc_info: Option<WiiDisc>,
+        reader: DiscReader<RDisc>,
         writer: W,
     ) -> Self {
         Self::internal_new(
             config,
             FSSource::FS(path.as_ref().to_path_buf()),
             gfs,
-            disc_info,
+            reader,
             writer,
         )
     }
@@ -78,14 +78,14 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         fs: FSSource<RConfig>,
         gfs: GeckoFS<RDisc>,
-        disc_info: Option<WiiDisc>,
+        reader: DiscReader<RDisc>,
         writer: W,
     ) -> Self {
         Self {
             config,
             fs,
             gfs,
-            disc_info,
+            reader,
             writer,
         }
     }
@@ -185,7 +185,6 @@ where
             updater.set_message("Loading game...".into())?;
         }
 
-        let wii_disc_info = self.disc_info.clone();
         let disc = &mut self.gfs;
 
         #[cfg(feature = "progress")]
@@ -318,7 +317,7 @@ where
             )?;
         }
 
-        if wii_disc_info.is_none() {
+        if self.reader.get_type() == DiscType::Gamecube {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_message("".into())?;
@@ -372,17 +371,16 @@ where
 
         // Finalize disc and write it back into a file
 
-        let out: DiscWriter<W> = { DiscWriter::new(self.writer.clone(), wii_disc_info) };
-        if let DiscWriter::Wii(wii_out) = out.clone() {
-            std::pin::pin!(wii_out).init().await?;
-        }
+        let out: DiscWriter<W> = DiscWriter::from_reader(self.writer.clone(), &self.reader);
+        std::pin::pin!(out.clone()).init().await?;
+        // let out = DiscWriter::Gamecube(self.writer.clone());
 
         let mut out = std::pin::pin!(out);
-        let is_wii = out.get_type() == DiscType::Wii;
-        disc.serialize(&mut out, is_wii).await?;
+        disc.serialize(&mut out).await?;
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
+            updater.set_title("Finished".into())?;
             updater.finish()?;
         }
 
@@ -482,8 +480,8 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Storing replacement files...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Storing replacement files...".into())?;
         }
 
         let mut new_map = HashMap::new();
@@ -497,8 +495,8 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Storing libraries...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Storing libraries...".into())?;
         }
 
         if let Some(link) = &mut config.link {
@@ -543,8 +541,8 @@ impl Builder for PatchBuilder {
 
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_title("Storing banner...".into())?;
                 updater.set_message("".into())?;
+                updater.set_title("Storing banner...".into())?;
             }
 
             write_file_to_zip(&mut zip, "banner.dat", &read(path).await?)?;
@@ -554,8 +552,8 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Storing patch index...".into())?;
             updater.set_message("".into())?;
+            updater.set_title("Storing patch index...".into())?;
         }
 
         config.src.iso = PathBuf::new();
@@ -567,6 +565,12 @@ impl Builder for PatchBuilder {
         )?;
 
         zip.finish()?;
+
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.set_title("Finished".into())?;
+            updater.finish()?;
+        }
 
         Ok(())
     }

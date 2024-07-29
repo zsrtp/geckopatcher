@@ -1,9 +1,10 @@
+use std::error::Error;
 use std::io::SeekFrom;
+use std::mem::offset_of;
 use std::pin::Pin;
 
 use async_std::io::prelude::SeekExt;
 use async_std::io::ReadExt;
-use eyre::Result;
 use num::Unsigned;
 
 use crate::crypto::aes_decrypt_inplace;
@@ -16,6 +17,37 @@ use async_std::io::{Read as AsyncRead, Seek as AsyncSeek};
 use byteorder::{ByteOrder, BE};
 use sha1_smol::Sha1;
 use std::convert::TryFrom;
+
+#[derive(Debug)]
+pub enum DiscError {
+    NoGamePartition,
+    EncryptionError(WiiCryptoError),
+    Io(std::io::Error),
+}
+
+impl Error for DiscError {}
+
+impl std::fmt::Display for DiscError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiscError::NoGamePartition => write!(f, "There is no game parition in this disc"),
+            DiscError::EncryptionError(e) => write!(f, "Encryption error: {}", e),
+            DiscError::Io(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl From<WiiCryptoError> for DiscError {
+    fn from(e: WiiCryptoError) -> Self {
+        DiscError::EncryptionError(e)
+    }
+}
+
+impl From<std::io::Error> for DiscError {
+    fn from(e: std::io::Error) -> Self {
+        DiscError::Io(e)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DiscType {
@@ -37,8 +69,8 @@ pub struct WiiDiscHeader {
     pub wii_magic: u32,
     pub gc_magic: u32,
     pub game_title: [u8; 64],
-    pub disable_hash_verif: u8,
-    pub disable_disc_encrypt: u8,
+    pub disable_hash_verif: bool,
+    pub disable_disc_encrypt: bool,
     pub padding: [u8; 0x39e],
 }
 
@@ -88,8 +120,8 @@ pub fn disc_get_header(raw: &[u8]) -> WiiDiscHeader {
         wii_magic: BE::read_u32(&raw[0x18..0x1C]),
         gc_magic: BE::read_u32(&raw[0x1C..0x20]),
         game_title,
-        disable_hash_verif: raw[0x60],
-        disable_disc_encrypt: raw[0x61],
+        disable_hash_verif: raw[0x60] != 0,
+        disable_disc_encrypt: raw[0x61] != 0,
         padding,
     }
 }
@@ -109,8 +141,8 @@ pub fn disc_set_header(buffer: &mut [u8], dh: &WiiDiscHeader) {
     BE::write_u32(&mut buffer[0x18..], dh.wii_magic);
     BE::write_u32(&mut buffer[0x1C..], dh.gc_magic);
     buffer[0x20..0x60].copy_from_slice(&dh.game_title[..]);
-    buffer[0x60] = dh.disable_hash_verif;
-    buffer[0x61] = dh.disable_disc_encrypt;
+    buffer[0x60] = dh.disable_hash_verif as u8;
+    buffer[0x61] = dh.disable_disc_encrypt as u8;
     buffer[0x62..0x400].copy_from_slice(&dh.padding);
 }
 
@@ -129,8 +161,29 @@ pub struct WiiDiscRegionAgeRating {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+pub enum WiiDiscRegions {
+    #[default]
+    NTSCJ,
+    NTSCU,
+    PAL,
+    KOR,
+}
+
+impl From<u32> for WiiDiscRegions {
+    fn from(r: u32) -> Self {
+        match r {
+            0 => WiiDiscRegions::NTSCJ,
+            1 => WiiDiscRegions::NTSCU,
+            2 => WiiDiscRegions::PAL,
+            3 => WiiDiscRegions::KOR,
+            _ => WiiDiscRegions::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct WiiDiscRegion {
-    pub region: u32,
+    pub region: WiiDiscRegions,
     pub age_rating: WiiDiscRegionAgeRating,
 }
 
@@ -141,7 +194,7 @@ impl Unpackable for WiiDiscRegion {
 impl WiiDiscRegion {
     pub fn parse(raw: &[u8]) -> Self {
         Self {
-            region: BE::read_u32(&raw[..4]),
+            region: BE::read_u32(&raw[..4]).into(),
             age_rating: WiiDiscRegionAgeRating {
                 jp: raw[0x10],
                 us: raw[0x11],
@@ -158,7 +211,7 @@ impl WiiDiscRegion {
     }
 
     pub fn compose_into(&self, buf: &mut [u8]) {
-        BE::write_u32(&mut buf[..4], self.region);
+        buf[..4].copy_from_slice((self.region as u32).to_be_bytes().as_ref());
         buf[0x10] = self.age_rating.jp;
         buf[0x11] = self.age_rating.us;
         buf[0x12] = self.age_rating.unknown1;
@@ -186,7 +239,7 @@ pub struct PartInfo {
 
 pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     reader: &mut Pin<&mut R>,
-) -> Result<PartInfo> {
+) -> Result<PartInfo, DiscError> {
     crate::debug!("Parsing partition info (async)");
     let mut entries: Vec<PartInfoEntry> = Vec::new();
     let mut buf: [u8; 8] = [0u8; 8];
@@ -294,7 +347,7 @@ pub struct Ticket {
     pub time_limit: u32,
     pub fake_sign: [u8; 0x58],
 }
-assert_eq_size!(Ticket, [u8; Ticket::BLOCK_SIZE]);
+assert_eq_size!(Ticket, [u8; <Ticket as Unpackable>::BLOCK_SIZE]);
 declare_tryfrom!(Ticket);
 
 impl Unpackable for Ticket {
@@ -303,18 +356,18 @@ impl Unpackable for Ticket {
 
 impl Ticket {
     pub fn fake_sign(&mut self) -> Result<(), eyre::Report> {
-        let mut tik_buf = [0u8; Ticket::BLOCK_SIZE];
+        let mut tik_buf = [0u8; <Ticket as Unpackable>::BLOCK_SIZE];
         self.sig.sig.fill(0);
         self.sig.sig_padding.fill(0);
         self.fake_sign.fill(0);
-        tik_buf[..Ticket::BLOCK_SIZE].copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&*self));
+        tik_buf[..<Ticket as Unpackable>::BLOCK_SIZE].copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(&*self));
         // start brute force
         crate::trace!("Ticket fake signing; starting brute force...");
         let mut val = 0u32;
         let mut hash_0;
         let mut sha1 = Sha1::new();
         loop {
-            BE::write_u32(&mut tik_buf[0x248..][..4], val);
+            BE::write_u32(&mut tik_buf[offset_of!(Self, time_limit)/* 0x248 */..][..size_of_val(&self.time_limit)], val);
             sha1.reset();
             sha1.update(&tik_buf[0x140..]);
             hash_0 = sha1.digest().bytes()[0];
@@ -338,8 +391,8 @@ impl Ticket {
     }
 }
 
-impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
-    fn from(buf: &[u8; Ticket::BLOCK_SIZE]) -> Self {
+impl From<&[u8; <Ticket as Unpackable>::BLOCK_SIZE]> for Ticket {
+    fn from(buf: &[u8; <Ticket as Unpackable>::BLOCK_SIZE]) -> Self {
         let mut sig = [0_u8; 0x100];
         let mut sig_padding = [0_u8; 0x3C];
         let mut sig_issuer = [0_u8; 0x40];
@@ -389,9 +442,9 @@ impl From<&[u8; Ticket::BLOCK_SIZE]> for Ticket {
     }
 }
 
-impl From<&Ticket> for [u8; Ticket::BLOCK_SIZE] {
+impl From<&Ticket> for [u8; <Ticket as Unpackable>::BLOCK_SIZE] {
     fn from(t: &Ticket) -> Self {
-        let mut buf = [0_u8; Ticket::BLOCK_SIZE];
+        let mut buf = [0_u8; <Ticket as Unpackable>::BLOCK_SIZE];
 
         BE::write_u32(&mut buf[0x00..], t.sig.sig_type);
         buf[0x04..0x104].copy_from_slice(&t.sig.sig[..]);
@@ -421,11 +474,12 @@ impl From<&Ticket> for [u8; Ticket::BLOCK_SIZE] {
 
 impl Default for Ticket {
     fn default() -> Self {
-        Ticket::from(&[0_u8; Ticket::BLOCK_SIZE])
+        Ticket::from(&[0_u8; <Ticket as Unpackable>::BLOCK_SIZE])
     }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+#[repr(C)]
 pub struct PartHeader {
     pub ticket: Ticket,
     pub tmd_size: usize,
@@ -460,7 +514,7 @@ impl From<&[u8; PartHeader::BLOCK_SIZE]> for PartHeader {
 impl From<&PartHeader> for [u8; PartHeader::BLOCK_SIZE] {
     fn from(ph: &PartHeader) -> Self {
         let mut buf = [0_u8; PartHeader::BLOCK_SIZE];
-        buf[..0x2A4].copy_from_slice(&<[u8; Ticket::BLOCK_SIZE]>::from(&ph.ticket));
+        buf[..0x2A4].copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(&ph.ticket));
         BE::write_u32(&mut buf[0x2A4..], ph.tmd_size as u32);
         BE::write_u32(&mut buf[0x2A8..], (ph.tmd_offset >> 2) as u32);
         BE::write_u32(&mut buf[0x2AC..], ph.cert_size as u32);

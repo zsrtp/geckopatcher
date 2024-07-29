@@ -2,6 +2,7 @@ use crate::crypto::Unpackable;
 use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
+use crate::iso::write::DiscWriter;
 use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
@@ -356,11 +357,12 @@ where
         Ok(())
     }
 
-    pub async fn serialize<W>(&mut self, writer: &mut W, is_wii: bool) -> Result<()>
+    pub async fn serialize<W>(&mut self, writer: &mut DiscWriter<W>) -> Result<()>
     where
-        W: AsyncWrite + Unpin,
+        W: AsyncWrite + AsyncSeek + Unpin,
     {
         crate::debug!("Serializing the FileSystem");
+        let is_wii = writer.get_type() == DiscType::Wii;
         let mut pos: u64 = 0;
         let header_size = self.sys().get_file("iso.hdr")?.len()?;
         let apploader_size = self.sys().get_file("AppLoader.ldr")?.len()?;

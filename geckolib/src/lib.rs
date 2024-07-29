@@ -80,12 +80,11 @@ where
     };
 
     let disc_reader = DiscReader::new(iso_reader).await?;
-    let disc_info = disc_reader.get_disc_info();
     Ok(IsoBuilder::new_with_zip(
         config,
         zip,
-        GeckoFS::parse(disc_reader).await?,
-        disc_info,
+        GeckoFS::parse(disc_reader.clone()).await?,
+        disc_reader,
         writer,
     ))
 }
@@ -109,9 +108,8 @@ pub async fn open_config_from_fs_iso(
         .open(&config.build.iso)
         .await?;
     let disc_reader = DiscReader::new(async_std::fs::File::open(&config.src.iso).await?).await?;
-    let disc_info = disc_reader.get_disc_info();
-    let gfs = GeckoFS::parse(disc_reader).await?;
-    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_info, writer))
+    let gfs = GeckoFS::parse(disc_reader.clone()).await?;
+    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_reader, writer))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

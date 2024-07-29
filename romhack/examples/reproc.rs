@@ -5,7 +5,7 @@ use async_std::io::{prelude::SeekExt, ReadExt};
 use clap::{arg, command, Parser, ValueHint};
 use futures::AsyncWriteExt;
 use geckolib::{
-    iso::{disc::DiscType, read::DiscReader, write::DiscWriter}, vfs::GeckoFS
+    iso::{read::DiscReader, write::DiscWriter}, vfs::GeckoFS
 };
 #[cfg(feature = "progress")]
 use geckolib::UPDATER;
@@ -74,14 +74,13 @@ fn main() -> color_eyre::eyre::Result<()> {
         }
 
         let mut fs = GeckoFS::parse(f).await?;
-        let is_wii = out.get_type() == DiscType::Wii;
         #[cfg(feature = "log")]
         log::info!("Encrypting the ISO");
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.init(None)?;
         }
-        fs.serialize(&mut out, is_wii).await?;
+        fs.serialize(&mut out).await?;
         out.close().await?;
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;

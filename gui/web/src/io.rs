@@ -1,4 +1,4 @@
-use std::{pin::Pin, sync::Arc, task::{Context, Poll}};
+use std::{io::{Read, Seek}, pin::Pin, sync::Arc, task::{Context, Poll}};
 
 use async_std::{io, sync::Mutex};
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, TryFutureExt};
@@ -22,6 +22,87 @@ impl WebFile {
         Self {
             state: Arc::new(Mutex::new(WebFileState { handle, cursor: 0 })),
         }
+    }
+}
+
+impl Read for WebFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut state = match self.state.try_lock_arc() {
+            Some(guard) => guard,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock file state",
+                ))
+            }
+        };
+        let mut options = web_sys::FileSystemReadWriteOptions::new();
+        options.at(state.cursor as f64);
+        match state.handle.read_with_u8_array_and_options(buf, &options) {
+            Ok(n) => {
+                state.cursor += n as u64;
+                Ok(n as usize)
+            }
+            Err(err) => Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{err:?}"),
+            )),
+        }
+    }
+}
+
+impl Seek for WebFile {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
+        let mut state = match self.state.try_lock_arc() {
+            Some(guard) => guard,
+            None => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to lock file state",
+                ))
+            }
+        };
+        let len = match state.handle.get_size() {
+            Ok(size) => size as u64,
+            Err(err) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("{err:?}"),
+                ))
+            }
+        };
+        match pos {
+            std::io::SeekFrom::Start(pos) => {
+                if pos > len {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Cursor past end of stream",
+                    ));
+                }
+                state.cursor = pos;
+            }
+            std::io::SeekFrom::End(pos) => {
+                let new_pos = len as i64 + pos;
+                if !(0..=len as i64).contains(&new_pos) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Cursor outside of stream range",
+                    ));
+                }
+                state.cursor = new_pos as u64;
+            }
+            std::io::SeekFrom::Current(pos) => {
+                let new_pos = state.cursor as i64 + pos;
+                if !(0..=len as i64).contains(&new_pos) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Cursor outside of stream range",
+                    ));
+                }
+                state.cursor = new_pos as u64;
+            }
+        };
+        Ok(state.cursor)
     }
 }
 

@@ -1,3 +1,4 @@
+use std::io::{Read, Seek};
 use std::sync::Arc;
 
 use async_std::io::prelude::{ReadExt, SeekExt};
@@ -9,7 +10,8 @@ use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
 use geckolib::update::UpdaterType;
 use geckolib::vfs::GeckoFS;
-use geckolib::UPDATER;
+use geckolib::{open_config_from_patch, UPDATER};
+use geckolib::iso::builder::Builder;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use web_gui_patcher::io::WebFile;
@@ -19,7 +21,13 @@ use web_gui_patcher::io::WebFile;
 static ALLOC: wasm_tracing_allocator::WasmTracingAllocator<std::alloc::System> =
     wasm_tracing_allocator::WasmTracingAllocator(std::alloc::System);
 
-async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
+async fn apply<R1: Read + Seek, R2: AsyncRead + AsyncSeek + Clone + Unpin + 'static, W: AsyncWrite + AsyncSeek + Clone + Unpin>(patch: R1, iso: R2, save: W) -> Result<(), eyre::Error> {
+    let mut builder = open_config_from_patch(patch, iso, save).await?;
+    builder.build().await?;
+    Ok(())
+}
+
+async fn _reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
     file: R,
     save: W,
 ) -> Result<(), eyre::Error> {
@@ -56,7 +64,7 @@ async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek
         let is_wii = out.get_type() == DiscType::Wii;
         let mut fs_guard = fs.lock_arc().await;
         log::info!("Writing VFS to output file...");
-        fs_guard.serialize(&mut out, is_wii).await?;
+        fs_guard.serialize(&mut out).await?;
         if is_wii {
             log::info!("Encrypting the ISO");
         }
@@ -67,6 +75,7 @@ async fn reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek
 }
 
 #[wasm_bindgen]
+#[allow(improper_ctypes_definitions)]
 pub async extern "C" fn run_patch(
     patch: &JsValue,
     file: &JsValue,
@@ -95,7 +104,8 @@ pub async extern "C" fn run_patch(
         save_access
     );
 
-    if let Err(err) = reproc(
+    if let Err(err) = apply(
+        WebFile::new(patch_access.clone()),
         WebFile::new(file_access.clone()),
         WebFile::new(save_access.clone()),
     )
@@ -107,13 +117,8 @@ pub async extern "C" fn run_patch(
 
     log::info!("Reproc finished");
 
-    let _ = patch_access.flush();
-    let _ = file_access.flush();
-    // let _ = save_access.flush();
-
     patch_access.close();
     file_access.close();
-    // save_access.close();
 
     Ok(())
 }

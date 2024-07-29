@@ -6,13 +6,70 @@ use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use async_std::sync::Mutex;
 use async_std::task::ready;
 use byteorder::{ByteOrder, BE};
-use eyre::Result;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
+use std::error::Error;
+use std::fmt::Display;
 use std::io::SeekFrom;
 use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::Poll;
+
+// Error structures for the disc readers
+
+#[derive(Debug)]
+pub enum WiiDiscReaderError {
+    InvalidWiiDisc { magic: u32 },
+    NoGamePartition,
+    EncryptionError(WiiCryptoError),
+    ConvertError { name: String },
+    Io(std::io::Error),
+}
+
+impl Error for WiiDiscReaderError {}
+
+impl Display for WiiDiscReaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WiiDiscReaderError::InvalidWiiDisc { magic } => {
+                write!(f, "Invalid Wii disc: magic is {:#010X}", magic)
+            }
+            WiiDiscReaderError::NoGamePartition => write!(f, "There is no game parition in this disc"),
+            WiiDiscReaderError::EncryptionError(e) => write!(f, "Encryption error: {}", e),
+            WiiDiscReaderError::ConvertError { name } => {
+                write!(f, "The provided slice is too small to be converted into a {}.", name)
+            }
+            WiiDiscReaderError::Io(e) => write!(f, "I/O error: {}", e),
+        }
+    }
+}
+
+impl From<std::io::Error> for WiiDiscReaderError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<WiiCryptoError> for WiiDiscReaderError {
+    fn from(e: WiiCryptoError) -> Self {
+        match e {
+            WiiCryptoError::NotWiiDisc { magic } => Self::InvalidWiiDisc { magic },
+            WiiCryptoError::NoGamePartition => Self::NoGamePartition,
+            WiiCryptoError::ConvertError { name } => Self::ConvertError { name },
+            _ => Self::EncryptionError(e),
+        }
+    }
+}
+
+impl From<DiscError> for WiiDiscReaderError {
+    fn from(e: DiscError) -> Self {
+        match e {
+            DiscError::NoGamePartition => Self::NoGamePartition,
+            DiscError::EncryptionError(e) => Self::EncryptionError(e),
+            DiscError::Io(e) => Self::Io(e),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum WiiDiscReaderState {
@@ -37,7 +94,7 @@ pub struct WiiDiscReader<R> {
 async fn get_partitions<R: AsyncRead + AsyncSeek>(
     reader: &mut Pin<&mut R>,
     part_info: &PartInfo,
-) -> Result<WiiPartitions> {
+) -> Result<WiiPartitions, WiiDiscReaderError> {
     crate::debug!("Fetching partitions from reader");
     let mut ret_vec: Vec<WiiPartition> = Vec::new();
     let mut data_idx: Option<usize> = None;
@@ -103,7 +160,7 @@ impl<R> WiiDiscReader<R>
 where
     R: AsyncRead + AsyncSeek + Unpin,
 {
-    pub async fn try_parse(reader: R) -> Result<Self> {
+    pub async fn try_parse(reader: R) -> Result<Self, WiiDiscReaderError> {
         crate::debug!("Trying to parse a Wii Disc from the reader");
         let mut this = Self {
             reader,
@@ -273,6 +330,7 @@ where
                 let mut data_pool: Vec<&mut [u8]> =
                     buf2.chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
                 crate::trace!("data_pool size: {}", data_pool.len());
+                let disable_disc_encrypt = this.disc.disc_header.disable_disc_encrypt;
                 let decrypt_process = move |data: &mut &mut [u8]| {
                     let mut iv = [0_u8; consts::WII_KEY_SIZE];
                     iv[..consts::WII_KEY_SIZE].copy_from_slice(
@@ -280,17 +338,19 @@ where
                     );
                     crate::trace!("iv: {:?}", iv);
                     crate::trace!("before: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
-                    // Decrypt the hash to check if valid (not required here)
-                    aes_decrypt_inplace(
-                        &mut data[..consts::WII_SECTOR_HASH_SIZE],
-                        &[0_u8; consts::WII_KEY_SIZE],
-                        &part_key,
-                    );
-                    aes_decrypt_inplace(
-                        &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
-                        &iv,
-                        &part_key,
-                    );
+                    if !disable_disc_encrypt {
+                        // Decrypt the hash to check if valid (not required here)
+                        aes_decrypt_inplace(
+                            &mut data[..consts::WII_SECTOR_HASH_SIZE],
+                            &[0_u8; consts::WII_KEY_SIZE],
+                            &part_key,
+                        );
+                        aes_decrypt_inplace(
+                            &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
+                            &iv,
+                            &part_key,
+                        );
+                    }
                     crate::trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
                 };
                 crate::trace!("Decrypting blocks");
@@ -323,6 +383,37 @@ where
                 state.state = WiiDiscReaderState::Seeking;
                 Poll::Ready(Ok(buf.len()))
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum DiscReaderError {
+    NotDisc(u32, u32),
+    Io(std::io::Error),
+    Wii(WiiDiscReaderError),
+}
+
+impl From<std::io::Error> for DiscReaderError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl From<WiiDiscReaderError> for DiscReaderError {
+    fn from(e: WiiDiscReaderError) -> Self {
+        Self::Wii(e)
+    }
+}
+
+impl Error for DiscReaderError {}
+
+impl Display for DiscReaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiscReaderError::NotDisc(gc_magic, wii_magic) => write!(f, "Not a disc (GC: {:#010X}; Wii: {:#010X})", gc_magic, wii_magic),
+            DiscReaderError::Io(e) => write!(f, "I/O error: {}", e),
+            DiscReaderError::Wii(e) => write!(f, "Wii error: {}", e),
         }
     }
 }
@@ -381,7 +472,7 @@ impl<R> DiscReader<R>
 where
     R: AsyncRead + AsyncSeek + Unpin,
 {
-    pub async fn new(mut reader: R) -> Result<Self> {
+    pub async fn new(mut reader: R) -> Result<Self, DiscReaderError> {
         pin!(&mut reader).seek(SeekFrom::Start(0x18)).await?;
         let mut buf = [0u8; 8];
         pin!(&mut reader).read(&mut buf).await?;
@@ -393,10 +484,9 @@ where
             crate::debug!("Loading Wii disc");
             Ok(Self::Wii(WiiDiscReader::try_parse(reader).await?))
         } else {
-            Err(eyre::eyre!(
-                "Not a game disc (Wii: {:08X}; GC: {:08X})",
+            Err(DiscReaderError::NotDisc(
+                BE::read_u32(&buf[4..][..4]),
                 BE::read_u32(&buf[..][..4]),
-                BE::read_u32(&buf[4..][..4])
             ))
         }
     }

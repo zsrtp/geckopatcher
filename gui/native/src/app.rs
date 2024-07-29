@@ -4,6 +4,8 @@ use async_std::fs;
 use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use futures_lite::AsyncWriteExt;
+use geckolib::iso::builder::Builder;
+use geckolib::open_config_from_patch;
 use rfd::FileHandle;
 use std::path::PathBuf;
 
@@ -87,7 +89,25 @@ pub struct PatcherApp {
     progress: Option<f32>,
 }
 
-async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
+async fn apply(
+    patch: PathBuf,
+    iso: PathBuf,
+    save: PathBuf,
+) -> Result<(), eyre::Error> {
+    let patch = std::fs::OpenOptions::new().read(true).open(patch)?;
+    let iso = async_std::fs::OpenOptions::new().read(true).open(iso).await?;
+    let save = async_std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(save)
+        .await?;
+    let mut builder = open_config_from_patch(patch, iso, save).await?;
+    builder.build().await?;
+    Ok(())
+}
+
+async fn _reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Error> {
     // let patch = fs::OpenOptions::new().read(true).open(patch_path).await;
     let file = fs::OpenOptions::new()
         .read(true)
@@ -123,9 +143,8 @@ async fn reproc(file_path: PathBuf, save_path: PathBuf) -> Result<(), eyre::Erro
     let mut out = out;
     let mut fs = GeckoFS::parse(f).await?;
     {
-        let is_wii = out.get_type() == DiscType::Wii;
-        fs.serialize(&mut out, is_wii).await?;
-        if is_wii {
+        fs.serialize(&mut out).await?;
+        if out.get_type() == DiscType::Wii {
             log::info!("Encrypting the ISO");
         }
         out.flush().await?;
@@ -195,7 +214,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                             }
                         };
                     }
-                    ToAppMsg::PatchAndSave(_patch, iso) => {
+                    ToAppMsg::PatchAndSave(patch, iso) => {
                         match rfd::AsyncFileDialog::new()
                             .add_filter("application/x-cd-image", &["iso"])
                             .add_filter("All Files", &["*"])
@@ -217,7 +236,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                                     log::error!("Could not send Progress (update gui)");
                                     return;
                                 }
-                                if let Err(err) = reproc(iso, save).await {
+                                if let Err(err) = apply(patch, iso, save).await {
                                     log::error!("{:?}", err);
                                     if sender
                                         .send_async(FromAppMsg::Progress(
