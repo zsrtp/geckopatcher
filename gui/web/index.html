@@ -58,10 +58,10 @@
             window.URL.revokeObjectURL(url);
         }
 
-        window["downloadIso"] = async (is_wii) => {
+        window["downloadIso"] = async (filename) => {
             let root = await navigator.storage.getDirectory();
             let fileHandle = await root.getFileHandle("tpgz.iso");
-            setupDownload(await fileHandle.getFile(), is_wii ? "tpgzw.iso" : "tpgz.iso");
+            setupDownload(await fileHandle.getFile(), filename);
         };
     </script>
     <script src="tracing_hooks.js" type="module"></script>

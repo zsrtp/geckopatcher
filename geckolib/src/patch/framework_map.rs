@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::demangle::demangle as demangle_tww;
-use crate::linker::{LinkedSection, SectionKind};
+use crate::patch::demangle::demangle as demangle_tww;
+use crate::patch::linker::{LinkedSection, SectionKind};
 use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use eyre::Context;
 use regex::{Captures, Regex};

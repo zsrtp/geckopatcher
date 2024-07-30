@@ -1,11 +1,11 @@
-use crate::dol::{DolFile, Section};
+use crate::patch::dol::{DolFile, Section};
 use crate::{info, UPDATER};
 use byteorder::{ByteOrder, BE};
 use goblin::archive::{Archive, Member};
 use goblin::elf::{section_header, sym, Elf, Reloc};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub static BASIC_LIB: &[u8] = include_bytes!("../../resources/libbasic.a");
+pub static BASIC_LIB: &[u8] = include_bytes!("../../../resources/libbasic.a");
 
 fn symbols_referenced_in_section<F>(section_index: usize, elf: &Elf, mut f: F)
 where

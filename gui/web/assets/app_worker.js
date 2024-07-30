@@ -49,15 +49,15 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                     globalThis.postMessage({ type: "progress", title: "Loading Files..." });
                     registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) => {
                         console.dir(patch, file, save);
-                        return wasm_bindgen.run_patch(patch, file, save).then(() => [patch, file, save]);
+                        return wasm_bindgen.run_patch(patch, file, save).then((filename) => [[patch, file], filename]);
                     })
-                        .then(async ([patch, file, save]) => {
+                        .then(async ([[patch, file], filename]) => {
                             let f = await file.getFile();
-                            return Promise.all([f.slice(0, 6).text(), deleteLocalStorage(patch, file)]);
+                            return Promise.all([filename, deleteLocalStorage(patch, file)]);
                         })
-                        .then(([gameCode,]) => {
-                            console.debug("Done", gameCode);
-                            globalThis.postMessage({ type: "done", is_wii: gameCode.startsWith("R") });
+                        .then(([filename,]) => {
+                            console.debug("Done", filename);
+                            globalThis.postMessage({ type: "done", filename: filename });
                         })
                         .catch((err) => { globalThis.postMessage({ type: "cancelled" }); throw err; })
                         .finally(() => {

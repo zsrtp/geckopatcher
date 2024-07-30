@@ -21,10 +21,10 @@ use web_gui_patcher::io::WebFile;
 static ALLOC: wasm_tracing_allocator::WasmTracingAllocator<std::alloc::System> =
     wasm_tracing_allocator::WasmTracingAllocator(std::alloc::System);
 
-async fn apply<R1: Read + Seek, R2: AsyncRead + AsyncSeek + Clone + Unpin + 'static, W: AsyncWrite + AsyncSeek + Clone + Unpin>(patch: R1, iso: R2, save: W) -> Result<(), eyre::Error> {
+async fn apply<R1: Read + Seek, R2: AsyncRead + AsyncSeek + Clone + Unpin + 'static, W: AsyncWrite + AsyncSeek + Clone + Unpin>(patch: R1, iso: R2, save: W) -> Result<String, eyre::Error> {
     let mut builder = open_config_from_patch(patch, iso, save).await?;
     builder.build().await?;
-    Ok(())
+    Ok(builder.config.build.iso.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("output.iso".into()))
 }
 
 async fn _reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
@@ -80,7 +80,7 @@ pub async extern "C" fn run_patch(
     patch: &JsValue,
     file: &JsValue,
     save: &JsValue,
-) -> Result<(), JsValue> {
+) -> Result<JsValue, JsValue> {
     let patch_handle: web_sys::FileSystemFileHandle = patch.clone().dyn_into()?;
     let patch_access: web_sys::FileSystemSyncAccessHandle =
         wasm_bindgen_futures::JsFuture::from(patch_handle.create_sync_access_handle())
@@ -104,23 +104,26 @@ pub async extern "C" fn run_patch(
         save_access
     );
 
-    if let Err(err) = apply(
+    let filename = match apply(
         WebFile::new(patch_access.clone()),
         WebFile::new(file_access.clone()),
         WebFile::new(save_access.clone()),
     )
     .await
     {
-        web_sys::console::error_1(&format!("{err:?}").into());
-        return Err(format!("{err:?}").into());
-    }
+        Ok(iso) => iso,
+        Err(err) => {
+            web_sys::console::error_1(&format!("{err:?}").into());
+            return Err(format!("{err:?}").into());
+        }
+    };
 
     log::info!("Reproc finished");
 
     patch_access.close();
     file_access.close();
 
-    Ok(())
+    Ok(filename.into())
 }
 
 fn main() {

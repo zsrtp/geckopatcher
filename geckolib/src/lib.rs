@@ -16,15 +16,10 @@ extern crate static_assertions;
 extern crate regex;
 extern crate standalone_syn as syn;
 
-pub mod assembler;
-pub mod banner;
+pub mod patch;
 pub mod config;
 pub mod crypto;
-pub mod demangle;
-pub mod dol;
-pub mod framework_map;
 pub mod iso;
-pub mod linker;
 pub(crate) mod logs;
 #[cfg(feature = "progress")]
 pub mod update;

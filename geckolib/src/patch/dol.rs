@@ -1,4 +1,4 @@
-use crate::assembler::Instruction;
+use crate::patch::assembler::Instruction;
 use async_std::io::{prelude::*, Read as AsyncRead, ReadExt, Seek as AsyncSeek};
 use byteorder::{ByteOrder, BE};
 use std::fmt::{self, Debug};

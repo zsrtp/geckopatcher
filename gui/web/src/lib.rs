@@ -27,7 +27,7 @@ extern "C" {
     #[wasm_bindgen(js_name = "getSave", catch)]
     pub async fn get_save() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = "downloadIso", catch)]
-    pub async fn download_iso(is_wii: bool) -> Result<(), JsValue>;
+    pub async fn download_iso(is_wii: String) -> Result<(), JsValue>;
 }
 
 pub struct App {
@@ -69,8 +69,8 @@ impl Component for App {
             }
             if type_.as_string().map_or(false, |s| &s == "done") {
                 web_sys::console::info_1(&event);
-                let is_wii = match js_sys::Reflect::get(&data, &"is_wii".into()) {
-                    Ok(is_wii) => is_wii.as_bool().unwrap_or(false),
+                let filename = match js_sys::Reflect::get(&data, &"filename".into()) {
+                    Ok(filename) => filename.as_string().unwrap_or("patched".into()),
                     Err(err) => {
                         web_sys::console::warn_1(&err);
                         return;
@@ -78,7 +78,7 @@ impl Component for App {
                 };
                 callback.emit(Message::PatchedIso);
                 wasm_bindgen_futures::spawn_local(async move {
-                    if let Err(err) = download_iso(is_wii).await {
+                    if let Err(err) = download_iso(filename).await {
                         web_sys::console::warn_1(&err);
                     }
                 });

@@ -16,16 +16,16 @@ use zip::ZipArchive;
 use zip::ZipWriter;
 
 use self::fs_source::FSSource;
-use crate::assembler::{Assembler, Instruction};
-use crate::banner::Banner;
+use crate::patch::assembler::{Assembler, Instruction};
+use crate::patch::banner::Banner;
 use crate::config::Config;
 
-use crate::dol::DolFile;
+use crate::patch::dol::DolFile;
 use crate::iso::write::DiscWriter;
 use crate::vfs::{self, Directory, GeckoFS};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use crate::{framework_map, linker, warn};
+use crate::{patch::{framework_map, linker}, warn};
 
 use super::{disc::DiscType, read::DiscReader};
 
@@ -39,7 +39,7 @@ pub trait Builder {
 
 /// A builder for creating an ISO
 pub struct IsoBuilder<R1, R2, W> {
-    config: Config,
+    pub config: Config,
     fs: FSSource<R1>,
     gfs: GeckoFS<R2>,
     reader: DiscReader<R2>,
