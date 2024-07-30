@@ -9,7 +9,7 @@ Once that is installed, you can build the project by running `trunk build`. This
 to the `dist` folder. The option `--release` is available to build a release version.
 
 By default, the application will look for patch files provided in the `patches` folder, but it can be built with the `generic_patch`
-feature flag (`--feature generic_patch`) to have a version of the application which accepts a patch provided by the user.
+feature flag (`--features generic_patch`) to have a version of the application which accepts a patch provided by the user.
 
 ## How to run
 
