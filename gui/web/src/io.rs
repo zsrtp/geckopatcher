@@ -1,7 +1,8 @@
-use std::{io::{Read, Seek}, pin::Pin, sync::Arc, task::{Context, Poll}};
+use std::{fmt::Debug, io::{Read, Seek}, pin::Pin, sync::Arc, task::{Context, Poll}};
 
 use async_std::{io, sync::Mutex};
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, TryFutureExt};
+use js_sys::Uint8Array;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::FileSystemWritableFileStream;
 
@@ -320,7 +321,10 @@ impl AsyncSeek for WebWritable {
     ) -> Poll<io::Result<u64>> {
         let this = self.get_mut();
         let mut state = match this.state.try_lock_arc() {
-            None => return Poll::Pending,
+            None => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending
+            },
             Some(state) => state,
         };
         match std::mem::take(&mut state.state) {
@@ -368,7 +372,10 @@ impl AsyncWrite for WebWritable {
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         let mut state = match self.get_mut().state.try_lock_arc() {
-            None => return Poll::Pending,
+            None => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending
+            },
             Some(state) => state,
         };
         match std::mem::take(&mut state.state) {
@@ -377,8 +384,10 @@ impl AsyncWrite for WebWritable {
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
-            WebWritableStates::StartWrite(buffer) => { // TypeError: Failed to execute 'write' on 'FileSystemWritableFileStream': The provided ArrayBufferView value must not be shared.
-                let promise = state.handle.write_with_u8_array(&buffer).map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
+            WebWritableStates::StartWrite(buffer) => {
+                let array = Uint8Array::new_with_length(buffer.len() as u32);
+                array.copy_from(buffer.as_slice());
+                let promise = state.handle.write_with_buffer_source(&array).map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
                 state.state = WebWritableStates::WaitForWrite(JsFuture::from(promise));
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -386,6 +395,7 @@ impl AsyncWrite for WebWritable {
             WebWritableStates::WaitForWrite(mut future) => {
                 match future.try_poll_unpin(cx) {
                     Poll::Ready(Ok(_)) => {
+                        state.cursor = state.cursor.checked_add(buf.len() as u64).ok_or(io::Error::new(io::ErrorKind::Other, "Write position out of bound"))?;
                         state.state = WebWritableStates::Init;
                         Poll::Ready(Ok(buf.len()))
                     }
@@ -408,7 +418,10 @@ impl AsyncWrite for WebWritable {
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         let mut state = match self.get_mut().state.try_lock_arc() {
-            None => return Poll::Pending,
+            None => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending
+            },
             Some(state) => state,
         };
         match std::mem::take(&mut state.state) {
@@ -439,6 +452,129 @@ impl AsyncWrite for WebWritable {
                 }
             }
             _ => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Invalid writer state")))
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+enum WebReadableStates {
+    #[default]
+    Init,
+    StartRead,
+    WaitForRead(JsFuture),
+}
+
+#[derive(Debug)]
+struct WebReadableState {
+    handle: web_sys::File,
+    state: WebReadableStates,
+    cursor: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebReadable {
+    state: Arc<Mutex<WebReadableState>>,
+}
+
+impl WebReadable {
+    pub fn new(handle: web_sys::File) -> Self {
+        Self { state: Arc::new(Mutex::new(WebReadableState { handle, state: WebReadableStates::default() , cursor: 0 })) }
+    }
+}
+
+impl AsyncSeek for WebReadable
+{
+    fn poll_seek(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        pos: std::io::SeekFrom,
+    ) -> Poll<std::io::Result<u64>> {
+        let this = self.get_mut();
+        let mut state = match this.state.try_lock_arc() {
+            None => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending
+            },
+            Some(state) => state,
+        };
+        let len = state.handle.size() as u64;
+        match pos {
+            std::io::SeekFrom::Start(pos) => {
+                if pos > len {
+                    return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, "Cursor past end of stream")));
+                }
+                state.cursor = pos;
+            }
+            std::io::SeekFrom::End(pos) => {
+                let new_pos = len as i64 + pos;
+                if !(0..=len as i64).contains(&new_pos) {
+                    return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, "Cursor outside of stream range")));
+                }
+                state.cursor = new_pos as u64;
+            }
+            std::io::SeekFrom::Current(pos) => {
+                let new_pos = state.cursor as i64 + pos;
+                if !(0..=len as i64).contains(&new_pos) {
+                    return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, "Cursor outside of stream range")));
+                }
+                state.cursor = new_pos as u64;
+            }
+        };
+        Poll::Ready(Ok(state.cursor))
+    }
+}
+
+impl AsyncRead for WebReadable
+{
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let this = self.get_mut();
+        let mut state = match this.state.try_lock_arc() {
+            None => {
+                cx.waker().wake_by_ref();
+                return Poll::Pending
+            },
+            Some(state) => state,
+        };
+        let len = state.handle.size() as u64;
+        if state.cursor + buf.len() as u64 > len {
+            return Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, "Cursor past end of stream")));
+        }
+        match std::mem::take(&mut state.state) {
+            WebReadableStates::Init => {
+                state.state = WebReadableStates::StartRead;
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            WebReadableStates::StartRead => {
+                let blob = state.handle.slice_with_f64_and_f64(state.cursor as f64, state.cursor as f64 + buf.len() as f64)
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err)))?;
+                let fut = JsFuture::from(blob.array_buffer());
+                state.state = WebReadableStates::WaitForRead(fut);
+                cx.waker().wake_by_ref();
+                Poll::Pending
+            },
+            WebReadableStates::WaitForRead(mut fut) => {
+                match fut.try_poll_unpin(cx) {
+                    Poll::Ready(Ok(array)) => {
+                        let arr = Uint8Array::new(&array);
+                        arr.copy_to(buf);
+                        state.cursor += arr.length() as u64;
+                        state.state = WebReadableStates::Init;
+                        Poll::Ready(Ok(arr.length() as usize))
+                    }
+                    Poll::Ready(Err(err)) => {
+                        Poll::Ready(Err(std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err))))
+                    }
+                    Poll::Pending => {
+                        state.state = WebReadableStates::WaitForRead(fut);
+                        Poll::Pending
+                    }
+                }
+            },
         }
     }
 }

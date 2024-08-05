@@ -70,7 +70,7 @@ impl Component for App {
             if type_.as_string().map_or(false, |s| &s == "done") {
                 web_sys::console::info_1(&event);
                 let filename = match js_sys::Reflect::get(&data, &"filename".into()) {
-                    Ok(filename) => filename.as_string().unwrap_or("patched".into()),
+                    Ok(filename) => filename.as_string().unwrap_or("patched.iso".into()),
                     Err(err) => {
                         web_sys::console::warn_1(&err);
                         return;

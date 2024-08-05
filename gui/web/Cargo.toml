@@ -60,6 +60,7 @@ features = [
     "FileSystemWritableFileStream",
     "FileSystemSyncAccessHandle",
     "FileSystemReadWriteOptions",
+    "ReadableStreamDefaultReader",
     "Navigator",
     "StorageManager",
     "console",

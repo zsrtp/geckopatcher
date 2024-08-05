@@ -14,7 +14,7 @@ use geckolib::{open_config_from_patch, UPDATER};
 use geckolib::iso::builder::Builder;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
-use web_gui_patcher::io::WebFile;
+use web_gui_patcher::io::{WebFile, WebReadable, WebWritable};
 
 #[cfg(feature = "debug_alloc")]
 #[global_allocator]
@@ -87,14 +87,14 @@ pub async extern "C" fn run_patch(
             .await?
             .dyn_into()?;
     let file_handle: web_sys::FileSystemFileHandle = file.clone().dyn_into()?;
-    let file_access: web_sys::FileSystemSyncAccessHandle =
-        wasm_bindgen_futures::JsFuture::from(file_handle.create_sync_access_handle())
+    let file_access: web_sys::File =
+        wasm_bindgen_futures::JsFuture::from(file_handle.get_file())
             .await?
             .dyn_into()?;
     let save_handle: web_sys::FileSystemFileHandle = save.clone().dyn_into()?;
     log::info!("getting handle...");
-    let save_access: web_sys::FileSystemSyncAccessHandle =
-        wasm_bindgen_futures::JsFuture::from(save_handle.create_sync_access_handle())
+    let save_access: web_sys::FileSystemWritableFileStream =
+        wasm_bindgen_futures::JsFuture::from(save_handle.create_writable())
             .await?
             .dyn_into()?;
     log::debug!(
@@ -106,8 +106,8 @@ pub async extern "C" fn run_patch(
 
     let filename = match apply(
         WebFile::new(patch_access.clone()),
-        WebFile::new(file_access.clone()),
-        WebFile::new(save_access.clone()),
+        WebReadable::new(file_access.clone()),
+        WebWritable::new(save_access.clone()),
     )
     .await
     {
@@ -121,7 +121,6 @@ pub async extern "C" fn run_patch(
     log::info!("Reproc finished");
 
     patch_access.close();
-    file_access.close();
 
     Ok(filename.into())
 }

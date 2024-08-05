@@ -527,6 +527,7 @@ where
             updater.finish()?;
         }
 
+        writer.flush().await?;
         writer.close().await?;
 
         Ok(())

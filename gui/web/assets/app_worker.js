@@ -59,7 +59,11 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                             console.debug("Done", filename);
                             globalThis.postMessage({ type: "done", filename: filename });
                         })
-                        .catch((err) => { globalThis.postMessage({ type: "cancelled" }); throw err; })
+                        .catch((err) => {
+                            globalThis.postMessage({ type: "cancelled"});
+                            globalThis.postMessage({ type: "progress", title: err });
+                            throw err;
+                        })
                         .finally(() => {
                             is_running = false;
                         });
