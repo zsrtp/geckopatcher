@@ -256,7 +256,7 @@ where
 
             let linked = linker::link(
                 &libs_to_link,
-                base_address.value() as u32,
+                base_address.base10_parse::<u32>().context("Invalid Base Address")?,
                 link.entries.clone(),
                 &original_symbols,
             )
@@ -403,7 +403,7 @@ impl PatchBuilder {
 #[cfg(not(target_os = "unknown"))]
 fn write_file_to_zip<
     R: Write + Seek,
-    S: Into<Box<str>> + ToOwned<Owned = SToOwned>,
+    S: Into<Box<str>> + ToOwned<Owned = SToOwned> + std::fmt::Display,
     SToOwned: Into<Box<str>>,
 >(
     zip: &mut ZipWriter<R>,

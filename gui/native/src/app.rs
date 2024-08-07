@@ -161,127 +161,125 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
 
         loop {
             match receiver.recv_async().await {
-                Ok(msg) => match msg {
-                    ToAppMsg::GetPatch => {
-                        match rfd::AsyncFileDialog::new()
-                            .add_filter("application/zip", &["patch"])
-                            .add_filter("All Files", &["*"])
-                            .pick_file()
-                            .await
-                        {
-                            Some(file) => {
-                                log::debug!("Got a patch file from the user!");
-                                if sender
-                                    .send_async(FromAppMsg::OpenedPatch(file))
-                                    .await
-                                    .is_err()
-                                {
-                                    log::error!("could not send OpenedPatch");
-                                    return;
-                                }
+                Err(flume::RecvError::Disconnected) => {
+                    log::warn!("Thread's receiver disconnected");
+                    return;
+                }
+                Ok(ToAppMsg::GetPatch) => {
+                    match rfd::AsyncFileDialog::new()
+                        .add_filter("application/zip", &["patch"])
+                        .add_filter("All Files", &["*"])
+                        .pick_file()
+                        .await
+                    {
+                        Some(file) => {
+                            log::debug!("Got a patch file from the user!");
+                            if sender
+                                .send_async(FromAppMsg::OpenedPatch(file))
+                                .await
+                                .is_err()
+                            {
+                                log::error!("could not send OpenedPatch");
+                                return;
                             }
-                            None => {
-                                if sender.send_async(FromAppMsg::NoPatchOpened).await.is_err() {
-                                    log::error!("could not send NoPatchOpened");
-                                    return;
-                                }
+                        }
+                        None => {
+                            if sender.send_async(FromAppMsg::NoPatchOpened).await.is_err() {
+                                log::error!("could not send NoPatchOpened");
+                                return;
                             }
-                        };
-                    }
-                    ToAppMsg::GetIso => {
-                        match rfd::AsyncFileDialog::new()
-                            .add_filter("application/x-cd-image", &["iso"])
-                            .add_filter("All Files", &["*"])
-                            .pick_file()
-                            .await
-                        {
-                            Some(file) => {
-                                log::debug!("Got a file from the user!");
-                                if sender
-                                    .send_async(FromAppMsg::OpenedFile(file))
-                                    .await
-                                    .is_err()
-                                {
-                                    log::error!("could not send OpenedFile");
-                                    return;
-                                }
+                        }
+                    };
+                }
+                Ok(ToAppMsg::GetIso) => {
+                    match rfd::AsyncFileDialog::new()
+                        .add_filter("application/x-cd-image", &["iso"])
+                        .add_filter("All Files", &["*"])
+                        .pick_file()
+                        .await
+                    {
+                        Some(file) => {
+                            log::debug!("Got a file from the user!");
+                            if sender
+                                .send_async(FromAppMsg::OpenedFile(file))
+                                .await
+                                .is_err()
+                            {
+                                log::error!("could not send OpenedFile");
+                                return;
                             }
-                            None => {
-                                if sender.send_async(FromAppMsg::NoFileOpened).await.is_err() {
-                                    log::error!("could not send NoFileOpened");
-                                    return;
-                                }
+                        }
+                        None => {
+                            if sender.send_async(FromAppMsg::NoFileOpened).await.is_err() {
+                                log::error!("could not send NoFileOpened");
+                                return;
                             }
-                        };
-                    }
-                    ToAppMsg::PatchAndSave(patch, iso) => {
-                        match rfd::AsyncFileDialog::new()
-                            .add_filter("application/x-cd-image", &["iso"])
-                            .add_filter("All Files", &["*"])
-                            .set_file_name("tpgz.iso")
-                            .save_file()
-                            .await
-                            .map(|handle| handle.path().to_owned())
-                        {
-                            Some(save) => {
-                                log::debug!("Got a file from the user! Starting patching");
+                        }
+                    };
+                }
+                Ok(ToAppMsg::PatchAndSave(patch, iso)) => {
+                    match rfd::AsyncFileDialog::new()
+                        .add_filter("application/x-cd-image", &["iso"])
+                        .add_filter("All Files", &["*"])
+                        .set_file_name("output.iso")
+                        .save_file()
+                        .await
+                        .map(|handle| handle.path().to_owned())
+                    {
+                        Some(save) => {
+                            log::debug!("Got a file from the user! Starting patching");
+                            if sender
+                                .send_async(FromAppMsg::Progress(
+                                    Some("Starting process".to_string()),
+                                    None,
+                                ))
+                                .await
+                                .is_err()
+                            {
+                                log::error!("Could not send Progress (update gui)");
+                                return;
+                            }
+                            if let Err(err) = apply(patch, iso, save).await {
+                                log::error!("{:?}", err);
                                 if sender
                                     .send_async(FromAppMsg::Progress(
-                                        Some("Starting process".to_string()),
+                                        Some(format!("{}", err)),
                                         None,
                                     ))
                                     .await
                                     .is_err()
                                 {
-                                    log::error!("Could not send Progress (update gui)");
+                                    log::error!("could not send Progress (error in reproc)");
                                     return;
                                 }
-                                if let Err(err) = apply(patch, iso, save).await {
-                                    log::error!("{:?}", err);
-                                    if sender
-                                        .send_async(FromAppMsg::Progress(
-                                            Some(format!("{}", err)),
-                                            None,
-                                        ))
-                                        .await
-                                        .is_err()
-                                    {
-                                        log::error!("could not send Progress (error in reproc)");
-                                        return;
-                                    }
-                                    if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
-                                        log::error!(
-                                            "could not send NoSaveOpened (error in reproc)"
-                                        );
-                                        return;
-                                    }
-                                } else {
-                                    if sender
-                                        .send_async(FromAppMsg::Progress(None, None))
-                                        .await
-                                        .is_err()
-                                    {
-                                        log::trace!("could not send Progress");
-                                    }
-                                    log::info!("reproc done");
-                                    if sender.send_async(FromAppMsg::FinishedSave).await.is_err() {
-                                        log::error!("could not send FinishedSave");
-                                        return;
-                                    }
-                                }
-                            }
-                            None => {
                                 if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
-                                    log::error!("could not send NoSaveOpened");
+                                    log::error!(
+                                        "could not send NoSaveOpened (error in reproc)"
+                                    );
+                                    return;
+                                }
+                            } else {
+                                if sender
+                                    .send_async(FromAppMsg::Progress(None, None))
+                                    .await
+                                    .is_err()
+                                {
+                                    log::trace!("could not send Progress");
+                                }
+                                log::info!("reproc done");
+                                if sender.send_async(FromAppMsg::FinishedSave).await.is_err() {
+                                    log::error!("could not send FinishedSave");
                                     return;
                                 }
                             }
-                        };
-                    }
-                },
-                Err(flume::RecvError::Disconnected) => {
-                    log::warn!("Thread's receiver disconnected");
-                    return;
+                        }
+                        None => {
+                            if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
+                                log::error!("could not send NoSaveOpened");
+                                return;
+                            }
+                        }
+                    };
                 }
             }
         }

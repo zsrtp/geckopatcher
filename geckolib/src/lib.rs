@@ -14,7 +14,7 @@ extern crate sha1_smol;
 #[macro_use]
 extern crate static_assertions;
 extern crate regex;
-extern crate standalone_syn as syn;
+extern crate syn;
 
 pub mod patch;
 pub mod config;

@@ -1,6 +1,6 @@
 use eyre::Context;
 use std::collections::{BTreeMap, HashMap};
-use syn::{self, synom::ParseError};
+use syn::Error as ParseError;
 
 pub struct Assembler<'a> {
     symbol_table: Option<BTreeMap<&'a str, u32>>,
@@ -179,7 +179,7 @@ fn reduce_line_to_code(line: &str) -> &str {
 
 fn parse_i64_literal(literal: &str) -> Result<i64, ParseError> {
     let val: syn::LitInt = syn::parse_str(literal)?;
-    Ok(val.value() as i64)
+    val.base10_parse::<i64>()
 }
 
 fn parse_u32_literal(literal: &str) -> Result<u32, ParseError> {

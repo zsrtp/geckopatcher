@@ -43,7 +43,7 @@ pin-project = "^1.1"
 rayon = { version = "^1.10", optional = true }
 human_bytes = { version = "^0.4", optional = true, default-features = false }
 static_assertions = "^1.1"
-standalone-syn = "^0.13"
+syn = "^2.0"
 encoding_rs = "^0.8"
 
 [features]
