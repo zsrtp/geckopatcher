@@ -80,6 +80,7 @@
     <link data-trunk rel="copy-file" href="assets/manifest.json" />
     <link data-trunk rel="copy-file" href="assets/icon-1024.png" />
     <link data-trunk rel="copy-file" href="assets/icon-256.png" />
+    <link data-trunk rel="copy-file" href="assets/github-mark-white.png" />
     <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" />
     <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" />
     <link data-trunk rel="copy-dir" href="assets/patches/" />
@@ -163,6 +164,15 @@
             }
         }
 
+        #main_container {
+            display: grid;
+            grid-template-columns: 1fr;
+            grid-template-rows: 1fr;
+            gap: 0px 0px;
+            align-items: center;
+            justify-content: center;
+        }
+
         #main_form {
             display: grid;
             grid-template-columns: auto 1fr;
@@ -186,6 +196,32 @@
         }
 
         .progress-container {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #links {
+            display: flex;
+            justify-content: left;
+            align-items: center;
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            margin: 1em;
+        }
+
+        #links img {
+            width: 2em;
+            height: 2em;
+            margin-right: 1em;
+        }
+
+        #links a:not(:last-child) {
+            margin-right: 2em;
+        }
+        
+        #links a {
             display: inline-flex;
             justify-content: center;
             align-items: center;
