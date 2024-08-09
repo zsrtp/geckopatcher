@@ -1,5 +1,8 @@
-use std::{borrow::Borrow, rc::Rc};
+use std::{borrow::Borrow, collections::HashMap, rc::Rc};
 
+use geckolib::debug;
+use js_sys::{ArrayBuffer, Uint8Array};
+use lazy_static::lazy_static;
 #[cfg(not(feature = "generic_patch"))]
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{
@@ -10,7 +13,7 @@ use wasm_bindgen::{
 use wasm_bindgen_futures::JsFuture;
 #[cfg(not(feature = "generic_patch"))]
 use web_sys::{Blob, Response};
-use web_sys::{File, HtmlInputElement, MessageEvent, Worker};
+use web_sys::{console, File, HtmlInputElement, MessageEvent, Worker};
 use yew::prelude::*;
 
 pub mod progress;
@@ -222,6 +225,7 @@ pub struct Patch {
 pub struct PatchInputProps {
     pub callback: Callback<Option<Patch>>,
     pub disabled: Option<bool>,
+    pub version: Option<String>,
 }
 
 #[cfg(feature = "generic_patch")]
@@ -287,6 +291,7 @@ impl Component for PatchInput {
 
     fn view(&self, ctx: &Context<Self>) -> Html {
         use web_sys::{HtmlOptionElement, HtmlSelectElement};
+        let version = ctx.props().version.clone();
         let onchange = {
             let callback = ctx.props().callback.clone();
             let patches = self.patches.clone();
@@ -309,20 +314,23 @@ impl Component for PatchInput {
                 }
             })
         };
+        debug!("version: {:?}", version);
         let patch_html: Html = self
             .patches
             .iter()
             .enumerate()
+            .filter(|(_, p)| version.clone().map(|v| p.version == v).unwrap_or(false))
             .map(|(i, p)| {
                 html! {
                     <option value={format!("{}", i + 1)}>{p.name.clone()}</option>
                 }
             })
             .collect();
+        let patches_empty = self.patches.iter().filter(|p| version.clone().map(|v| p.version == v).unwrap_or(false)).count() == 0;
         html! {
             <>
                 <label for="patch">{"Patch to Apply: "}</label>
-                <select id="patch" disabled={ctx.props().disabled.unwrap_or(false)} onchange={onchange}>
+                <select id="patch" disabled={ctx.props().disabled.unwrap_or(false) || patches_empty} onchange={onchange}>
                     <option disabled={true} selected={true}>{"Select Patch"}</option>
                     {patch_html}
                 </select>
@@ -338,7 +346,7 @@ pub struct Iso {
 
 #[derive(Properties, PartialEq)]
 pub struct IsoInputProps {
-    pub callback: Callback<Option<Iso>, ()>,
+    pub callback: Callback<Option<(Iso,[u8;8])>, ()>,
     disabled: Option<bool>,
 }
 
@@ -353,7 +361,22 @@ pub fn IsoInput(props: &IsoInputProps) -> Html {
                 .dyn_into::<HtmlInputElement>()
                 .expect("Target is not an input Element");
             let f = input.files().and_then(|x| x.get(0));
-            callback.emit(f.map(|x| Iso { file: x }));
+            if let Some(file) = f {
+                if let Ok(x) = file.slice_with_i32_and_i32(0, 8) {
+                    let file = file.clone();
+                    let callback = callback.clone();
+                    let closure = Closure::new(move |x: JsValue| {
+                        let mut buf = [0; 8];
+                        let x: ArrayBuffer = x.into();
+                        let typed_array = Uint8Array::new(&x);
+                        typed_array.copy_to(&mut buf);
+                        console::debug_1(&format!("{:?}", buf).into());
+                        callback.emit(Some((Iso { file: file.clone() }, buf)));
+                    });
+                    let _ = x.array_buffer().then(&closure);
+                    closure.forget();
+                }
+            }
         })
     };
     html! {
@@ -372,12 +395,26 @@ pub struct MainFormProps {
     progress: Option<f64>,
 }
 
+lazy_static! {
+    static ref PATCH_MAP: HashMap<&'static [u8; 8], String> = {
+        let mut map = HashMap::new();
+        map.insert(b"GZ2E01\0\0", "gcn_ntscu".into());
+        map.insert(b"GZ2P01\0\0", "gcn_pal".into());
+        map.insert(b"GZ2J01\0\0", "gcn_ntscj".into());
+        map.insert(b"RZDE01\0\0", "wii_ntscu_10".into());
+        map.insert(b"RZDE01\0\x02", "wii_ntscu_12".into());
+        map.insert(b"RZDP01\0\0", "wii_pal".into());
+        map.insert(b"RZDJ01\0\0", "wii_ntscj".into());
+        map
+    };
+}
+
 #[function_component]
 pub fn MainForm(props: &MainFormProps) -> Html {
     let is_patching = props.is_patching;
     let status = props.status.clone();
     let selected_patch = use_state(|| <Option<Patch>>::None);
-    let selected_iso = use_state(|| <Option<Iso>>::None);
+    let selected_iso = use_state(|| <Option<(Iso,[u8;8])>>::None);
     let callback = {
         let selected_iso = selected_iso.clone();
         let selected_patch = selected_patch.clone();
@@ -386,7 +423,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             log::info!("Clicked the patch button");
             patch_callback.emit((
                 selected_patch.as_ref().expect("No Patch selected").clone(),
-                selected_iso.as_ref().expect("No ISO selected").clone(),
+                selected_iso.as_ref().expect("No ISO selected").clone().0,
             ));
         })
     };
@@ -402,11 +439,15 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             selected_iso.set(iso);
         })
     };
+    #[cfg(not(feature = "generic_patch"))]
+    let disabled = is_patching || selected_iso.is_none();
+    #[cfg(feature = "generic_patch")]
+    let disabled = is_patching;
     html! {
         <fieldset id="main_form">
             <legend>{"ISO Patcher"}</legend>
-            <PatchInput callback={patch_input_callback} disabled={is_patching} />
             <IsoInput callback={iso_change_callback} disabled={is_patching} />
+            <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().and_then(|(_,version)| PATCH_MAP.get(&version).map(|v| v.to_owned()))} />
             <div/>
             <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
             <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>

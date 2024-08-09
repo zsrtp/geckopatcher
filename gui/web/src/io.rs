@@ -1,4 +1,4 @@
-use std::{fmt::Debug, io::{Read, Seek}, pin::Pin, sync::Arc, task::{Context, Poll}};
+use std::{fmt::Debug, io::{Read, Seek}, pin::Pin, rc::Rc, task::{Context, Poll}};
 
 use async_std::{io, sync::Mutex};
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, TryFutureExt};
@@ -15,20 +15,20 @@ struct WebFileState {
 
 #[derive(Debug, Clone)]
 pub struct WebFile {
-    state: Arc<Mutex<WebFileState>>,
+    state: Rc<Mutex<WebFileState>>,
 }
 
 impl WebFile {
     pub fn new(handle: web_sys::FileSystemSyncAccessHandle) -> Self {
         Self {
-            state: Arc::new(Mutex::new(WebFileState { handle, cursor: 0 })),
+            state: Rc::new(Mutex::new(WebFileState { handle, cursor: 0 })),
         }
     }
 }
 
 impl Read for WebFile {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let mut state = match self.state.try_lock_arc() {
+        let mut state = match self.state.try_lock() {
             Some(guard) => guard,
             None => {
                 return Err(std::io::Error::new(
@@ -54,7 +54,7 @@ impl Read for WebFile {
 
 impl Seek for WebFile {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        let mut state = match self.state.try_lock_arc() {
+        let mut state = match self.state.try_lock() {
             Some(guard) => guard,
             None => {
                 return Err(std::io::Error::new(
@@ -114,7 +114,7 @@ impl AsyncRead for WebFile {
         buf: &mut [u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             Some(guard) => guard,
             None => {
                 cx.waker().wake_by_ref();
@@ -149,7 +149,7 @@ impl AsyncSeek for WebFile {
         pos: std::io::SeekFrom,
     ) -> std::task::Poll<std::io::Result<u64>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             Some(guard) => guard,
             None => {
                 cx.waker().wake_by_ref();
@@ -213,7 +213,7 @@ impl AsyncWrite for WebFile {
         buf: &[u8],
     ) -> std::task::Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             Some(guard) => guard,
             None => {
                 cx.waker().wake_by_ref();
@@ -248,7 +248,7 @@ impl AsyncWrite for WebFile {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        let state = match this.state.try_lock_arc() {
+        let state = match this.state.try_lock() {
             Some(guard) => guard,
             None => {
                 cx.waker().wake_by_ref();
@@ -269,7 +269,7 @@ impl AsyncWrite for WebFile {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
         let this = self.get_mut();
-        let state = match this.state.try_lock_arc() {
+        let state = match this.state.try_lock() {
             Some(guard) => guard,
             None => {
                 cx.waker().wake_by_ref();
@@ -304,12 +304,12 @@ struct WebWritableState {
 
 #[derive(Debug, Clone)]
 pub struct WebWritable {
-    state: Arc<Mutex<WebWritableState>>,
+    state: Rc<Mutex<WebWritableState>>,
 }
 
 impl WebWritable {
     pub fn new(handle: FileSystemWritableFileStream) -> Self {
-        Self { state: Arc::new(Mutex::new(WebWritableState { handle, state: WebWritableStates::Init, cursor: 0 })) }
+        Self { state: Rc::new(Mutex::new(WebWritableState { handle, state: WebWritableStates::Init, cursor: 0 })) }
     }
 }
 
@@ -320,7 +320,7 @@ impl AsyncSeek for WebWritable {
         pos: io::SeekFrom,
     ) -> Poll<io::Result<u64>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending
@@ -371,7 +371,7 @@ impl AsyncWrite for WebWritable {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        let mut state = match self.get_mut().state.try_lock_arc() {
+        let mut state = match self.get_mut().state.try_lock() {
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending
@@ -408,7 +408,7 @@ impl AsyncWrite for WebWritable {
                     },
                 }
             }
-            _ => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Invalid writer state")))
+            _ => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Invalid writer state")))
         }
     }
 
@@ -417,7 +417,7 @@ impl AsyncWrite for WebWritable {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut state = match self.get_mut().state.try_lock_arc() {
+        let mut state = match self.get_mut().state.try_lock() {
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending
@@ -451,7 +451,7 @@ impl AsyncWrite for WebWritable {
                     },
                 }
             }
-            _ => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Invalid writer state")))
+            _ => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Invalid writer state")))
         }
     }
 }
@@ -473,12 +473,12 @@ struct WebReadableState {
 
 #[derive(Debug, Clone)]
 pub struct WebReadable {
-    state: Arc<Mutex<WebReadableState>>,
+    state: Rc<Mutex<WebReadableState>>,
 }
 
 impl WebReadable {
     pub fn new(handle: web_sys::File) -> Self {
-        Self { state: Arc::new(Mutex::new(WebReadableState { handle, state: WebReadableStates::default() , cursor: 0 })) }
+        Self { state: Rc::new(Mutex::new(WebReadableState { handle, state: WebReadableStates::default() , cursor: 0 })) }
     }
 }
 
@@ -490,7 +490,7 @@ impl AsyncSeek for WebReadable
         pos: std::io::SeekFrom,
     ) -> Poll<std::io::Result<u64>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending
@@ -532,7 +532,7 @@ impl AsyncRead for WebReadable
         buf: &mut [u8],
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut state = match this.state.try_lock_arc() {
+        let mut state = match this.state.try_lock() {
             None => {
                 cx.waker().wake_by_ref();
                 return Poll::Pending
