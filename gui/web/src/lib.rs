@@ -1,5 +1,6 @@
 use std::{borrow::Borrow, collections::HashMap, rc::Rc};
 
+#[cfg(not(feature = "generic_patch"))]
 use geckolib::debug;
 use js_sys::{ArrayBuffer, Uint8Array};
 use lazy_static::lazy_static;

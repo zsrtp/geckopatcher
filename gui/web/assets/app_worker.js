@@ -16,7 +16,7 @@ async function registerLocalStorage(patch, iso) {
         .then(() => isoWritable)
         .then((isoWritable_) => iso.stream().pipeTo(isoWritable_))
         .then(() => iso_);
-    let fileHandle_ = await root.getFileHandle("tpgz.iso", { create: true });
+    let fileHandle_ = await root.getFileHandle("out.iso", { create: true });
     let fileWritable = fileHandle_.createWritable();
     let fileRet = fileWritable
         .then((fileHandle) => fileHandle.truncate(0))
@@ -60,7 +60,7 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                             globalThis.postMessage({ type: "done", filename: filename });
                         })
                         .catch((err) => {
-                            globalThis.postMessage({ type: "cancelled"});
+                            globalThis.postMessage({ type: "cancelled", msg: err });
                             globalThis.postMessage({ type: "progress", title: err });
                             throw err;
                         })

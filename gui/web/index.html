@@ -60,7 +60,7 @@
 
         window["downloadIso"] = async (filename) => {
             let root = await navigator.storage.getDirectory();
-            let fileHandle = await root.getFileHandle("tpgz.iso");
+            let fileHandle = await root.getFileHandle("out.iso");
             setupDownload(await fileHandle.getFile(), filename);
         };
     </script>
