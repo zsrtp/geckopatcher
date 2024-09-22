@@ -518,7 +518,11 @@ where
         }
 
         // The disc apparently needs to be aligned to 8 bits
-        let padding_size = align_addr(offset as u64, 8) as usize - offset;
+        let mut new_offset = align_addr(offset as u64, 8);
+        if (new_offset - offset as u64) < 0x20 {
+            new_offset = align_addr((offset as u64) + 0x20, 8);
+        }
+        let padding_size = (new_offset - offset as u64) as usize;
         writer.write_all(&vec![0u8; padding_size]).await?;
         //offset += padding_size; // Unececssary, but kept for clarity
 
