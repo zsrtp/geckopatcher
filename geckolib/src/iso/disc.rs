@@ -244,17 +244,17 @@ pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     let mut entries: Vec<PartInfoEntry> = Vec::new();
     let mut buf: [u8; 8] = [0u8; 8];
     reader
-        .seek(SeekFrom::Start(consts::WII_PARTITION_INFO_OFF as u64))
+        .seek(SeekFrom::Start(consts::WII_PARTITION_INFO_OFFSET))
         .await?;
     reader.read(&mut buf).await?;
-    let n_part: usize = BE::read_u32(&buf[..]) as usize;
+    let n_part = BE::read_u32(&buf[..]) as u64;
     let part_info_offset = (BE::read_u32(&buf[4..]) as u64) << 2;
     crate::debug!(
         "Found {:} entries, partition info at offset 0x{:08X}",
         n_part,
         part_info_offset
     );
-    for i in 0..n_part as u64 {
+    for i in 0..n_part {
         reader
             .seek(SeekFrom::Start(part_info_offset + (8 * i)))
             .await?;
@@ -275,11 +275,11 @@ pub fn disc_set_part_info(buffer: &mut [u8], pi: &PartInfo) {
     BE::write_u32(&mut buffer[0x40004..], (pi.offset >> 2) as u32);
     for (i, entry) in pi.entries.iter().enumerate() {
         BE::write_u32(
-            &mut buffer[pi.offset as usize + (8 * i)..],
+            &mut buffer[(pi.offset + (8 * i as u64)) as usize..],
             (entry.offset >> 2) as u32,
         );
         BE::write_u32(
-            &mut buffer[pi.offset as usize + (8 * i) + 4..],
+            &mut buffer[(pi.offset + (8 * i as u64) + 4) as usize..],
             entry.part_type,
         );
     }
@@ -743,7 +743,7 @@ pub struct WiiDisc {
 #[derive(Debug, Copy, Clone)]
 #[repr(C)]
 pub struct WiiSectorHash {
-    pub(crate) h0: [[u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT],
+    pub(crate) h0: [[u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT as usize],
     _h0_padding: [u8; 20],
     pub(crate) h1: [[u8; consts::WII_HASH_SIZE]; 8],
     _h1_padding: [u8; 32],
@@ -758,7 +758,7 @@ const_assert_eq!(
 impl Default for WiiSectorHash {
     fn default() -> Self {
         WiiSectorHash {
-            h0: [[0u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT],
+            h0: [[0u8; consts::WII_HASH_SIZE]; consts::WII_SECTOR_DATA_HASH_COUNT as usize],
             _h0_padding: [0u8; 20],
             h1: [[0u8; consts::WII_HASH_SIZE]; 8],
             _h1_padding: [0u8; 32],
@@ -781,7 +781,7 @@ impl WiiSectorHash {
         unsafe { std::mem::transmute(self) }
     }
 
-    pub fn get_h0_ref(&self) -> &[u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
+    pub fn get_h0_ref(&self) -> &[u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT as usize] {
         unsafe { std::mem::transmute(&self.h0) }
     }
 
@@ -795,7 +795,7 @@ impl WiiSectorHash {
 
     pub fn get_h0_mut(
         &mut self,
-    ) -> &mut [u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT] {
+    ) -> &mut [u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT as usize] {
         unsafe { std::mem::transmute(&mut self.h0) }
     }
 
@@ -812,7 +812,7 @@ impl WiiSectorHash {
 #[repr(C)]
 pub struct WiiSector {
     pub(crate) hash: WiiSectorHash,
-    pub(crate) data: [u8; consts::WII_SECTOR_DATA_SIZE],
+    pub(crate) data: [u8; consts::WII_SECTOR_DATA_SIZE as usize],
 }
 const_assert_eq!(std::mem::size_of::<WiiSector>(), consts::WII_SECTOR_SIZE);
 
@@ -820,7 +820,7 @@ impl Default for WiiSector {
     fn default() -> Self {
         WiiSector {
             hash: WiiSectorHash::default(),
-            data: [0u8; consts::WII_SECTOR_DATA_SIZE],
+            data: [0u8; consts::WII_SECTOR_DATA_SIZE as usize],
         }
     }
 }

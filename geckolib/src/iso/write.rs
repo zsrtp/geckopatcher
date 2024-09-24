@@ -31,9 +31,9 @@ enum WiiDiscWriterState {
     /// Setups the data to be written
     Init,
     /// Parse the data to be written
-    Parse(u64, usize, Vec<u8>),
+    Parse(u64, u64, Vec<u8>),
     /// Writing the accumulated data
-    Writing(u64, usize, Vec<u8>, Vec<u8>),
+    Writing(u64, u64, Vec<u8>, Vec<u8>),
 
     // States for the closing process
     SeekToLastGroup(u64, Vec<u8>),
@@ -79,10 +79,10 @@ fn h0_process(sector: &mut WiiSector) {
     let hash = &mut sector.hash;
     let data = &sector.data;
     for j in 0..consts::WII_SECTOR_DATA_HASH_COUNT {
-        hash.h0[j].copy_from_slice(
+        hash.h0[j as usize].copy_from_slice(
             &Sha1::from(
-                &data[j * consts::WII_SECTOR_DATA_HASH_SIZE
-                    ..(j + 1) * consts::WII_SECTOR_DATA_HASH_SIZE],
+                &data[(j * consts::WII_SECTOR_DATA_HASH_SIZE) as usize
+                    ..((j + 1) * consts::WII_SECTOR_DATA_HASH_SIZE) as usize],
             )
             .digest()
             .bytes(),
@@ -161,13 +161,13 @@ fn hash_group(group: &mut WiiGroup) -> [u8; consts::WII_HASH_SIZE] {
 /// Implementation of the Segher's fake signing algorithm
 fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
     let content = &mut part.tmd.contents[0];
-    let mut hashes_ = Vec::with_capacity(consts::WII_H3_SIZE);
+    let mut hashes_ = Vec::with_capacity(consts::WII_H3_SIZE as usize);
     hashes_.extend(hashes.iter().flatten());
-    hashes_.resize(consts::WII_H3_SIZE, 0);
+    hashes_.resize(consts::WII_H3_SIZE as usize, 0);
     crate::debug!(
         "[fake_sign] Hashes size: 0x{:08X}; Hashes padding size: 0x{:08X}; H3 size: 0x{:08X}",
         hashes.len() * consts::WII_HASH_SIZE,
-        consts::WII_H3_SIZE - hashes.len() * consts::WII_HASH_SIZE,
+        consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64,
         hashes_.len()
     );
     content
@@ -199,7 +199,7 @@ fn encrypt_group(group: &mut WiiGroup, part_key: AesKey) {
         let mut iv = [0u8; consts::WII_KEY_SIZE];
         aes_encrypt_inplace(sector.hash.as_array_mut(), &iv, &part_key);
         iv[..consts::WII_KEY_SIZE].copy_from_slice(
-            &sector.hash.as_array_mut()[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE],
+            &sector.hash.as_array_mut()[consts::WII_SECTOR_IV_OFF as usize..][..consts::WII_KEY_SIZE],
         );
         aes_encrypt_inplace(&mut sector.data, &iv, &part_key);
     };
@@ -307,7 +307,7 @@ where
             part.header.tmd_offset = PartHeader::BLOCK_SIZE as u64;
             part.header.cert_offset = part.header.tmd_offset + part.header.tmd_size as u64;
             part.header.h3_offset = std::cmp::max(
-                consts::WII_H3_OFFSET as u64,
+                consts::WII_H3_OFFSET,
                 part.header.cert_offset + part.header.cert_size as u64,
             );
             part.header.data_offset =
@@ -351,7 +351,7 @@ fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]
     let part_offset = part.part_offset;
     crate::debug!("Partition offset: 0x{part_offset:08X?}");
     crate::trace!("Partition Header: {:?}", part.header);
-    let mut buf = Vec::with_capacity(part.header.h3_offset as usize + consts::WII_H3_SIZE);
+    let mut buf = Vec::with_capacity((part.header.h3_offset + consts::WII_H3_SIZE) as usize);
     let h3_padding =
         part.header.h3_offset as usize - (PartHeader::BLOCK_SIZE + part.tmd.get_size());
     //let mut buf = vec![0u8; PartHeader::BLOCK_SIZE + part.tmd.get_size()];
@@ -359,7 +359,7 @@ fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]
     buf.extend(std::iter::repeat(0).take(part.tmd.get_size() + h3_padding));
     buf.extend(hashes.iter().flatten());
     buf.extend(
-        std::iter::repeat(0).take(consts::WII_H3_SIZE - hashes.len() * consts::WII_HASH_SIZE),
+        std::iter::repeat(0).take((consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize),
     );
     TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
     buf
@@ -393,8 +393,8 @@ where
         // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
         let vstart = status.cursor;
         let vend = vstart + buf.len() as u64;
-        let start_blk_idx = (vstart / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
-        let end_blk_idx = ((vend - 1) / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
+        let start_blk_idx = vstart / consts::WII_SECTOR_DATA_SIZE;
+        let end_blk_idx = (vend - 1) / consts::WII_SECTOR_DATA_SIZE;
         let start_group_idx = start_blk_idx / 64;
         let start_block_idx_in_group = start_blk_idx % 64;
         let end_group_idx = end_blk_idx / 64;
@@ -445,12 +445,12 @@ where
                 for i in start_blk..=end_blk {
                     // Offsets in the group buffer (decrypted address)
                     let buffer_start =
-                        std::cmp::max(cursor, (i as u64) * consts::WII_SECTOR_DATA_SIZE as u64)
-                            % consts::WII_SECTOR_DATA_SIZE as u64;
+                        std::cmp::max(cursor, i * consts::WII_SECTOR_DATA_SIZE)
+                            % consts::WII_SECTOR_DATA_SIZE;
                     let buffer_end = std::cmp::min(
                         (cursor + in_buf.len() as u64) - 1,
-                        (i as u64 + 1) * consts::WII_SECTOR_DATA_SIZE as u64 - 1,
-                    ) % consts::WII_SECTOR_DATA_SIZE as u64
+                        (i + 1) * consts::WII_SECTOR_DATA_SIZE - 1,
+                    ) % consts::WII_SECTOR_DATA_SIZE
                         + 1;
                     let size = (buffer_end - buffer_start) as usize;
                     assert!(size <= 0x7C00);
@@ -459,30 +459,30 @@ where
                         i,
                         buffer_start,
                         buffer_end,
-                        curr_buf.len() - (buffer_end - buffer_start) as usize,
+                        curr_buf.len() as u64 - (buffer_end - buffer_start),
                     );
                     let data;
                     (data, curr_buf) = curr_buf.split_at(size);
-                    status.group.sub_groups[(i / 8) % 8].sectors[i % 8].data
+                    status.group.sub_groups[((i / 8) % 8) as usize].sectors[(i % 8) as usize].data
                         [buffer_start as usize..buffer_end as usize]
                         .copy_from_slice(data);
-                    if buffer_end == consts::WII_SECTOR_DATA_SIZE as u64 * 64 {
+                    if buffer_end == consts::WII_SECTOR_DATA_SIZE * 64 {
                         crate::trace!("Reached end of group #{}", group_idx);
                     }
                 }
                 if (status.cursor + (buf.len() - curr_buf.len()) as u64)
-                    % (consts::WII_SECTOR_DATA_SIZE as u64 * 64)
+                    % (consts::WII_SECTOR_DATA_SIZE * 64)
                     == 0
                 {
                     // We are at the start of a group. We can hash and encrypt the group and write it.
                     crate::trace!("Hashing and encrypting group #{}", group_idx);
-                    if status.hashes.len() <= group_idx {
+                    if status.hashes.len() as u64 <= group_idx {
                         status
                             .hashes
-                            .resize(group_idx + 1, [0u8; consts::WII_HASH_SIZE]);
+                            .resize(group_idx as usize + 1, [0u8; consts::WII_HASH_SIZE]);
                     }
                     let group_hash = hash_group(&mut status.group);
-                    status.hashes[group_idx].copy_from_slice(&group_hash);
+                    status.hashes[group_idx as usize].copy_from_slice(&group_hash);
                     let part_key =
                         decrypt_title_key(&status.disc.partitions.partitions[part_idx].header.ticket);
                     if !status.disc.disc_header.disable_disc_encrypt {
@@ -528,11 +528,11 @@ where
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 } else {
-                    if cursor % (consts::WII_SECTOR_DATA_SIZE as u64 * 64) == 0 {
-                        cursor += consts::WII_SECTOR_DATA_SIZE as u64 * 64;
+                    if cursor % (consts::WII_SECTOR_DATA_SIZE * 64) == 0 {
+                        cursor += consts::WII_SECTOR_DATA_SIZE * 64;
                     } else {
-                        cursor = (cursor / (consts::WII_SECTOR_DATA_SIZE as u64 * 64) + 1)
-                            * consts::WII_SECTOR_DATA_SIZE as u64
+                        cursor = (cursor / (consts::WII_SECTOR_DATA_SIZE * 64) + 1)
+                            * consts::WII_SECTOR_DATA_SIZE
                             * 64;
                     }
                     if curr_buf.is_empty() {
@@ -614,7 +614,7 @@ where
                     encrypt_group(&mut status.group, part_key);
                 }
 
-                status.state = if status.cursor % (consts::WII_SECTOR_DATA_SIZE as u64 * 64) != 0 {
+                status.state = if status.cursor % (consts::WII_SECTOR_DATA_SIZE * 64) != 0 {
                     WiiDiscWriterState::SeekToLastGroup(n_group - 1, status.group.to_vec())
                 } else {
                     let hashes = status.hashes.clone();

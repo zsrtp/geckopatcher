@@ -165,7 +165,7 @@ where
                 &mut buf,
             )
             .await?;
-            let fst_offset = (BE::read_u32(&buf[..]) << (if is_wii { 2 } else { 0 })) as u64;
+            let fst_offset = (BE::read_u32(&buf[..]) as u64) << (if is_wii { 2 } else { 0 });
             GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
             let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
@@ -179,8 +179,8 @@ where
                 &mut buf,
             )
             .await?;
-            let fst_size = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
-            let mut str_tbl_buf = vec![0u8; fst_size - string_table_offset as usize];
+            let fst_size = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
+            let mut str_tbl_buf = vec![0u8; (fst_size - string_table_offset) as usize];
             GeckoFS::read_exact(
                 &mut reader,
                 SeekFrom::Start(string_table_offset + fst_offset),
@@ -226,7 +226,7 @@ where
                 &mut buf,
             )
             .await?;
-            let dol_offset = (BE::read_u32(&buf) as usize) << (if is_wii { 2 } else { 0 });
+            let dol_offset = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
             crate::debug!(
                 "fst_size: 0x{:08X}; fst entries list size: 0x{:08X}",
                 fst_size,
@@ -246,15 +246,15 @@ where
                 fst: FstNode::File {
                     relative_file_name: "AppLoader.ldr".to_owned(),
                     file_offset: consts::HEADER_LENGTH as u64,
-                    file_size: dol_offset - consts::HEADER_LENGTH,
+                    file_size: (dol_offset - consts::HEADER_LENGTH as u64) as usize,
                 },
             }));
             system.add_file(File::new(FileDataSource::Reader {
                 reader: reader.clone(),
                 fst: FstNode::File {
                     relative_file_name: "Start.dol".to_owned(),
-                    file_offset: dol_offset as u64,
-                    file_size: fst_offset as usize - dol_offset,
+                    file_offset: dol_offset,
+                    file_size: (fst_offset - dol_offset) as usize,
                 },
             }));
             system.add_file(File::new(FileDataSource::Reader {
@@ -262,7 +262,7 @@ where
                 fst: FstNode::File {
                     relative_file_name: "Game.toc".to_owned(),
                     file_offset: fst_offset,
-                    file_size: fst_size,
+                    file_size: fst_size as usize,
                 },
             }));
 
@@ -277,17 +277,17 @@ where
     }
 
     /// Visits the directory tree to calculate the length of the FST table
-    fn visitor_fst_len(mut acc: usize, node: &dyn Node<R>) -> usize {
+    fn visitor_fst_len(mut acc: u64, node: &dyn Node<R>) -> u64 {
         match node.as_enum_ref() {
             NodeEnumRef::Directory(dir) => {
-                acc += 12 + dir.name().len() + 1;
+                acc += 12 + dir.name().len() as u64 + 1;
 
                 for child in &dir.children {
                     acc = GeckoFS::visitor_fst_len(acc, child.as_ref());
                 }
             }
             NodeEnumRef::File(file) => {
-                acc += 12 + file.name().len() + 1;
+                acc += 12 + file.name().len() as u64 + 1;
             }
         };
         acc
@@ -364,14 +364,14 @@ where
         crate::debug!("Serializing the FileSystem");
         let is_wii = writer.get_type() == DiscType::Wii;
         let mut pos: u64 = 0;
-        let header_size = self.sys().get_file("iso.hdr")?.len()?;
-        let apploader_size = self.sys().get_file("AppLoader.ldr")?.len()?;
+        let header_size = self.sys().get_file("iso.hdr")?.len()? as u64;
+        let apploader_size = self.sys().get_file("AppLoader.ldr")?.len()? as u64;
 
         // Calculate dynamic offsets
         let dol_offset_raw = header_size + apploader_size;
         let dol_offset = align_addr(dol_offset_raw, consts::DOL_ALIGNMENT_BIT);
         let dol_padding_size = dol_offset - dol_offset_raw;
-        let dol_size = self.sys().get_file("Start.dol")?.len()?;
+        let dol_size = self.sys().get_file("Start.dol")?.len()? as u64;
 
         let fst_list_offset_raw = dol_offset + dol_size;
         let fst_list_offset = align_addr(fst_list_offset_raw, consts::FST_ALIGNMENT_BIT);
@@ -405,10 +405,8 @@ where
             .await?;
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
-        writer.write_all(&vec![0u8; dol_padding_size]).await?;
-        pos += dol_padding_size
-            .to_u64()
-            .ok_or(eyre::eyre!("DOL padding too large"))?;
+        writer.write_all(&vec![0u8; dol_padding_size as usize]).await?;
+        pos += dol_padding_size;
 
         buf.clear();
         self.sys_mut()
@@ -417,16 +415,14 @@ where
             .await?;
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
-        writer.write_all(&vec![0u8; fst_list_padding_size]).await?;
-        pos += fst_list_padding_size
-            .to_u64()
-            .ok_or(eyre::eyre!("FST list padding too large"))?;
+        writer.write_all(&vec![0u8; fst_list_padding_size as usize]).await?;
+        pos += fst_list_padding_size;
 
         let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
         let mut fst_name_bank = Vec::new();
         let mut files = Vec::new();
 
-        let mut offset = (fst_list_offset + fst_len) as u64;
+        let mut offset = fst_list_offset + fst_len;
         for node in self.root_mut().iter_mut() {
             let l = 0;
             GeckoFS::visitor_fst_entries(
@@ -440,8 +436,8 @@ where
             )?;
         }
         {
-            let next_dir_index = output_fst.len() as u32;
-            output_fst[0].set_file_size_next_dir_index(next_dir_index);
+            let next_dir_index = output_fst.len();
+            output_fst[0].set_file_size_next_dir_index(next_dir_index as u32);
         }
         crate::debug!("output_fst size = {}", output_fst.len());
         crate::debug!("first fst_name entry = {}", fst_name_bank[0]);
@@ -475,7 +471,7 @@ where
             updater.set_title("Writing virtual FileSystem".to_string())?;
             updater.set_type(crate::update::UpdaterType::Progress)?;
         }
-        let mut offset = pos.to_usize().ok_or(eyre::eyre!("Offset too large"))?;
+        let mut offset = pos;
         #[cfg(feature = "progress")]
         let mut inc_buffer = 0usize;
         for (mut file, file_offset) in files {
@@ -487,7 +483,7 @@ where
                     human_bytes(file.len()? as f64)
                 ))?;
             }
-            let padding_size = file_offset as usize - offset;
+            let padding_size = (file_offset - offset) as usize;
             writer.write_all(&vec![0u8; padding_size]).await?;
             // Copy the file from the FileSystem to the Writer.
             // async_std::io::copy(file, writer).await?; // way too slow
@@ -514,15 +510,15 @@ where
                     _ => (),
                 }
             }
-            offset = (file_offset + file.len()? as u64) as usize;
+            offset = file_offset + file.len()? as u64;
         }
 
         // The disc apparently needs to be aligned to 8 bits
-        let mut new_offset = align_addr(offset as u64, 8);
-        if (new_offset - offset as u64) < 0x20 {
-            new_offset = align_addr((offset as u64) + 0x20, 8);
+        let mut new_offset = align_addr(offset, 8);
+        if (new_offset - offset) < 0x20 {
+            new_offset = align_addr((offset) + 0x20, 8);
         }
-        let padding_size = (new_offset - offset as u64) as usize;
+        let padding_size = (new_offset - offset) as usize;
         writer.write_all(&vec![0u8; padding_size]).await?;
         //offset += padding_size; // Unececssary, but kept for clarity
 

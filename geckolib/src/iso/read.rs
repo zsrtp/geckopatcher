@@ -286,12 +286,12 @@ where
             return Poll::Ready(Ok(0));
         }
         // Calculate the size and bounds of what has to be read.
-        let read_size = std::cmp::min(buf.len(), (decrypted_size - state.cursor) as usize);
+        let read_size = std::cmp::min(buf.len() as u64, decrypted_size - state.cursor);
         // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
         let vstart = state.cursor;
         let vend = vstart + read_size as u64;
-        let start_blk_idx = (vstart / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
-        let end_blk_idx = ((vend - 1) / consts::WII_SECTOR_DATA_SIZE as u64) as usize;
+        let start_blk_idx = vstart / consts::WII_SECTOR_DATA_SIZE;
+        let end_blk_idx = (vend - 1) / consts::WII_SECTOR_DATA_SIZE;
         crate::trace!(
             "Loading data from 0x{:08X} to 0x{:08X} (spanning {} block(s))",
             vstart,
@@ -303,12 +303,12 @@ where
             WiiDiscReaderState::Seeking => {
                 let start_blk_addr = part.part_offset
                     + part.header.data_offset
-                    + (start_blk_idx * consts::WII_SECTOR_SIZE) as u64;
+                    + (start_blk_idx * consts::WII_SECTOR_SIZE as u64);
                 crate::trace!("Seeking to 0x{:08X}", start_blk_addr);
                 ready!(pin!(&mut this.reader).poll_seek(cx, SeekFrom::Start(start_blk_addr)))?;
                 crate::trace!("Seeking succeeded");
                 let n_blk = end_blk_idx - start_blk_idx + 1;
-                let buf = vec![0u8; n_blk * consts::WII_SECTOR_SIZE];
+                let buf = vec![0u8; (n_blk * consts::WII_SECTOR_SIZE as u64) as usize];
                 state.state = WiiDiscReaderState::Reading(buf);
                 cx.waker().wake_by_ref();
                 Poll::Pending
@@ -334,7 +334,7 @@ where
                 let decrypt_process = move |data: &mut &mut [u8]| {
                     let mut iv = [0_u8; consts::WII_KEY_SIZE];
                     iv[..consts::WII_KEY_SIZE].copy_from_slice(
-                        &data[consts::WII_SECTOR_IV_OFF..][..consts::WII_KEY_SIZE],
+                        &data[consts::WII_SECTOR_IV_OFF as usize..][..consts::WII_KEY_SIZE],
                     );
                     crate::trace!("iv: {:?}", iv);
                     crate::trace!("before: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
@@ -346,7 +346,7 @@ where
                             &part_key,
                         );
                         aes_decrypt_inplace(
-                            &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE],
+                            &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE as usize],
                             &iv,
                             &part_key,
                         );
@@ -361,21 +361,20 @@ where
                 crate::trace!("Decryption done");
                 for (i, block) in data_pool.iter().enumerate() {
                     let block_pos =
-                        (start_blk_idx + i) as u64 * consts::WII_SECTOR_DATA_SIZE as u64;
-                    let buf_write_start =
-                        std::cmp::max(0, block_pos as i64 - vstart as i64) as usize;
-                    let buf_write_end: usize = std::cmp::min(
+                        (start_blk_idx + i as u64) * consts::WII_SECTOR_DATA_SIZE;
+                    let buf_write_start: u64 =
+                        std::cmp::max(0, block_pos as i64 - vstart as i64) as u64;
+                    let buf_write_end: u64 = std::cmp::min(
                         read_size,
-                        ((block_pos + consts::WII_SECTOR_DATA_SIZE as u64) as i64 - vstart as i64)
-                            as usize,
+                        ((block_pos + consts::WII_SECTOR_DATA_SIZE) as i64 - vstart as i64) as u64,
                     );
                     let block_read_start =
                         std::cmp::max(0, vstart as i64 - block_pos as i64) as usize;
                     let block_read_end = std::cmp::min(
-                        consts::WII_SECTOR_DATA_SIZE as u64,
+                        consts::WII_SECTOR_DATA_SIZE,
                         (vstart + read_size as u64) - block_pos,
                     ) as usize;
-                    buf[buf_write_start..buf_write_end].copy_from_slice(
+                    buf[buf_write_start as usize..buf_write_end as usize].copy_from_slice(
                         &block[consts::WII_SECTOR_HASH_SIZE..][block_read_start..block_read_end],
                     );
                 }
