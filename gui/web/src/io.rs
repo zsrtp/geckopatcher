@@ -37,8 +37,8 @@ impl Read for WebFile {
                 ))
             }
         };
-        let mut options = web_sys::FileSystemReadWriteOptions::new();
-        options.at(state.cursor as f64);
+        let options = web_sys::FileSystemReadWriteOptions::new();
+        options.set_at(state.cursor as f64);
         match state.handle.read_with_u8_array_and_options(buf, &options) {
             Ok(n) => {
                 state.cursor += n as u64;
@@ -127,8 +127,8 @@ impl AsyncRead for WebFile {
                 format!("{err:?}"),
             )));
         };
-        let mut options = web_sys::FileSystemReadWriteOptions::new();
-        options.at(state.cursor as f64);
+        let options = web_sys::FileSystemReadWriteOptions::new();
+        options.set_at(state.cursor as f64);
         match state.handle.read_with_u8_array_and_options(buf, &options) {
             Ok(n) => {
                 state.cursor += n as u64;
@@ -226,8 +226,8 @@ impl AsyncWrite for WebFile {
                 format!("{err:?}"),
             )));
         };
-        let mut options = web_sys::FileSystemReadWriteOptions::new();
-        options.at(state.cursor as f64);
+        let options = web_sys::FileSystemReadWriteOptions::new();
+        options.set_at(state.cursor as f64);
         match state
             .handle
             .write_with_u8_array_and_options(buf, &options)

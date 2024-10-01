@@ -1,1 +1,1 @@
-npx https://github.com/kipcode66/http-server dist -S --cors -H "Cross-Origin-Resource-Policy: same-site;Cross-Origin-Opener-Policy: same-origin;Cross-Origin-Embedder-Policy: require-corp;Control: no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate" -c-1
+npx https://github.com/kipcode66/http-server dist -S --cors -c-1 -H "Cross-Origin-Resource-Policy: same-site;Cross-Origin-Opener-Policy: same-origin;Cross-Origin-Embedder-Policy: require-corp;Control: no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate"

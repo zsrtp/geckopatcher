@@ -7,10 +7,8 @@ use geckolib::{
     open_config_from_patch,
 };
 
-#[cfg(feature = "progress")]
 use geckolib::{update::UpdaterType, UPDATER};
 
-#[cfg(feature = "progress")]
 mod progress;
 
 use romhack::cli::{Cli, Commands};
@@ -19,12 +17,13 @@ fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
     #[cfg(feature = "log")]
     env_logger::init();
-    #[cfg(feature = "progress")]
-    progress::init_cli_progress();
 
     let args = Cli::parse();
 
-    #[cfg(feature = "progress")]
+    if !args.no_progress {
+        progress::init_cli_progress();
+    }
+
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_type(UpdaterType::Spinner)?;
         updater.init(Some(4))?;

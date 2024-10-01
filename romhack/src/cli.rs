@@ -9,6 +9,9 @@ pub struct Cli {
     #[command(subcommand)]
     /// Sub command
     pub cmd: Commands,
+    #[arg(short = 'P', long)]
+    /// Hide progress bar
+    pub no_progress: bool,
 }
 
 #[derive(Subcommand, Debug)]

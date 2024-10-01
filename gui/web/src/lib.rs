@@ -436,8 +436,10 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     };
     let iso_change_callback = {
         let selected_iso = selected_iso.clone();
+        let selected_patch = selected_patch.clone();
         Callback::from(move |iso| {
             selected_iso.set(iso);
+            selected_patch.set(None);
         })
     };
     #[cfg(not(feature = "generic_patch"))]

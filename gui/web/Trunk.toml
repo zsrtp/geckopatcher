@@ -3,8 +3,7 @@ filehash = false
 target = "index.html"
 dist = "dist"
 
-[serve.headers]
-# see ./assets/_headers for more documentation
-"cross-origin-embedder-policy"= "require-corp"
-"cross-origin-opener-policy"= "same-origin"
-"cross-origin-resource-policy"= "same-site"
+[serve]
+tls_key_path = "key.pem"
+tls_cert_path = "cert.pem"
+port = 8080

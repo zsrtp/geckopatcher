@@ -13,14 +13,7 @@ feature flag (`--features generic_patch`) to have a version of the application w
 
 ## How to run
 
-Once built, the application can be provided to uses by any server which supports both secure connection through SSL/TLS (HTTPS) and
-providing specific headers.
+Once built, the application can be provided to users by any server which supports secure connection through SSL/TLS (HTTPS).
 
-The web patcher needs some specific HTTP headers in order to work properly on the client browser.
-
-- Cross-Origin-Resource-Policy: same-site
-- Cross-Origin-Opener-Policy: same-origin
-- Cross-Origin-Embedder-Policy: require-corp
-- Control: no-store, no-cache, max-age=0, must-revalidate, proxy-revalidate
-
-The last header is optional and is only useful during development to avoid the client caching the application.
+For testing, you can run `trunk serve` to launch a dev server and go to https://localho.st:8080/ to see the patcher run and
+update on changes in real time. The server configuration can be changed in `Trunk.toml`.

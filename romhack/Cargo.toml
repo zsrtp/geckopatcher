@@ -2,7 +2,7 @@
 name = "romhack"
 description = "A multi-platform patcher for gamecube and wii games"
 authors = ["kipcode66 <kipcode66@gmail.com>"]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.76"
 repository = "https://github.com/kipcode66/geckopatcher"
@@ -11,7 +11,7 @@ keywords = ["romhack", "GameCube", "Wii"]
 publish = false
 
 [dependencies]
-geckolib = { path = "../geckolib", default-features = false }
+geckolib = { path = "../geckolib", default-features = false, features = ["progress"]}
 color-eyre = "^0.6"
 async-std = "^1.12"
 env_logger = { version = "^0.11", optional = true }
@@ -22,7 +22,7 @@ toml = "^0.8"
 indicatif = "^0.17"
 num = "^0.4"
 lazy_static = "^1.4"
-colored = { version = "^2.0", optional = true }
+colored = { version = "^2.0" }
 clap_complete = { version = "4.4.1" }
 
 [build-dependencies]
@@ -38,7 +38,6 @@ log = [
     "async-std/log",
     "async-std/kv-log-macro",
 ]
-progress = ["geckolib/progress", "colored"]
 parallel = ["geckolib/parallel"]
 
 [[example]]

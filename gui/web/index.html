@@ -66,14 +66,10 @@
     </script>
     <script src="tracing_hooks.js" type="module"></script>
 
-    <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" href="Cargo.toml" data-bin="app" data-type="main" data-weak-refs data-reference-types data-wasm-opt="2" />
-    <link data-trunk rel="rust" href="Cargo.toml" data-bin="worker" data-type="worker" data-weak-refs data-reference-types data-wasm-opt="2" />
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
     <link data-trunk rel="icon" href="assets/favicon.ico">
-
 
     <link data-trunk rel="copy-file" href="assets/app_worker.js" />
     <link data-trunk rel="copy-file" href="assets/tracing_hooks.js" />
@@ -231,6 +227,10 @@
 
 <body>
     <div class="lds-dual-ring"></div>
+
+    <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="app" data-type="main" data-weak-refs data-wasm-opt="3" />
+    <link data-trunk rel="rust" href="Cargo.toml" data-bin="worker" data-type="worker" data-weak-refs data-wasm-opt="3" />
 </body>
 
 </html>
