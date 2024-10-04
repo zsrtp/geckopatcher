@@ -63,6 +63,51 @@
             let fileHandle = await root.getFileHandle("out.iso");
             setupDownload(await fileHandle.getFile(), filename);
         };
+
+        let mappings = {};
+
+        async function fetchMappings() {
+            let response = await fetch("patches/mapping.json");
+            let mapping = await response.json();
+            let ret = {};
+            let maxLength = Object.entries(mapping).reduce((acc, curr) => (acc > curr[0].length ? acc : curr[0].length), 0)
+            for (let key in mapping) {
+                let val = new Uint8Array(maxLength);
+                for (let i = 0; i < Math.min(maxLength, key.length); i++) {
+                    val[i] = key.charCodeAt(i);
+                }
+                ret[mapping[key]] = val;
+            }
+            return ret;
+        };
+        fetchMappings().then((m) => {
+            mappings = m;
+        });
+
+        function equalArray (buf1, buf2) {
+            if (buf1.byteLength != buf2.byteLength) return false;
+            var dv1 = new Int8Array(buf1);
+            var dv2 = new Int8Array(buf2);
+            for (var i = 0 ; i != buf1.byteLength ; i++)
+            {
+                if (dv1[i] != dv2[i]) return false;
+            }
+            return true;
+        }
+
+        window["getMapping"] = (buf) => {
+            console.debug("getMapping called", buf);
+            let val = Object.entries(mappings).find(([key, val]) => {
+                console.debug("Checking", key, val);
+                if (equalArray(buf, val)) {
+                    console.debug("Found mapping", key);
+                    return key;
+                }
+            });
+            let ret = (val) ? val[0] : "unkown";
+            console.debug("getMapping returning", ret);
+            return ret;
+        };
     </script>
     <script src="tracing_hooks.js" type="module"></script>
 

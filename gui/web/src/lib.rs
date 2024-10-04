@@ -1,9 +1,6 @@
-use std::{borrow::Borrow, collections::HashMap, rc::Rc};
+use std::{borrow::Borrow, rc::Rc};
 
-#[cfg(not(feature = "generic_patch"))]
-use geckolib::debug;
 use js_sys::{ArrayBuffer, Uint8Array};
-use lazy_static::lazy_static;
 #[cfg(not(feature = "generic_patch"))]
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::{
@@ -32,6 +29,8 @@ extern "C" {
     pub async fn get_save() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = "downloadIso", catch)]
     pub async fn download_iso(is_wii: String) -> Result<(), JsValue>;
+    #[wasm_bindgen(js_name = "getMapping")]
+    pub fn get_mapping(buf: &[u8]) -> String;
 }
 
 pub struct App {
@@ -170,7 +169,7 @@ impl Component for App {
                 true
             }
             Message::PatchError => {
-                log::info!("PatchError");
+                log::warn!("PatchError");
                 if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
                     *is_patching = false;
                 }
@@ -315,7 +314,6 @@ impl Component for PatchInput {
                 }
             })
         };
-        debug!("version: {:?}", version);
         let patch_html: Html = self
             .patches
             .iter()
@@ -332,7 +330,7 @@ impl Component for PatchInput {
             <>
                 <label for="patch">{"Patch to Apply: "}</label>
                 <select id="patch" disabled={ctx.props().disabled.unwrap_or(false) || patches_empty} onchange={onchange}>
-                    <option disabled={true} selected={true}>{"Select Patch"}</option>
+                    <option disabled={true}>{"Select Patch"}</option>
                     {patch_html}
                 </select>
             </>
@@ -396,20 +394,6 @@ pub struct MainFormProps {
     progress: Option<f64>,
 }
 
-lazy_static! {
-    static ref PATCH_MAP: HashMap<&'static [u8; 8], String> = {
-        let mut map = HashMap::new();
-        map.insert(b"GZ2E01\0\0", "gcn_ntscu".into());
-        map.insert(b"GZ2P01\0\0", "gcn_pal".into());
-        map.insert(b"GZ2J01\0\0", "gcn_ntscj".into());
-        map.insert(b"RZDE01\0\0", "wii_ntscu_10".into());
-        map.insert(b"RZDE01\0\x02", "wii_ntscu_12".into());
-        map.insert(b"RZDP01\0\0", "wii_pal".into());
-        map.insert(b"RZDJ01\0\0", "wii_ntscj".into());
-        map
-    };
-}
-
 #[function_component]
 pub fn MainForm(props: &MainFormProps) -> Html {
     let is_patching = props.is_patching;
@@ -421,7 +405,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
         let selected_patch = selected_patch.clone();
         let patch_callback = props.patch_callback.clone();
         Callback::from(move |_| {
-            log::info!("Clicked the patch button");
+            log::debug!("Clicked the patch button");
             patch_callback.emit((
                 selected_patch.as_ref().expect("No Patch selected").clone(),
                 selected_iso.as_ref().expect("No ISO selected").clone().0,
@@ -460,7 +444,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             <fieldset id="main_form">
                 <legend>{"ISO Patcher"}</legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
-                <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().and_then(|(_,version)| PATCH_MAP.get(&version).map(|v| v.to_owned()))} />
+                <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().and_then(|(_,version)| Some(get_mapping(version)))} />
                 <div/>
                 <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
