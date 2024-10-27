@@ -1,3 +1,4 @@
+cargo-features = ["edition2024"]
 [package]
 name = "web-gui-patcher"
 version = "0.1.1"
@@ -69,6 +70,3 @@ features = [
 default = ["console_error_panic_hook"]
 debug_alloc = ["wasm-tracing-allocator"]
 generic_patch = []
-
-[build-dependencies]
-resvg = "^0.44"

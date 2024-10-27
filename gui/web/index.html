@@ -96,16 +96,12 @@
         }
 
         window["getMapping"] = (buf) => {
-            console.debug("getMapping called", buf);
             let val = Object.entries(mappings).find(([key, val]) => {
-                console.debug("Checking", key, val);
                 if (equalArray(buf, val)) {
-                    console.debug("Found mapping", key);
                     return key;
                 }
             });
             let ret = (val) ? val[0] : "unkown";
-            console.debug("getMapping returning", ret);
             return ret;
         };
     </script>
@@ -114,16 +110,11 @@
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
 
-    <link data-trunk rel="icon" href="assets/favicon.ico">
+    <link rel="icon" href="favicon.ico">
 
     <link data-trunk rel="copy-file" href="assets/app_worker.js" />
     <link data-trunk rel="copy-file" href="assets/tracing_hooks.js" />
-    <link data-trunk rel="copy-file" href="assets/manifest.json" />
-    <link data-trunk rel="copy-file" href="assets/icon-1024.png" />
-    <link data-trunk rel="copy-file" href="assets/icon-256.png" />
     <link data-trunk rel="copy-file" href="assets/github-mark-white.png" />
-    <link data-trunk rel="copy-file" href="assets/icon_ios_touch_192.png" />
-    <link data-trunk rel="copy-file" href="assets/maskable_icon_x512.png" />
     <link data-trunk rel="copy-dir" href="assets/patches/" />
 
     <link rel="manifest" href="manifest.json">
@@ -274,8 +265,8 @@
     <div class="lds-dual-ring"></div>
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" href="Cargo.toml" data-bin="app" data-type="main" data-weak-refs data-wasm-opt="3" />
-    <link data-trunk rel="rust" href="Cargo.toml" data-bin="worker" data-type="worker" data-weak-refs data-wasm-opt="3" />
+    <link data-trunk rel="rust" data-bin="app" data-type="main" data-weak-refs data-reference-types data-wasm-opt="0" />
+    <link data-trunk rel="rust" data-bin="worker" data-type="worker" data-weak-refs data-reference-types data-wasm-opt="3" />
 </body>
 
 </html>

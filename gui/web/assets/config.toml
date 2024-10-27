@@ -1,0 +1,3 @@
+name = "Gecko Patcher" # TPGZ Patcher
+short_name = "gecko-patcher-pwa" # tpgz-patcher-pwa
+icon_path = "assets/Gecko2.svg" # assets/Gecko.svg

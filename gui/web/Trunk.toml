@@ -3,7 +3,15 @@ filehash = false
 target = "index.html"
 dist = "dist"
 
+[[hooks]]
+stage = "pre_build"
+command = "cargo"
+command_arguments = ["xtask"]
+
 [serve]
 tls_key_path = "key.pem"
 tls_cert_path = "cert.pem"
 port = 8080
+
+[tools]
+wasm_opt = "version_120"

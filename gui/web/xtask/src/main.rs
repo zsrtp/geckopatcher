@@ -1,23 +1,36 @@
 use resvg;
+use toml;
+use std::path::PathBuf;
+
+use serde_derive::{Deserialize, Serialize};
+
+#[derive(Deserialize, Serialize, Debug)]
+pub struct Config {
+    pub name: String,
+    pub short_name: String,
+    pub icon_path: PathBuf,
+}
 
 fn main() {
-    // println!("cargo::rerun-if-changed=assets/manifest.json.in");
-
     // Replace the {{}} in the manifest.json file with the actual values
-    let manifest = include_str!("assets/manifest.json.in");
-    let short_name = if cfg!(feature = "generic_patch") { "gecko-patcher-pwa" } else { "tpgz-patcher-pwa" };
-    let name = if cfg!(feature = "generic_patch") { "Gecko Patcher" } else { "TPGZ Patcher" };
-    let manifest = manifest.replace("{{name}}", name);
-    let manifest = manifest.replace("{{short_name}}", short_name);
+    let manifest = include_str!("../../assets/manifest.json.in");
+    let config_str = include_str!("../../assets/config.toml");
+    let config: Config = toml::from_str::<Config>(config_str).unwrap();
+    let manifest = manifest.replace("{{name}}", &config.name);
+    let manifest = manifest.replace("{{short_name}}", &config.short_name);
 
-    std::fs::write("assets/manifest.json", manifest).unwrap();
+    println!("is generic_patch: {}", cfg!(feature = "generic_patch"));
+
+    let dist = PathBuf::from(std::env::var_os("TRUNK_STAGING_DIR").expect("unable eval dist dir"));
+
+    std::fs::write(dist.join("manifest.json"), manifest).unwrap();
 
     // Generate the icons
     let tree = {
         let mut options = resvg::usvg::Options::default();
-        options.resources_dir = Some("assets".into());
+        options.resources_dir = None;
         options.fontdb_mut().load_system_fonts();
-        let svg_data = std::fs::read(if cfg!(feature = "generic_patch") {"assets/Gecko2.svg"} else {"assets/Gecko.svg"}).unwrap();
+        let svg_data = std::fs::read(&config.icon_path).unwrap();
         resvg::usvg::Tree::from_data(&svg_data, &options).unwrap()
     };
     let pixmap_size = tree.size().to_int_size();
@@ -37,9 +50,9 @@ fn main() {
     resvg::render(&tree, transform_256, &mut pixmap_256.as_mut());
     resvg::render(&tree, transform_512, &mut pixmap_512.as_mut());
     resvg::render(&tree, transform_1024, &mut pixmap_1024.as_mut());
-    pixmap_192.save_png("assets/icon_ios_touch_192.png").unwrap();
-    pixmap_256.save_png("assets/icon-256.png").unwrap();
-    pixmap_256.save_png("assets/favicon.ico").unwrap();
-    pixmap_512.save_png("assets/maskable_icon_x512.png").unwrap();
-    pixmap_1024.save_png("assets/icon-1024.png").unwrap();
+    pixmap_192.save_png(dist.join("icon_ios_touch_192.png")).unwrap();
+    pixmap_256.save_png(dist.join("icon-256.png")).unwrap();
+    pixmap_256.save_png(dist.join("favicon.ico")).unwrap();
+    pixmap_512.save_png(dist.join("maskable_icon_x512.png")).unwrap();
+    pixmap_1024.save_png(dist.join("icon-1024.png")).unwrap();
 }
