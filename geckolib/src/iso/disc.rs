@@ -3,8 +3,7 @@ use std::io::SeekFrom;
 use std::mem::offset_of;
 use std::pin::Pin;
 
-use async_std::io::prelude::SeekExt;
-use async_std::io::ReadExt;
+use futures::{AsyncSeekExt, AsyncReadExt};
 use num::Unsigned;
 
 use crate::crypto::aes_decrypt_inplace;
@@ -13,7 +12,7 @@ use crate::crypto::WiiCryptoError;
 use crate::crypto::COMMON_KEY;
 use crate::crypto::{consts, Unpackable};
 use crate::declare_tryfrom;
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek};
+use futures::{AsyncSeek, AsyncRead};
 use byteorder::{ByteOrder, BE};
 use sha1_smol::Sha1;
 use std::convert::TryFrom;
@@ -246,7 +245,7 @@ pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     reader
         .seek(SeekFrom::Start(consts::WII_PARTITION_INFO_OFFSET))
         .await?;
-    reader.read(&mut buf).await?;
+    let _ = reader.read(&mut buf).await?;
     let n_part = BE::read_u32(&buf[..]) as u64;
     let part_info_offset = (BE::read_u32(&buf[4..]) as u64) << 2;
     crate::debug!(
@@ -258,7 +257,7 @@ pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
         reader
             .seek(SeekFrom::Start(part_info_offset + (8 * i)))
             .await?;
-        reader.read(&mut buf).await?;
+        let _ = reader.read(&mut buf).await?;
         entries.push(PartInfoEntry {
             offset: (BE::read_u32(&buf[..]) as u64) << 2,
             part_type: BE::read_u32(&buf[4..]),

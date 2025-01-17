@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::patch::demangle::demangle as demangle_tww;
 use crate::patch::linker::{LinkedSection, SectionKind};
-use async_std::io::{Read as AsyncRead, ReadExt, Seek as AsyncSeek};
+use futures::{AsyncRead, AsyncSeek, AsyncReadExt};
 use eyre::Context;
 use regex::{Captures, Regex};
 use rustc_demangle::demangle as demangle_rust;

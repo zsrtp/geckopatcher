@@ -5,7 +5,6 @@ extern crate rayon;
 extern crate thiserror;
 #[macro_use]
 extern crate lazy_static;
-extern crate async_std;
 extern crate cbc;
 extern crate eyre;
 extern crate num;
@@ -27,19 +26,18 @@ pub mod vfs;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::{File, OpenOptions};
+use std::io::Read;
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek};
+use futures::{AsyncRead, AsyncSeek};
 #[cfg(not(target_arch = "wasm32"))]
-use async_std::{fs, path::PathBuf};
+use std::path::PathBuf;
 use config::Config;
 #[cfg(not(target_arch = "wasm32"))]
 use eyre::Context;
 use futures::AsyncWrite;
 use iso::builder::IsoBuilder;
-#[cfg(not(target_os = "unknown"))]
-use iso::builder::PatchBuilder;
 use iso::read::DiscReader;
 use vfs::GeckoFS;
 use zip::ZipArchive;
@@ -49,6 +47,12 @@ lazy_static! {
     /// Progress updater
     pub static ref UPDATER: std::sync::Arc<std::sync::Mutex<update::Updater<eyre::Report, usize>>> =
         std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
+}
+
+pub fn parse_config<R: Read>(
+    config_stream: R,
+) -> eyre::Result<Config> {
+    Ok(toml::from_str(&std::io::read_to_string(config_stream)?)?)
 }
 
 /// Open a config from a patch file
@@ -64,11 +68,7 @@ where
 {
     let mut zip: ZipArchive<RConfig> = ZipArchive::new(patch_reader)?;
 
-    let mut config: Config = {
-        let toml_file = zip.by_name("RomHack.toml")?;
-
-        toml::from_str(&std::io::read_to_string(toml_file)?)?
-    };
+    let mut config: Config = parse_config(zip.by_name("RomHack.toml")?)?;
 
     if let Some(link) = &mut config.link {
         link.libs.insert(0, "libcompiled.a".into());
@@ -86,32 +86,20 @@ where
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Open a config from a file on the FileSystem to return an IsoBuilder
-pub async fn open_config_from_fs_iso(
-    config_file: &PathBuf,
-) -> eyre::Result<IsoBuilder<File, async_std::fs::File, async_std::fs::File>> {
+pub async fn open_config_from_fs_iso<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncWrite>(
+    config: Config,
+    input: R,
+    output: W,
+) -> eyre::Result<IsoBuilder<File, R, W>> {
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_message("Parsing RomHack.toml
         ...".into())?;
     }
 
-    let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
-    let writer = async_std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&config.build.iso)
-        .await?;
-    let disc_reader = DiscReader::new(async_std::fs::File::open(&config.src.iso).await?).await?;
+    let disc_reader = DiscReader::new(input).await?;
     let gfs = GeckoFS::parse(disc_reader.clone()).await?;
-    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_reader, writer))
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-/// Open a config from a file on the FileSystem to return a PatchBuilder
-pub async fn open_config_from_fs_patch(config_file: &PathBuf) -> eyre::Result<PatchBuilder> {
-    let config: Config = toml::from_str(&fs::read_to_string(config_file).await?)?;
-    Ok(PatchBuilder::with_config(config))
+    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_reader, output))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -1,9 +1,9 @@
-use std::str::FromStr;
-
 use async_std::task;
 use clap::Parser;
+use geckolib::iso::builder::PatchBuilder;
+use geckolib::parse_config;
 use geckolib::{
-    iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_fs_patch,
+    iso::builder::Builder, new, open_config_from_fs_iso,
     open_config_from_patch,
 };
 
@@ -34,15 +34,21 @@ fn main() -> color_eyre::eyre::Result<()> {
         Commands::Build { patch, raw: _ } => {
             task::block_on::<_, color_eyre::eyre::Result<()>>(async {
                 if patch {
-                    let mut builder = open_config_from_fs_patch(
-                        &async_std::path::PathBuf::from_str("RomHack.toml")?,
-                    )
-                    .await?;
+                    let config = parse_config(std::fs::File::open("RomHack.toml")?)?;
+                    let mut builder = PatchBuilder::with_config(config);
                     builder.build().await
                 } else {
-                    let mut builder = open_config_from_fs_iso(&async_std::path::PathBuf::from_str(
+                    let config = parse_config(&std::fs::File::open(
                         "RomHack.toml",
-                    )?)
+                    )?)?;
+                    let writer = async_std::fs::OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&config.build.iso)
+                        .await?;
+                    let disc_reader = async_std::fs::File::open(&config.src.iso).await?;
+                    let mut builder = open_config_from_fs_iso(config, disc_reader, writer)
                     .await?;
                     builder.build().await
                 }

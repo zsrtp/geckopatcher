@@ -16,7 +16,7 @@ aes = "^0.8"
 sha1_smol = "^1.0"
 cbc = { version = "^0.1" }
 eyre = "^0.6"
-thiserror = "^1.0"
+thiserror = "^2.0"
 num = "^0.4"
 toml = "^0.8"
 zip = { version = "^2.1", default-features = false, features = ["deflate"] }
@@ -26,18 +26,11 @@ serde = "^1.0"
 serde_derive = "^1.0"
 byteorder = "^1.4"
 futures = "^0.3"
-async-std = { version = "^1.12", default-features = false, features = [
-    "std",
-    "async-io",
-    "futures-lite",
-    "pin-project-lite",
-    "gloo-timers",
-] }
 image = { version = "^0.25", default-features = false, features = [
     "jpeg",
     "png",
 ] }
-goblin = "^0.8"
+goblin = "^0.9"
 lazy_static = "^1.5"
 pin-project = "^1.1"
 rayon = { version = "^1.10", optional = true }
@@ -50,5 +43,5 @@ encoding_rs = "^0.8"
 default = ["parallel"]
 web = []
 parallel = ["rayon", "image/rayon"]
-log = ["async-std/default"]
+log = []
 progress = ["human_bytes"]

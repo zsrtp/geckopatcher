@@ -6,20 +6,19 @@ use crate::iso::write::DiscWriter;
 use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use async_std::io::prelude::{ReadExt, SeekExt};
-use async_std::io::{self, Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
-use async_std::path::PathBuf;
-use async_std::sync::Arc;
+use futures::{
+    io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt
+};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
-use futures::AsyncWriteExt;
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
 use num::ToPrimitive;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Error, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::task::{Context, Poll};
@@ -981,7 +980,7 @@ where
             SeekFrom::Start(pos) => {
                 if pos > status.data.len() as u64 {
                     return Poll::Ready(Err(Error::new(
-                        async_std::io::ErrorKind::Other,
+                        futures::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
                     )));
                 }
@@ -995,7 +994,7 @@ where
                     + pos;
                 if new_pos < 0 || pos > 0 {
                     return Poll::Ready(Err(Error::new(
-                        async_std::io::ErrorKind::Other,
+                        futures::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
                     )));
                 }
@@ -1011,7 +1010,7 @@ where
                             as i64
                 {
                     return Poll::Ready(Err(Error::new(
-                        async_std::io::ErrorKind::Other,
+                        futures::io::ErrorKind::Other,
                         eyre::eyre!("Index out of range"),
                     )));
                 }

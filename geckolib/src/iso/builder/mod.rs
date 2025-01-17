@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "unknown"))]
-use async_std::fs::read;
-use async_std::io::{prelude::*, Read as AsyncRead, Seek as AsyncSeek};
+use std::fs::read;
+use futures::{prelude::*, AsyncRead, AsyncSeek};
 use eyre::Context;
 use futures::AsyncWrite;
 use std::collections::HashMap;
@@ -505,7 +505,7 @@ impl Builder for PatchBuilder {
                 write_file_to_zip(
                     &mut zip,
                     "libcompiled.a",
-                    &async_std::fs::read(libs.first().unwrap()).await?,
+                    &read(libs.first().unwrap())?,
                 )?;
                 libs.remove(0);
             }
@@ -521,7 +521,7 @@ impl Builder for PatchBuilder {
                 }
 
                 modified_libs.push(zip_path.clone());
-                write_file_to_zip(&mut zip, zip_path, &read(lib_path).await?)?;
+                write_file_to_zip(&mut zip, zip_path, &read(lib_path)?)?;
             }
         }
 
@@ -533,7 +533,7 @@ impl Builder for PatchBuilder {
                 updater.set_message("Storing patch.asm...".into())?;
             }
 
-            write_file_to_zip(&mut zip, "patch.asm", &read(path).await?)?;
+            write_file_to_zip(&mut zip, "patch.asm", &read(path)?)?;
         }
 
         if let Some(path) = &config.info.image {
@@ -545,7 +545,7 @@ impl Builder for PatchBuilder {
                 updater.set_title("Storing banner...".into())?;
             }
 
-            write_file_to_zip(&mut zip, "banner.dat", &read(path).await?)?;
+            write_file_to_zip(&mut zip, "banner.dat", &read(path)?)?;
         }
 
         crate::info!("Storing patch index");

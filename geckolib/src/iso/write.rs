@@ -1,8 +1,8 @@
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use async_std::{
-    io::{prelude::*, Seek as AsyncSeek, Write as AsyncWrite},
-    sync::Mutex,
+use futures:: {
+    AsyncSeek, AsyncWrite, AsyncSeekExt, AsyncWriteExt,
+    lock::Mutex,
 };
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
@@ -227,7 +227,8 @@ where
     pub async fn init(self: &mut Pin<&mut Self>) -> Result<()> {
         crate::trace!("Writing Wii Disc and Partition headers");
         let this = self;
-        let mut state = this.status.lock_arc().await;
+        let mutex = this.status.clone();
+        let mut state = mutex.lock().await;
 
         if state.initialized {
             return Ok(());
@@ -375,7 +376,8 @@ where
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let this = self.get_mut();
-        let mut status = match this.status.try_lock_arc() {
+        let mutex = this.status.clone();
+        let mut status = match mutex.try_lock() {
             Some(state) => state,
             None => {
                 cx.waker().wake_by_ref();
@@ -573,7 +575,8 @@ where
     ) -> Poll<std::io::Result<()>> {
         crate::debug!("poll_close of WiiDiscWriter");
         let this = self.get_mut();
-        let mut status = match this.status.try_lock_arc() {
+        let mutex = this.status.clone();
+        let mut status = match mutex.try_lock() {
             Some(status) => status,
             None => {
                 cx.waker().wake_by_ref();
