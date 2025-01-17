@@ -67,10 +67,10 @@ impl Component for App {
                     return;
                 }
             };
-            if type_.as_string().map_or(false, |s| &s == "cancelled") {
+            if type_.as_string().is_some_and(|s| &s == "cancelled") {
                 callback.emit(Message::PatchError);
             }
-            if type_.as_string().map_or(false, |s| &s == "done") {
+            if type_.as_string().is_some_and(|s| &s == "done") {
                 web_sys::console::info_1(&event);
                 let filename = match js_sys::Reflect::get(&data, &"filename".into()) {
                     Ok(filename) => filename.as_string().unwrap_or("patched.iso".into()),
@@ -86,7 +86,7 @@ impl Component for App {
                     }
                 });
             }
-            if type_.as_string().map_or(false, |s| &s == "progress") {
+            if type_.as_string().is_some_and(|s| &s == "progress") {
                 let title = match js_sys::Reflect::get(&data, &"title".into()) {
                     Ok(title) => title.as_string(),
                     Err(err) => {
@@ -444,7 +444,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
             <fieldset id="main_form">
                 <legend>{"ISO Patcher"}</legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
-                <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().and_then(|(_,version)| Some(get_mapping(version)))} />
+                <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().map(|(_,version)| get_mapping(version))} />
                 <div/>
                 <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>

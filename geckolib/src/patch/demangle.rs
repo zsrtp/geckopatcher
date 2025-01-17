@@ -17,7 +17,7 @@ enum Type<'a> {
 struct DisplayLeft<'a>(&'a Type<'a>);
 struct DisplayRight<'a>(&'a Type<'a>);
 
-impl<'a> Display for DisplayLeft<'a> {
+impl Display for DisplayLeft<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Type::*;
         let &DisplayLeft(typ) = self;
@@ -62,7 +62,7 @@ impl<'a> Display for DisplayLeft<'a> {
     }
 }
 
-impl<'a> Display for DisplayRight<'a> {
+impl Display for DisplayRight<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use self::Type::*;
         let &DisplayRight(typ) = self;
@@ -91,7 +91,7 @@ impl<'a> Display for DisplayRight<'a> {
     }
 }
 
-impl<'a> Display for Type<'a> {
+impl Display for Type<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}{}", DisplayLeft(self), DisplayRight(self))
     }
@@ -162,7 +162,7 @@ fn parse_type(text: &str) -> Result<(Option<Type>, &str), Cow<'static, str>> {
 
             Type::Function(
                 false,
-                Box::new(typ.unwrap_or_else(|| Type::Normal(false, "void"))),
+                Box::new(typ.unwrap_or(Type::Normal(false, "void"))),
                 parameters,
             )
         }

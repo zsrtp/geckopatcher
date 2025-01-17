@@ -1,19 +1,15 @@
-cargo-features = ["edition2024"]
 [package]
 name = "web-gui-patcher"
 version = "0.1.1"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.85"
 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "0.4.22"
+log = "0.4.25"
 flume = "0.11.0"
-
-# You only need serde if you want app persistence:
-serde = { version = "^1.0", features = ["derive"] }
 
 # web dependencies:
 geckolib = { path = "../../geckolib", default-features = false, features = [
@@ -25,8 +21,8 @@ eyre = "^0.6"
 yew = { version = "0.21.0", default-features = false, features = ["csr"] }
 console_log = "1.0.0"
 js-sys = "0.3.70"
-wasm-bindgen = "0.2.93"
-wasm-bindgen-futures = "0.4.43"
+wasm-bindgen = "0.2.100"
+wasm-bindgen-futures = "0.4.50"
 serde-wasm-bindgen = "0.6.5"
 console_error_panic_hook = { version = "0.1.7", optional = true }
 async-std = "1.13.0"
@@ -35,7 +31,7 @@ lazy_static = { version = "1.5.0" }
 futures = { version = "0.3.30" }
 
 [dependencies.web-sys]
-version = "0.3.70"
+version = "0.3.77"
 features = [
     "Headers",
     "Request",

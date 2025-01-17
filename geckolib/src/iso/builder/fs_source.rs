@@ -11,7 +11,8 @@ pub enum File<'a> {
     FS(String, std::fs::File),
 }
 
-impl<'a> File<'a> {
+impl File<'_> {
+    #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
             File::Zip(zip) => zip.name(),
@@ -21,7 +22,7 @@ impl<'a> File<'a> {
     }
 }
 
-impl<'a> Read for File<'a> {
+impl Read for File<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             File::Zip(zip_file) => zip_file.read(buf),
@@ -39,6 +40,7 @@ pub enum FSSource<R> {
     FS(PathBuf),
 }
 
+#[allow(unused)]
 impl<R> FSSource<R> {
     pub fn with_zip(zip: ZipArchive<R>) -> Self {
         Self::Zip(Box::new(zip))
@@ -51,6 +53,7 @@ impl<R> FSSource<R> {
 }
 
 impl<R: Read + Seek> FSSource<R> {
+    #[allow(unused)]
     pub fn exists<P: AsRef<Path>>(&self, path: P) -> bool {
         match self {
             FSSource::Zip(zip) => zip.index_for_path(path).is_some(),
@@ -62,6 +65,7 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
+    #[allow(unused)]
     pub fn is_dir<P: AsRef<Path>>(&mut self, path: P) -> bool {
         match self {
             FSSource::Zip(zip) => zip

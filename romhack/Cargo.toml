@@ -19,10 +19,10 @@ log = { version = "^0.4", optional = true }
 futures = "^0.3"
 clap = { version = "^4.5", features = ["derive", "cargo"] }
 toml = "^0.8"
-indicatif = "^0.17"
+indicatif = { version = "^0.17", features = ["rayon"]}
 num = "^0.4"
 lazy_static = "^1.4"
-colored = { version = "^2.0" }
+colored = { version = "^3.0" }
 clap_complete = { version = "4.4.1" }
 
 [build-dependencies]
@@ -39,6 +39,7 @@ log = [
     "async-std/kv-log-macro",
 ]
 parallel = ["geckolib/parallel"]
+progress = []
 
 [[example]]
 name = "title"

@@ -57,7 +57,7 @@ fn init_cb(len: Option<usize>) -> color_eyre::Result<()> {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
-                    "{prefix:.bold.dim} {msg} {spinner} {wide_bar} {percent}% {human_pos}/{human_len:6}",
+                    "{prefix:.bold.dim} {msg:.italic.underlined} {spinner:.dim} {wide_bar} {percent_precise:4.bold.green/blue}% {human_pos:.dim}/{human_len:6.dim}",
                 )?,
             }
             .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
@@ -162,7 +162,7 @@ fn on_type_cb(type_: UpdaterType) -> color_eyre::Result<()> {
                     ProgressStyle::with_template("{prefix:.bold.dim} {msg} {spinner}")?
                 }
                 UpdaterType::Progress => ProgressStyle::with_template(
-                    "{prefix:.bold.dim} {msg} {spinner} {wide_bar} {percent}% {human_pos}/{human_len:6}",
+                    "{prefix:.bold.dim} {msg:.italic.underlined} {spinner:.dim} {wide_bar} {percent_precise:4.bold}% {human_pos:.dim}/{human_len:6.dim}",
                 )?,
             }
             .tick_chars("⠇⠎⠕⠪⢑⡨⢔⡢⢅⡃ ")
