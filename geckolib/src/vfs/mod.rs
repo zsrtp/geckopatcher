@@ -6,11 +6,9 @@ use crate::iso::write::DiscWriter;
 use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use futures::{
-    io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt
-};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+use futures::{io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
 use num::ToPrimitive;
@@ -404,7 +402,9 @@ where
             .await?;
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
-        writer.write_all(&vec![0u8; dol_padding_size as usize]).await?;
+        writer
+            .write_all(&vec![0u8; dol_padding_size as usize])
+            .await?;
         pos += dol_padding_size;
 
         buf.clear();
@@ -414,7 +414,9 @@ where
             .await?;
         writer.write_all(&buf).await?;
         pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
-        writer.write_all(&vec![0u8; fst_list_padding_size as usize]).await?;
+        writer
+            .write_all(&vec![0u8; fst_list_padding_size as usize])
+            .await?;
         pos += fst_list_padding_size;
 
         let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
@@ -760,7 +762,7 @@ where
                         Err(_) => return,
                     }
                     stack.push(file);
-                },
+                }
                 NodeEnumMut::Directory(dir) => {
                     for child in &mut dir.children {
                         traverse_depth(child.as_mut(), stack);
@@ -786,7 +788,8 @@ where
 
     pub fn get_file_mut(&mut self, path: &str) -> Result<&mut File<R>> {
         let self_name = self.name().to_owned();
-        let file = self.resolve_node_mut(path)
+        let file = self
+            .resolve_node_mut(path)
             .ok_or(eyre::eyre!(
                 "\"{path}\" not found in the directory \"{self_name}\""
             ))?
@@ -1018,22 +1021,20 @@ where
             }
         };
         match &mut status.data {
-            FileDataSource::Reader { fst, .. } => {
-                match pos {
-                    SeekFrom::Start(pos) => {
-                        status.cursor = pos;
-                        Poll::Ready(Ok(status.cursor))
-                    }
-                    SeekFrom::End(pos) => {
-                        status.cursor = (fst.get_file_size().unwrap() as i64 + pos) as u64;
-                        Poll::Ready(Ok(status.cursor))
-                    }
-                    SeekFrom::Current(pos) => {
-                        status.cursor = (status.cursor as i64 + pos) as u64;
-                        Poll::Ready(Ok(status.cursor))
-                    }
+            FileDataSource::Reader { fst, .. } => match pos {
+                SeekFrom::Start(pos) => {
+                    status.cursor = pos;
+                    Poll::Ready(Ok(status.cursor))
                 }
-            }
+                SeekFrom::End(pos) => {
+                    status.cursor = (fst.get_file_size().unwrap() as i64 + pos) as u64;
+                    Poll::Ready(Ok(status.cursor))
+                }
+                SeekFrom::Current(pos) => {
+                    status.cursor = (status.cursor as i64 + pos) as u64;
+                    Poll::Ready(Ok(status.cursor))
+                }
+            },
             FileDataSource::Box { data, .. } => match pos {
                 SeekFrom::Start(pos) => {
                     status.cursor = pos;

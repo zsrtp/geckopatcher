@@ -1,8 +1,8 @@
 use crate::config::Config;
 use crate::patch::demangle::demangle as demangle_tww;
 use crate::patch::linker::{LinkedSection, SectionKind};
-use futures::{AsyncRead, AsyncSeek, AsyncReadExt};
 use eyre::Context;
+use futures::{AsyncRead, AsyncReadExt, AsyncSeek};
 use regex::{Captures, Regex};
 use rustc_demangle::demangle as demangle_rust;
 use std::collections::HashMap;

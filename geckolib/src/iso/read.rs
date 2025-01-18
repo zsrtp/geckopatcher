@@ -1,8 +1,8 @@
 use super::disc::*;
 use crate::crypto::{aes_decrypt_inplace, consts, Unpackable, WiiCryptoError};
 use crate::iso::consts as iso_consts;
-use futures::{AsyncRead, AsyncSeek, AsyncReadExt, AsyncSeekExt, lock::Mutex, ready};
 use byteorder::{ByteOrder, BE};
+use futures::{lock::Mutex, ready, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::error::Error;
@@ -31,10 +31,16 @@ impl Display for WiiDiscReaderError {
             WiiDiscReaderError::InvalidWiiDisc { magic } => {
                 write!(f, "Invalid Wii disc: magic is {:#010X}", magic)
             }
-            WiiDiscReaderError::NoGamePartition => write!(f, "There is no game parition in this disc"),
+            WiiDiscReaderError::NoGamePartition => {
+                write!(f, "There is no game parition in this disc")
+            }
             WiiDiscReaderError::EncryptionError(e) => write!(f, "Encryption error: {}", e),
             WiiDiscReaderError::ConvertError { name } => {
-                write!(f, "The provided slice is too small to be converted into a {}.", name)
+                write!(
+                    f,
+                    "The provided slice is too small to be converted into a {}.",
+                    name
+                )
             }
             WiiDiscReaderError::Io(e) => write!(f, "I/O error: {}", e),
         }
@@ -343,7 +349,8 @@ where
                             &part_key,
                         );
                         aes_decrypt_inplace(
-                            &mut data[consts::WII_SECTOR_HASH_SIZE..][..consts::WII_SECTOR_DATA_SIZE as usize],
+                            &mut data[consts::WII_SECTOR_HASH_SIZE..]
+                                [..consts::WII_SECTOR_DATA_SIZE as usize],
                             &iv,
                             &part_key,
                         );
@@ -357,8 +364,7 @@ where
                 data_pool.iter_mut().for_each(decrypt_process);
                 crate::trace!("Decryption done");
                 for (i, block) in data_pool.iter().enumerate() {
-                    let block_pos =
-                        (start_blk_idx + i as u64) * consts::WII_SECTOR_DATA_SIZE;
+                    let block_pos = (start_blk_idx + i as u64) * consts::WII_SECTOR_DATA_SIZE;
                     let buf_write_start: u64 =
                         std::cmp::max(0, block_pos as i64 - vstart as i64) as u64;
                     let buf_write_end: u64 = std::cmp::min(
@@ -407,7 +413,11 @@ impl Error for DiscReaderError {}
 impl Display for DiscReaderError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DiscReaderError::NotDisc(gc_magic, wii_magic) => write!(f, "Not a disc (GC: {:#010X}; Wii: {:#010X})", gc_magic, wii_magic),
+            DiscReaderError::NotDisc(gc_magic, wii_magic) => write!(
+                f,
+                "Not a disc (GC: {:#010X}; Wii: {:#010X})",
+                gc_magic, wii_magic
+            ),
             DiscReaderError::Io(e) => write!(f, "I/O error: {}", e),
             DiscReaderError::Wii(e) => write!(f, "Wii error: {}", e),
         }

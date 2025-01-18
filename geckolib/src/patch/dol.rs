@@ -1,7 +1,7 @@
 use crate::patch::assembler::Instruction;
 // use async_std::io::{prelude::*, Read as AsyncRead, ReadExt, Seek as AsyncSeek};
-use futures::{AsyncRead, AsyncSeek, AsyncReadExt, AsyncSeekExt};
 use byteorder::{ByteOrder, BE};
+use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 use std::fmt::{self, Debug};
 
 pub struct Section {

@@ -388,15 +388,13 @@ fn relocate_and_collect<'a>(
                                 let _ = updater.set_message(format!(
                                     "Game Symbol {} at addr: {:08x}",
                                     archive_symbol_name,
-                                    located_section_address
-                                        .wrapping_add(reloc.r_offset as u32)
+                                    located_section_address.wrapping_add(reloc.r_offset as u32)
                                 ));
                             }
                             info!(
                                 "Game Symbol {} at addr: {:08x}",
                                 archive_symbol_name,
-                                located_section_address
-                                    .wrapping_add(reloc.r_offset as u32)
+                                located_section_address.wrapping_add(reloc.r_offset as u32)
                             );
                             (prelinked_symbols[archive_symbol_name], 0)
                         }

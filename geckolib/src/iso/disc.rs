@@ -3,7 +3,7 @@ use std::io::SeekFrom;
 use std::mem::offset_of;
 use std::pin::Pin;
 
-use futures::{AsyncSeekExt, AsyncReadExt};
+use futures::{AsyncReadExt, AsyncSeekExt};
 use num::Unsigned;
 
 use crate::crypto::aes_decrypt_inplace;
@@ -12,8 +12,8 @@ use crate::crypto::WiiCryptoError;
 use crate::crypto::COMMON_KEY;
 use crate::crypto::{consts, Unpackable};
 use crate::declare_tryfrom;
-use futures::{AsyncSeek, AsyncRead};
 use byteorder::{ByteOrder, BE};
+use futures::{AsyncRead, AsyncSeek};
 use sha1_smol::Sha1;
 use std::convert::TryFrom;
 
@@ -359,14 +359,19 @@ impl Ticket {
         self.sig.sig.fill(0);
         self.sig.sig_padding.fill(0);
         self.fake_sign.fill(0);
-        tik_buf[..<Ticket as Unpackable>::BLOCK_SIZE].copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(&*self));
+        tik_buf[..<Ticket as Unpackable>::BLOCK_SIZE]
+            .copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(&*self));
         // start brute force
         crate::trace!("Ticket fake signing; starting brute force...");
         let mut val = 0u32;
         let mut hash_0;
         let mut sha1 = Sha1::new();
         loop {
-            BE::write_u32(&mut tik_buf[offset_of!(Self, time_limit)/* 0x248 */..][..size_of_val(&self.time_limit)], val);
+            BE::write_u32(
+                &mut tik_buf[offset_of!(Self, time_limit)/* 0x248 */..]
+                    [..size_of_val(&self.time_limit)],
+                val,
+            );
             sha1.reset();
             sha1.update(&tik_buf[0x140..]);
             hash_0 = sha1.digest().bytes()[0];
@@ -513,7 +518,9 @@ impl From<&[u8; PartHeader::BLOCK_SIZE]> for PartHeader {
 impl From<&PartHeader> for [u8; PartHeader::BLOCK_SIZE] {
     fn from(ph: &PartHeader) -> Self {
         let mut buf = [0_u8; PartHeader::BLOCK_SIZE];
-        buf[..0x2A4].copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(&ph.ticket));
+        buf[..0x2A4].copy_from_slice(&<[u8; <Ticket as Unpackable>::BLOCK_SIZE]>::from(
+            &ph.ticket,
+        ));
         BE::write_u32(&mut buf[0x2A4..], ph.tmd_size as u32);
         BE::write_u32(&mut buf[0x2A8..], (ph.tmd_offset >> 2) as u32);
         BE::write_u32(&mut buf[0x2AC..], ph.cert_size as u32);
@@ -780,7 +787,9 @@ impl WiiSectorHash {
         unsafe { std::mem::transmute(self) }
     }
 
-    pub fn get_h0_ref(&self) -> &[u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT as usize] {
+    pub fn get_h0_ref(
+        &self,
+    ) -> &[u8; consts::WII_HASH_SIZE * consts::WII_SECTOR_DATA_HASH_COUNT as usize] {
         unsafe { std::mem::transmute(&self.h0) }
     }
 

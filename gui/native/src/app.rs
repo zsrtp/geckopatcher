@@ -89,13 +89,12 @@ pub struct PatcherApp {
     progress: Option<f32>,
 }
 
-async fn apply(
-    patch: PathBuf,
-    iso: PathBuf,
-    save: PathBuf,
-) -> Result<(), eyre::Error> {
+async fn apply(patch: PathBuf, iso: PathBuf, save: PathBuf) -> Result<(), eyre::Error> {
     let patch = std::fs::OpenOptions::new().read(true).open(patch)?;
-    let iso = async_std::fs::OpenOptions::new().read(true).open(iso).await?;
+    let iso = async_std::fs::OpenOptions::new()
+        .read(true)
+        .open(iso)
+        .await?;
     let save = async_std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -253,9 +252,7 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                                     return;
                                 }
                                 if sender.send_async(FromAppMsg::NoSaveOpened).await.is_err() {
-                                    log::error!(
-                                        "could not send NoSaveOpened (error in reproc)"
-                                    );
+                                    log::error!("could not send NoSaveOpened (error in reproc)");
                                     return;
                                 }
                             } else {

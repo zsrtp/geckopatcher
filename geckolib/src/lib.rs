@@ -15,11 +15,11 @@ extern crate static_assertions;
 extern crate regex;
 extern crate syn;
 
-pub mod patch;
 pub mod config;
 pub mod crypto;
 pub mod iso;
 pub(crate) mod logs;
+pub mod patch;
 #[cfg(feature = "progress")]
 pub mod update;
 pub mod vfs;
@@ -30,15 +30,15 @@ use std::io::Read;
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
-use futures::{AsyncRead, AsyncSeek};
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 use config::Config;
 #[cfg(not(target_arch = "wasm32"))]
 use eyre::Context;
 use futures::AsyncWrite;
+use futures::{AsyncRead, AsyncSeek};
 use iso::builder::IsoBuilder;
 use iso::read::DiscReader;
+#[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
 use vfs::GeckoFS;
 use zip::ZipArchive;
 
@@ -49,9 +49,7 @@ lazy_static! {
         std::sync::Arc::new(std::sync::Mutex::new(update::Updater::default()));
 }
 
-pub fn parse_config<R: Read>(
-    config_stream: R,
-) -> eyre::Result<Config> {
+pub fn parse_config<R: Read>(config_stream: R) -> eyre::Result<Config> {
     Ok(toml::from_str(&std::io::read_to_string(config_stream)?)?)
 }
 
@@ -86,20 +84,32 @@ where
 
 #[cfg(not(target_arch = "wasm32"))]
 /// Open a config from a file on the FileSystem to return an IsoBuilder
-pub async fn open_config_from_fs_iso<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncWrite>(
+pub async fn open_config_from_fs_iso<
+    R: AsyncRead + AsyncSeek + Unpin + Clone + 'static,
+    W: AsyncWrite,
+>(
     config: Config,
     input: R,
     output: W,
 ) -> eyre::Result<IsoBuilder<File, R, W>> {
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
-        updater.set_message("Parsing RomHack.toml
-        ...".into())?;
+        updater.set_message(
+            "Parsing RomHack.toml
+        ..."
+            .into(),
+        )?;
     }
 
     let disc_reader = DiscReader::new(input).await?;
     let gfs = GeckoFS::parse(disc_reader.clone()).await?;
-    Ok(IsoBuilder::new_with_fs(config, PathBuf::new(), gfs, disc_reader, output))
+    Ok(IsoBuilder::new_with_fs(
+        config,
+        PathBuf::new(),
+        gfs,
+        disc_reader,
+        output,
+    ))
 }
 
 #[cfg(not(target_arch = "wasm32"))]

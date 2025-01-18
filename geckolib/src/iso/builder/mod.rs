@@ -1,31 +1,34 @@
-#[cfg(not(target_os = "unknown"))]
-use std::fs::read;
-use futures::{prelude::*, AsyncRead, AsyncSeek};
 use eyre::Context;
 use futures::AsyncWrite;
+use futures::{prelude::*, AsyncRead, AsyncSeek};
 use std::collections::HashMap;
+#[cfg(not(target_os = "unknown"))]
+use std::fs::read;
+use std::io::{Read, Seek};
+use std::path::{Path, PathBuf};
 #[cfg(not(target_os = "unknown"))]
 use std::{
     fs::File as StdFile,
     io::{BufWriter, Write},
 };
-use std::io::{Read, Seek};
-use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 #[cfg(not(target_os = "unknown"))]
 use zip::ZipWriter;
 
 use self::fs_source::FSSource;
+use crate::config::Config;
 use crate::patch::assembler::{Assembler, Instruction};
 use crate::patch::banner::Banner;
-use crate::config::Config;
 
-use crate::patch::dol::DolFile;
 use crate::iso::write::DiscWriter;
+use crate::patch::dol::DolFile;
 use crate::vfs::{self, Directory, GeckoFS};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use crate::{patch::{framework_map, linker}, warn};
+use crate::{
+    patch::{framework_map, linker},
+    warn,
+};
 
 use super::{disc::DiscType, read::DiscReader};
 
@@ -99,7 +102,11 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
     }
 }
 
-fn add_file_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: std::io::Read + std::io::Seek, P: AsRef<Path>>(
+fn add_file_to_iso<
+    R: AsyncRead + AsyncSeek + 'static,
+    R2: std::io::Read + std::io::Seek,
+    P: AsRef<Path>,
+>(
     iso_path: &String,
     actual_path: &P,
     iso: &mut Directory<R>,
@@ -256,7 +263,9 @@ where
 
             let linked = linker::link(
                 &libs_to_link,
-                base_address.base10_parse::<u32>().context("Invalid Base Address")?,
+                base_address
+                    .base10_parse::<u32>()
+                    .context("Invalid Base Address")?,
                 link.entries.clone(),
                 &original_symbols,
             )
@@ -289,7 +298,10 @@ where
 
             let lines = &buf.lines().collect::<Vec<_>>();
 
-            let mut assembler = Assembler::new(linked.as_ref().map(|l| l.symbol_table.clone()), &original_symbols);
+            let mut assembler = Assembler::new(
+                linked.as_ref().map(|l| l.symbol_table.clone()),
+                &original_symbols,
+            );
             assembler
                 .assemble_all_lines(lines)
                 .context("Couldn't assemble the patch file lines")?
@@ -493,20 +505,16 @@ impl Builder for PatchBuilder {
 
         if let Some(link) = &mut config.link {
             crate::info!("Storing libraries");
-    
+
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_message("".into())?;
                 updater.set_title("Storing libraries...".into())?;
             }
-    
+
             let libs = &mut link.libs;
             if !libs.is_empty() {
-                write_file_to_zip(
-                    &mut zip,
-                    "libcompiled.a",
-                    &read(libs.first().unwrap())?,
-                )?;
+                write_file_to_zip(&mut zip, "libcompiled.a", &read(libs.first().unwrap())?)?;
                 libs.remove(0);
             }
             let mut modified_libs = Vec::new();

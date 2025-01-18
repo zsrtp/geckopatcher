@@ -1,11 +1,8 @@
 #[cfg(feature = "progress")]
 use crate::UPDATER;
-use futures:: {
-    AsyncSeek, AsyncWrite, AsyncSeekExt, AsyncWriteExt,
-    lock::Mutex,
-};
 use byteorder::{ByteOrder, BE};
 use eyre::Result;
+use futures::{lock::Mutex, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "parallel")]
 use rayon::{iter::IntoParallelRefMutIterator, prelude::ParallelIterator};
 use sha1_smol::Sha1;
@@ -21,9 +18,12 @@ use crate::{
     },
 };
 
-use super::{disc::{
-    decrypt_title_key, DiscType, WiiDisc, WiiGroup, WiiPartition, WiiSector, WiiSectorHash,
-}, read::DiscReader};
+use super::{
+    disc::{
+        decrypt_title_key, DiscType, WiiDisc, WiiGroup, WiiPartition, WiiSector, WiiSectorHash,
+    },
+    read::DiscReader,
+};
 
 #[derive(Debug, Clone, Default)]
 enum WiiDiscWriterState {
@@ -199,7 +199,8 @@ fn encrypt_group(group: &mut WiiGroup, part_key: AesKey) {
         let mut iv = [0u8; consts::WII_KEY_SIZE];
         aes_encrypt_inplace(sector.hash.as_array_mut(), &iv, &part_key);
         iv[..consts::WII_KEY_SIZE].copy_from_slice(
-            &sector.hash.as_array_mut()[consts::WII_SECTOR_IV_OFF as usize..][..consts::WII_KEY_SIZE],
+            &sector.hash.as_array_mut()[consts::WII_SECTOR_IV_OFF as usize..]
+                [..consts::WII_KEY_SIZE],
         );
         aes_encrypt_inplace(&mut sector.data, &iv, &part_key);
     };
@@ -282,11 +283,7 @@ where
         this.writer.write_all(&buf).await?;
 
         // Make sure there is at least one content in the TitleMetaData
-        if disc.partitions.partitions[part_idx]
-            .tmd
-            .contents
-            .is_empty()
-        {
+        if disc.partitions.partitions[part_idx].tmd.contents.is_empty() {
             crate::warn!("TMD has no content value. Generating new value");
             disc.partitions.partitions[part_idx]
                 .tmd
@@ -360,7 +357,9 @@ fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]
     buf.extend(std::iter::repeat(0).take(part.tmd.get_size() + h3_padding));
     buf.extend(hashes.iter().flatten());
     buf.extend(
-        std::iter::repeat(0).take((consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize),
+        std::iter::repeat(0).take(
+            (consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize,
+        ),
     );
     TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
     buf
@@ -446,9 +445,8 @@ where
                 let mut curr_buf = &in_buf[..];
                 for i in start_blk..=end_blk {
                     // Offsets in the group buffer (decrypted address)
-                    let buffer_start =
-                        std::cmp::max(cursor, i * consts::WII_SECTOR_DATA_SIZE)
-                            % consts::WII_SECTOR_DATA_SIZE;
+                    let buffer_start = std::cmp::max(cursor, i * consts::WII_SECTOR_DATA_SIZE)
+                        % consts::WII_SECTOR_DATA_SIZE;
                     let buffer_end = std::cmp::min(
                         (cursor + in_buf.len() as u64) - 1,
                         (i + 1) * consts::WII_SECTOR_DATA_SIZE - 1,
@@ -485,8 +483,9 @@ where
                     }
                     let group_hash = hash_group(&mut status.group);
                     status.hashes[group_idx as usize].copy_from_slice(&group_hash);
-                    let part_key =
-                        decrypt_title_key(&status.disc.partitions.partitions[part_idx].header.ticket);
+                    let part_key = decrypt_title_key(
+                        &status.disc.partitions.partitions[part_idx].header.ticket,
+                    );
                     if !status.disc.disc_header.disable_disc_encrypt {
                         encrypt_group(&mut status.group, part_key);
                     }
@@ -545,8 +544,7 @@ where
                         Poll::Ready(Ok(buf.len()))
                     } else {
                         // We need to write the rest of the buffer
-                        status.state =
-                            WiiDiscWriterState::Parse(cursor, group_idx + 1, curr_buf);
+                        status.state = WiiDiscWriterState::Parse(cursor, group_idx + 1, curr_buf);
                         cx.waker().wake_by_ref();
                         Poll::Pending
                     }
@@ -635,7 +633,9 @@ where
                     group_idx
                 );
                 let pos = status.disc.partitions.partitions[part_idx].part_offset
-                    + status.disc.partitions.partitions[part_idx].header.data_offset
+                    + status.disc.partitions.partitions[part_idx]
+                        .header
+                        .data_offset
                     + group_idx * consts::WII_SECTOR_SIZE as u64 * 64;
                 if pin!(&mut this.writer)
                     .poll_seek(cx, SeekFrom::Start(pos))
@@ -679,14 +679,14 @@ where
             }
             WiiDiscWriterState::SeekToPartHeader(buf) => {
                 crate::trace!("WiiDiscWriterFinalizeState::SeekToPartHeader");
-                if let Poll::Ready(result) = pin!(&mut this.writer)
-                    .poll_seek(
-                        cx,
-                        SeekFrom::Start(status.disc.partitions.partitions[part_idx].part_offset),
-                    )
-                {
+                if let Poll::Ready(result) = pin!(&mut this.writer).poll_seek(
+                    cx,
+                    SeekFrom::Start(status.disc.partitions.partitions[part_idx].part_offset),
+                ) {
                     match result {
-                        Ok(new_pos) => {crate::trace!("Seeked to 0x{:08X}", new_pos);},
+                        Ok(new_pos) => {
+                            crate::trace!("Seeked to 0x{:08X}", new_pos);
+                        }
                         Err(err) => return Poll::Ready(Err(err)),
                     }
                 } else {
@@ -844,8 +844,7 @@ where
     }
 }
 
-impl<W> DiscWriter<W>
-{
+impl<W> DiscWriter<W> {
     fn as_wii_disc_mut(&mut self) -> Option<&mut WiiDiscWriter<W>> {
         match self {
             DiscWriter::Wii(writer) => Some(writer),

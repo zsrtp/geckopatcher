@@ -2,10 +2,7 @@ use async_std::task;
 use clap::Parser;
 use geckolib::iso::builder::PatchBuilder;
 use geckolib::parse_config;
-use geckolib::{
-    iso::builder::Builder, new, open_config_from_fs_iso,
-    open_config_from_patch,
-};
+use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_patch};
 
 use geckolib::{update::UpdaterType, UPDATER};
 
@@ -38,9 +35,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                     let mut builder = PatchBuilder::with_config(config);
                     builder.build().await
                 } else {
-                    let config = parse_config(&std::fs::File::open(
-                        "RomHack.toml",
-                    )?)?;
+                    let config = parse_config(&std::fs::File::open("RomHack.toml")?)?;
                     let writer = async_std::fs::OpenOptions::new()
                         .write(true)
                         .create(true)
@@ -48,8 +43,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                         .open(&config.build.iso)
                         .await?;
                     let disc_reader = async_std::fs::File::open(&config.src.iso).await?;
-                    let mut builder = open_config_from_fs_iso(config, disc_reader, writer)
-                    .await?;
+                    let mut builder = open_config_from_fs_iso(config, disc_reader, writer).await?;
                     builder.build().await
                 }
             })
@@ -65,7 +59,12 @@ fn main() -> color_eyre::eyre::Result<()> {
                     .read(true)
                     .open(original_game)
                     .await?,
-                    async_std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(output).await?,
+                async_std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(output)
+                    .await?,
             )
             .await?;
             builder.build().await

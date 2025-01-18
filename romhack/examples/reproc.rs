@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use async_std::io::{prelude::SeekExt, ReadExt};
 use clap::{arg, command, Parser, ValueHint};
 use futures::AsyncWriteExt;
-use geckolib::{
-    iso::{read::DiscReader, write::DiscWriter}, vfs::GeckoFS
-};
 #[cfg(feature = "progress")]
 use geckolib::UPDATER;
+use geckolib::{
+    iso::{read::DiscReader, write::DiscWriter},
+    vfs::GeckoFS,
+};
 #[cfg(feature = "progress")]
 use romhack::progress;
 

@@ -5,13 +5,13 @@ use async_std::io::prelude::{ReadExt, SeekExt};
 use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
 use async_std::sync::Mutex;
 use futures::AsyncWriteExt;
+use geckolib::iso::builder::Builder;
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
 use geckolib::update::UpdaterType;
 use geckolib::vfs::GeckoFS;
 use geckolib::{open_config_from_patch, UPDATER};
-use geckolib::iso::builder::Builder;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use web_gui_patcher::io::{WebFile, WebReadable, WebWritable};
@@ -21,13 +21,30 @@ use web_gui_patcher::io::{WebFile, WebReadable, WebWritable};
 static ALLOC: wasm_tracing_allocator::WasmTracingAllocator<std::alloc::System> =
     wasm_tracing_allocator::WasmTracingAllocator(std::alloc::System);
 
-async fn apply<R1: Read + Seek, R2: AsyncRead + AsyncSeek + Clone + Unpin + 'static, W: AsyncWrite + AsyncSeek + Clone + Unpin>(patch: R1, iso: R2, save: W) -> Result<String, eyre::Error> {
+async fn apply<
+    R1: Read + Seek,
+    R2: AsyncRead + AsyncSeek + Clone + Unpin + 'static,
+    W: AsyncWrite + AsyncSeek + Clone + Unpin,
+>(
+    patch: R1,
+    iso: R2,
+    save: W,
+) -> Result<String, eyre::Error> {
     let mut builder = open_config_from_patch(patch, iso, save).await?;
     builder.build().await?;
-    Ok(builder.config.build.iso.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("output.iso".into()))
+    Ok(builder
+        .config
+        .build
+        .iso
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or("output.iso".into()))
 }
 
-async fn _reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSeek + AsyncWrite + Unpin + Clone>(
+async fn _reproc<
+    R: AsyncRead + AsyncSeek + Unpin + Clone + 'static,
+    W: AsyncSeek + AsyncWrite + Unpin + Clone,
+>(
     file: R,
     save: W,
 ) -> Result<(), eyre::Error> {
@@ -45,9 +62,7 @@ async fn _reproc<R: AsyncRead + AsyncSeek + Unpin + Clone + 'static, W: AsyncSee
                 .expect("This game has no title")
         );
     }
-    let mut out = {
-        DiscWriter::new(save, f.get_disc_info())
-    };
+    let mut out = { DiscWriter::new(save, f.get_disc_info()) };
 
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_type(UpdaterType::Spinner)?;
@@ -87,10 +102,9 @@ pub async extern "C" fn run_patch(
             .await?
             .dyn_into()?;
     let file_handle: web_sys::FileSystemFileHandle = file.clone().dyn_into()?;
-    let file_access: web_sys::File =
-        wasm_bindgen_futures::JsFuture::from(file_handle.get_file())
-            .await?
-            .dyn_into()?;
+    let file_access: web_sys::File = wasm_bindgen_futures::JsFuture::from(file_handle.get_file())
+        .await?
+        .dyn_into()?;
     let save_handle: web_sys::FileSystemFileHandle = save.clone().dyn_into()?;
     log::info!("getting handle...");
     let save_access: web_sys::FileSystemWritableFileStream =

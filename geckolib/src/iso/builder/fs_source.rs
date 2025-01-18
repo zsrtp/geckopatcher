@@ -1,7 +1,7 @@
+use std::io::{Read, Seek};
 use std::path::Path;
 #[cfg(not(target_os = "unknown"))]
 use std::path::PathBuf;
-use std::io::{Read, Seek};
 use zip::{read::ZipFile, ZipArchive};
 
 /// A file from an arbitrary source

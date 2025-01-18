@@ -3,19 +3,16 @@ use std::{borrow::Borrow, rc::Rc};
 use js_sys::{ArrayBuffer, Uint8Array};
 #[cfg(not(feature = "generic_patch"))]
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::{
-    prelude::*,
-    JsCast, JsValue,
-};
+use wasm_bindgen::{prelude::*, JsCast, JsValue};
 #[cfg(not(feature = "generic_patch"))]
 use wasm_bindgen_futures::JsFuture;
+use web_sys::{console, File, HtmlInputElement, MessageEvent, Worker};
 #[cfg(not(feature = "generic_patch"))]
 use web_sys::{Blob, Response};
-use web_sys::{console, File, HtmlInputElement, MessageEvent, Worker};
 use yew::prelude::*;
 
-pub mod progress;
 pub mod io;
+pub mod progress;
 
 #[wasm_bindgen]
 extern "C" {
@@ -270,8 +267,13 @@ impl Component for PatchInput {
                 )
                 .await
                 .expect("meta.json not found")
-                .dyn_into().expect("JsValue is not a Response object");
-                let json = wasm_bindgen_futures::JsFuture::from(response.json().expect("Cannot get json from response")).await.expect("Cannot get json from response after await");
+                .dyn_into()
+                .expect("JsValue is not a Response object");
+                let json = wasm_bindgen_futures::JsFuture::from(
+                    response.json().expect("Cannot get json from response"),
+                )
+                .await
+                .expect("Cannot get json from response after await");
                 callback.emit(
                     serde_wasm_bindgen::from_value::<Vec<Patch>>(json)
                         .expect("could convert JSON to Patch vector"),
@@ -308,7 +310,12 @@ impl Component for PatchInput {
                         x.dyn_into::<HtmlOptionElement>()
                             .expect("First selected element is not an option")
                     })
-                    .map(|x| x.value().parse::<usize>().map(|i| i - 1).map(|i| patches.get(i)));
+                    .map(|x| {
+                        x.value()
+                            .parse::<usize>()
+                            .map(|i| i - 1)
+                            .map(|i| patches.get(i))
+                    });
                 if let Some(Ok(option)) = option {
                     callback.emit(option.cloned());
                 }
@@ -325,7 +332,12 @@ impl Component for PatchInput {
                 }
             })
             .collect();
-        let patches_empty = self.patches.iter().filter(|p| version.clone().map(|v| p.version == v).unwrap_or(false)).count() == 0;
+        let patches_empty = self
+            .patches
+            .iter()
+            .filter(|p| version.clone().map(|v| p.version == v).unwrap_or(false))
+            .count()
+            == 0;
         html! {
             <>
                 <label for="patch">{"Patch to Apply: "}</label>
@@ -345,7 +357,7 @@ pub struct Iso {
 
 #[derive(Properties, PartialEq)]
 pub struct IsoInputProps {
-    pub callback: Callback<Option<(Iso,[u8;8])>, ()>,
+    pub callback: Callback<Option<(Iso, [u8; 8])>, ()>,
     disabled: Option<bool>,
 }
 
@@ -399,7 +411,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     let is_patching = props.is_patching;
     let status = props.status.clone();
     let selected_patch = use_state(|| <Option<Patch>>::None);
-    let selected_iso = use_state(|| <Option<(Iso,[u8;8])>>::None);
+    let selected_iso = use_state(|| <Option<(Iso, [u8; 8])>>::None);
     let callback = {
         let selected_iso = selected_iso.clone();
         let selected_patch = selected_patch.clone();

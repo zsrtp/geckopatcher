@@ -1,10 +1,7 @@
 use std::io::SeekFrom;
 
 use async_std::path::PathBuf;
-use async_std::{
-    io::prelude::*,
-    task,
-};
+use async_std::{io::prelude::*, task};
 use clap::{Parser, ValueHint};
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
