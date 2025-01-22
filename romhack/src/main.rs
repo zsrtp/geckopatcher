@@ -80,7 +80,86 @@ fn main() -> color_eyre::eyre::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use core::fmt;
+    use std::{pin::Pin, task::{Context, Poll}};
+
+    use async_std::io;
+    use futures::{AsyncReadExt, AsyncSeek, AsyncWrite};
+    use geckolib::{iso::{builder::Builder, read::DiscReader}, open_config_from_patch};
+
+    #[derive(Copy, Clone, Default)]
+    pub struct Sink {
+        _private: (),
+    }
+    
+    impl fmt::Debug for Sink {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.pad("Sink { .. }")
+        }
+    }
+    
+    impl AsyncWrite for Sink {
+        #[inline]
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+    
+        #[inline]
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    
+        #[inline]
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncSeek for Sink {
+        fn poll_seek(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            pos: std::io::SeekFrom,
+        ) -> Poll<std::io::Result<u64>> {
+            match pos {
+                std::io::SeekFrom::Start(pos) => Poll::Ready(Ok(pos)),
+                std::io::SeekFrom::End(_) => Poll::Ready(Ok(0)),
+                std::io::SeekFrom::Current(_) => Poll::Ready(Ok(0)),
+            }
+        }
+    }
+    
     #[test]
-    fn empty_iso_and_empty_patch() {
+    fn empty_iso_can_be_read() {
+        async_std::task::block_on(async {
+            let mut reader =
+                DiscReader::new(async_std::fs::File::open("assets/empty.iso").await.unwrap())
+                    .await
+                    .unwrap();
+            let mut buf = Vec::new();
+            let ret = reader.read_to_end(&mut buf).await;
+            println!("{:?}", ret);
+            assert!(ret.is_ok());
+            debug_assert_eq!(buf.len(), ret.unwrap());
+            debug_assert_eq!(buf.len(), 8388608);
+            // debug_assert_eq!(&buf[0..6], b"R00J\0\x01");
+        });
+    }
+
+    #[test]
+    fn empty_patch_can_be_loaded_and_built() {
+        async_std::task::block_on(async {
+            let mut builder = open_config_from_patch(
+                std::fs::File::open("assets/empty.patch").unwrap(),
+                async_std::fs::File::open("assets/empty.iso").await.unwrap(),
+                Sink::default(),
+            )
+            .await.unwrap();
+            builder.build().await.unwrap();
+        });
     }
 }
