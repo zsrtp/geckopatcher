@@ -18,11 +18,8 @@ use crate::{
     },
 };
 
-use super::{
-    disc::{
-        decrypt_title_key, DiscType, WiiDisc, WiiGroup, WiiPartition, WiiSector, WiiSectorHash,
-    },
-    read::DiscReader,
+use super::disc::{
+    decrypt_title_key, DiscType, WiiDisc, WiiGroup, WiiPartition, WiiSector, WiiSectorHash,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -175,11 +172,11 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
         .copy_from_slice(&Sha1::from(&hashes_).digest().bytes());
 
     // Fake sign tmd
-    if let Err(err) = part.tmd.fake_sign() {
-        crate::warn!("Error while signing TMD: {}", err);
+    if let Err(_err) = part.tmd.fake_sign() {
+        crate::warn!("Error while signing TMD: {}", _err);
     }
-    if let Err(err) = part.header.ticket.fake_sign() {
-        crate::warn!("Error while signing Ticket: {}", err);
+    if let Err(_err) = part.header.ticket.fake_sign() {
+        crate::warn!("Error while signing Ticket: {}", _err);
     }
 }
 
@@ -684,8 +681,8 @@ where
                     SeekFrom::Start(status.disc.partitions.partitions[part_idx].part_offset),
                 ) {
                     match result {
-                        Ok(new_pos) => {
-                            crate::trace!("Seeked to 0x{:08X}", new_pos);
+                        Ok(_new_pos) => {
+                            crate::trace!("Seeked to 0x{:08X}", _new_pos);
                         }
                         Err(err) => return Poll::Ready(Err(err)),
                     }
@@ -821,13 +818,6 @@ where
         match disc_info {
             None => DiscWriter::new_gc(writer),
             Some(disc_info) => DiscWriter::new_wii(writer, disc_info),
-        }
-    }
-
-    pub fn from_reader<R>(writer: W, reader: &DiscReader<R>) -> Self {
-        match reader {
-            DiscReader::Gamecube(_) => DiscWriter::new_gc(writer),
-            DiscReader::Wii(reader) => DiscWriter::new_wii(writer, reader.disc.to_owned()),
         }
     }
 }

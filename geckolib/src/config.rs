@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use serde_derive::{Deserialize, Serialize};
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Default, Debug)]
 pub struct Config {
     #[serde(default)]
     pub info: Info,
@@ -14,7 +14,7 @@ pub struct Config {
     pub link: Option<Link>,
 }
 
-#[derive(Deserialize, Serialize, Debug)]
+#[derive(Deserialize, Serialize, Default, Debug)]
 #[serde(rename_all = "kebab-case")]
 pub struct Src {
     pub src: Option<PathBuf>,
@@ -40,7 +40,7 @@ pub struct Build {
     pub iso: PathBuf,
 }
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
+#[derive(Deserialize, Serialize, Default, Debug, Clone)]
 pub struct Link {
     pub entries: Vec<String>,
     pub base: String,

@@ -30,7 +30,7 @@ clap_complete = { version = "4.4.1" }
 [dev-dependencies]
 
 [features]
-default = ["parallel", "log"]
+default = ["parallel", "log", "progress"]
 log = [
     "geckolib/log",
     "dep:env_logger",

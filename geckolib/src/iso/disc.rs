@@ -17,6 +17,8 @@ use futures::{AsyncRead, AsyncSeek};
 use sha1_smol::Sha1;
 use std::convert::TryFrom;
 
+use super::consts::WII_MAGIC;
+
 #[derive(Debug)]
 pub enum DiscError {
     NoGamePartition,
@@ -75,21 +77,27 @@ pub struct WiiDiscHeader {
 
 impl Default for WiiDiscHeader {
     fn default() -> Self {
+        let mut title = [0u8; 64];
+        let title_str = "Generated Disc".as_bytes();
+        title
+            .split_at_mut(title_str.len())
+            .0
+            .clone_from_slice(title_str);
         Self {
-            disc_id: Default::default(),
-            game_code: Default::default(),
-            region_code: Default::default(),
+            disc_id: b'R', // R for Revolution (the wii's code name while in development) and G for Gamecube
+            game_code: [b'0', b'0'],
+            region_code: b'J', // Default Region being Japan
             maker_code: Default::default(),
             disc_number: Default::default(),
             disc_version: Default::default(),
             audio_streaming: Default::default(),
             streaming_buffer_size: Default::default(),
             unk1: Default::default(),
-            wii_magic: Default::default(),
+            wii_magic: WII_MAGIC,
             gc_magic: Default::default(),
-            game_title: [0; 64],
-            disable_hash_verif: Default::default(),
-            disable_disc_encrypt: Default::default(),
+            game_title: title,
+            disable_hash_verif: false,
+            disable_disc_encrypt: false,
             padding: [0; 0x39e],
         }
     }
@@ -715,11 +723,39 @@ pub struct WiiPartition {
     pub cert: Box<[u8]>,
 }
 
-#[derive(Debug, Clone, Default)]
+impl Default for WiiPartition {
+    fn default() -> Self {
+        Self {
+            part_type: PartitionType::Data,
+            part_offset: 0x00020000, // 0x00020000 for encrypted discs, and 0x00008000 for unencrypted ones
+            header: PartHeader::default(),
+            tmd: Default::default(),
+            cert: Default::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WiiPartitions {
     pub data_idx: usize,
     pub part_info: PartInfo,
     pub partitions: Vec<WiiPartition>,
+}
+
+impl Default for WiiPartitions {
+    fn default() -> Self {
+        Self {
+            data_idx: 0,
+            part_info: PartInfo {
+                offset: 0x40000,
+                entries: vec![PartInfoEntry {
+                    offset: 0x50000,
+                    ..Default::default()
+                }],
+            },
+            partitions: Default::default(),
+        }
+    }
 }
 
 pub fn decrypt_title_key(tik: &Ticket) -> AesKey {

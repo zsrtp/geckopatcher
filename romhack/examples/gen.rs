@@ -1,68 +1,32 @@
-use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
+use std::{path::PathBuf, pin::pin};
+
+use async_std::io::ReadExt;
+use clap::{command, Parser, ValueHint};
+use color_eyre::eyre::eyre;
 use geckolib::{
     iso::{
-        disc::{PartHeader, TitleMetaData, WiiDiscRegionAgeRating, WiiPartition},
-        write::DiscWriter,
+        disc::{WiiDisc, WiiDiscHeader}, read::DiscReader, write::DiscWriter
     },
-    vfs::GeckoFS,
+    vfs::{self, GeckoFS},
 };
-use lazy_static::lazy_static;
 #[cfg(feature = "progress")]
 use romhack::progress;
 
-lazy_static! {
-    static ref DEFAULT_ISO_HDR: Box<[u8]> = {
-        let mut vec = Vec::from(b"RZDE01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x5D\x1C\x9E\xA3\x00\x00\x00\x00Test Wii ISO\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01".as_slice());
-        vec.extend(std::iter::repeat(0).take(0x39E));
-        vec.into_boxed_slice()
-    };
-}
+#[cfg(feature = "progress")]
+use geckolib::{update::UpdaterType, UPDATER};
 
-#[derive(Debug, Clone, Default)]
-struct DummyReaderWriter {}
-
-impl AsyncRead for DummyReaderWriter {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        _buf: &mut [u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        unreachable!()
-    }
-}
-
-impl AsyncSeek for DummyReaderWriter {
-    fn poll_seek(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        _pos: std::io::SeekFrom,
-    ) -> std::task::Poll<std::io::Result<u64>> {
-        unreachable!()
-    }
-}
-
-impl AsyncWrite for DummyReaderWriter {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-        _buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        unreachable!()
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        unreachable!()
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        unreachable!()
-    }
+#[derive(Debug, Parser)]
+#[command(author, version, about, long_about = None)]
+/// Extract Title information from the FILE.
+struct Args {
+    #[arg(value_hint = ValueHint::FilePath)]
+    /// The file to extract the info from
+    input: PathBuf,
+    #[arg(value_hint = ValueHint::AnyPath)]
+    /// Where to output the empty ISO image
+    output: PathBuf,
+    /// New Title for the ISO image
+    title: Option<String>,
 }
 
 // Generates an valid empty ISO
@@ -73,82 +37,81 @@ fn main() -> color_eyre::eyre::Result<()> {
     #[cfg(feature = "progress")]
     progress::init_cli_progress();
 
-    async_std::task::block_on(async {
-        let mut out = {
-            let mut game_title = [0u8; 64];
-            let title_string = "Test Wii ISO";
-            game_title[..title_string.len()].copy_from_slice(title_string.as_bytes());
-            DiscWriter::new(
-                async_std::fs::OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create(true)
-                    .open(
-                        std::env::args()
-                            .nth(1)
-                            .expect("No output file was provided"),
-                    )
-                    .await?,
-                Some(geckolib::iso::disc::WiiDisc {
-                    disc_header: geckolib::iso::disc::WiiDiscHeader {
-                        disc_id: b'R',
-                        game_code: [b'Z', b'D'],
-                        region_code: b'E',
-                        maker_code: [b'0', b'1'],
-                        disc_number: 0,
-                        disc_version: 1,
-                        audio_streaming: false,
-                        streaming_buffer_size: 0,
-                        unk1: Default::default(),
-                        wii_magic: 0x5D1C9EA3,
-                        gc_magic: 0,
-                        game_title,
-                        disable_hash_verif: false,
-                        disable_disc_encrypt: false,
-                        padding: [0; 0x39E],
-                    },
-                    disc_region: geckolib::iso::disc::WiiDiscRegion {
-                        region: geckolib::iso::disc::WiiDiscRegions::NTSCU,
-                        age_rating: WiiDiscRegionAgeRating::default(),
-                    },
-                    partitions: geckolib::iso::disc::WiiPartitions {
-                        data_idx: 0,
-                        part_info: geckolib::iso::disc::PartInfo {
-                            offset: 0,
-                            entries: Vec::new(),
-                        },
-                        partitions: vec![WiiPartition {
-                            part_type: geckolib::iso::disc::PartitionType::Data,
-                            part_offset: 0x50000,
-                            header: PartHeader::default(),
-                            tmd: TitleMetaData::default(),
-                            cert: vec![0x00].into_boxed_slice(),
-                        }],
-                    },
-                }),
-            )
-        };
+    let args = Args::parse();
 
-        let mut fs = GeckoFS::<DummyReaderWriter>::new();
-
-        fs.sys_mut().add_file(geckolib::vfs::File::new(
-            geckolib::vfs::FileDataSource::Box {
-                data: DEFAULT_ISO_HDR.clone(),
-                name: "uso.hdr".into(),
-            },
-        ));
-        fs.root_mut().add_file(geckolib::vfs::File::new(
-            geckolib::vfs::FileDataSource::Box {
-                data: vec![b't', b'e', b's', b't'].into_boxed_slice(),
-                name: "test".into(),
-            },
-        ));
-        {
-            fs.serialize(&mut out).await?;
-            #[cfg(feature = "log")]
-            log::info!("Encrypting the ISO");
-            out.close().await?;
+    if let Some(new_title) = args.title.as_ref() {
+        if new_title.len() > 64 {
+            return Err(eyre!("New title \"{}\" is too long.", new_title))
         }
+    }
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.lock() {
+        updater.set_type(UpdaterType::Spinner)?;
+        updater.init(Some(4))?;
+        updater.set_title("Initializing...".into())?;
+    }
+
+    async_std::task::block_on(async {
+        let mut new_title: String = args.title.unwrap_or("Empty Wii Disk".into());
+        if new_title.len() < 64 {
+            new_title.push('\0');
+        }
+        let new_title = new_title.as_bytes();
+        let reader =
+            DiscReader::new(async_std::fs::File::open(args.input).await?)
+                .await?;
+        let disc = reader.get_disc_info();
+        let new_disc = disc.map(|disc| {
+            let mut game_title = disc.disc_header.game_title;
+            game_title[..new_title.len()].copy_from_slice(new_title);
+            WiiDisc {
+                disc_header: WiiDiscHeader {
+                    game_code: [b'0', b'0'],
+                    game_title,
+                    ..disc.disc_header
+                },
+                disc_region: disc.disc_region,
+                partitions: disc.partitions.clone(),
+            }
+        });
+        let mut gfs = GeckoFS::parse(reader).await?;
+        let children: Vec<_> = gfs.root().iter().map(|item| item.name()).collect();
+        for item in children {
+            gfs.root_mut().rm(item)?;
+        }
+        gfs.root_mut()
+            .add_file(vfs::File::new(vfs::FileDataSource::Box {
+                data: "Hello, World!\n".as_bytes().to_vec().into_boxed_slice(),
+                name: "test.txt".into(),
+            }));
+        let Ok(iso_hdr) = gfs.sys_mut().get_file_mut("iso.hdr") else {
+            return Err(eyre!("No \"iso.hdr\" in the system section of the disc."));
+        };
+        let mut header = vec![0u8; iso_hdr.len()?];
+        iso_hdr.read_to_end(&mut header);
+        header[1..=2].copy_from_slice(b"00");
+        header[0x20..0x20+new_title.len()].copy_from_slice(new_title);
+        iso_hdr.set_data(header.into_boxed_slice())?;
+        let writer = DiscWriter::new(
+            async_std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(args.output)
+                .await?,
+                new_disc,
+        );
+        pin!(writer.clone()).init().await?;
+        let mut writer = pin!(writer);
+        gfs.serialize(&mut writer).await?;
+
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.set_title("Finished".into())?;
+            updater.finish()?;
+        }
+
         <color_eyre::eyre::Result<()>>::Ok(())
     })?;
     Ok(())

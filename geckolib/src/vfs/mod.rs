@@ -7,7 +7,7 @@ use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
 #[cfg(feature = "progress")]
 use crate::UPDATER;
 use byteorder::{ByteOrder, BE};
-use eyre::Result;
+use eyre::{eyre, Result};
 use futures::{io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
@@ -828,6 +828,25 @@ where
             ))?
             .as_directory_mut()
             .ok_or(eyre::eyre!("\"{:?}\" is not a Directory!", path.as_ref()))
+    }
+
+    pub fn rm<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        let parent_path = path.as_ref().parent().unwrap_or(path.as_ref());
+        let leaf = path.as_ref().strip_prefix(parent_path)?;
+        let node = self.resolve_node_mut(parent_path);
+        match node.map(|n| n.as_enum_mut()) {
+            Some(NodeEnumMut::Directory(dir)) => {
+                match dir.iter().enumerate().filter_map(|(i, c)| if c.name() == leaf.to_string_lossy() {Some(i)} else {None}).next() {
+                    Some(index) => {
+                        dir.children.remove(index);
+                        Ok(())
+                    },
+                    None => Err(eyre!("\"{:?}\" was not found in \"{:?}\"", leaf, parent_path)),
+                }
+            }
+            Some(_) => Err(eyre!("\"{:?}\" is not a directory", parent_path)),
+            None => Err(eyre!("Cannot resolve path \"{:?}\"", parent_path))
+        }
     }
 }
 

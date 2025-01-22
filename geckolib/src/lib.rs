@@ -73,11 +73,12 @@ where
     };
 
     let disc_reader = DiscReader::new(iso_reader).await?;
+    let wii_disc = disc_reader.get_disc_info();
     Ok(IsoBuilder::new_with_zip(
         config,
         zip,
-        GeckoFS::parse(disc_reader.clone()).await?,
-        disc_reader,
+        GeckoFS::parse(disc_reader).await?,
+        wii_disc,
         writer,
     ))
 }
@@ -102,12 +103,13 @@ pub async fn open_config_from_fs_iso<
     }
 
     let disc_reader = DiscReader::new(input).await?;
-    let gfs = GeckoFS::parse(disc_reader.clone()).await?;
+    let wii_disc = disc_reader.get_disc_info();
+    let gfs = GeckoFS::parse(disc_reader).await?;
     Ok(IsoBuilder::new_with_fs(
         config,
         PathBuf::new(),
         gfs,
-        disc_reader,
+        wii_disc,
         output,
     ))
 }

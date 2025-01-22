@@ -30,7 +30,7 @@ use crate::{
     warn,
 };
 
-use super::{disc::DiscType, read::DiscReader};
+use super::disc::WiiDisc;
 
 mod fs_source;
 
@@ -45,7 +45,7 @@ pub struct IsoBuilder<R1, R2, W> {
     pub config: Config,
     fs: FSSource<R1>,
     gfs: GeckoFS<R2>,
-    reader: DiscReader<R2>,
+    wii_disc: Option<WiiDisc>,
     writer: W,
 }
 
@@ -54,10 +54,10 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         zip: ZipArchive<RConfig>,
         gfs: GeckoFS<RDisc>,
-        reader: DiscReader<RDisc>,
+        wii_disc: Option<WiiDisc>,
         writer: W,
     ) -> Self {
-        Self::internal_new(config, FSSource::Zip(Box::new(zip)), gfs, reader, writer)
+        Self::internal_new(config, FSSource::Zip(Box::new(zip)), gfs, wii_disc, writer)
     }
 
     #[cfg(not(target_os = "unknown"))]
@@ -65,14 +65,14 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         path: P,
         gfs: GeckoFS<RDisc>,
-        reader: DiscReader<RDisc>,
+        wii_disc: Option<WiiDisc>,
         writer: W,
     ) -> Self {
         Self::internal_new(
             config,
             FSSource::FS(path.as_ref().to_path_buf()),
             gfs,
-            reader,
+            wii_disc,
             writer,
         )
     }
@@ -81,14 +81,14 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
         config: Config,
         fs: FSSource<RConfig>,
         gfs: GeckoFS<RDisc>,
-        reader: DiscReader<RDisc>,
+        wii_disc: Option<WiiDisc>,
         writer: W,
     ) -> Self {
         Self {
             config,
             fs,
             gfs,
-            reader,
+            wii_disc,
             writer,
         }
     }
@@ -329,7 +329,7 @@ where
             )?;
         }
 
-        if self.reader.get_type() == DiscType::Gamecube {
+        if self.wii_disc.is_none() {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
                 updater.set_message("".into())?;
@@ -383,11 +383,11 @@ where
 
         // Finalize disc and write it back into a file
 
-        let out: DiscWriter<W> = DiscWriter::from_reader(self.writer.clone(), &self.reader);
-        std::pin::pin!(out.clone()).init().await?;
+        let out: DiscWriter<W> = DiscWriter::new(self.writer.clone(), self.wii_disc.to_owned());
+        core::pin::pin!(out.clone()).init().await?;
         // let out = DiscWriter::Gamecube(self.writer.clone());
 
-        let mut out = std::pin::pin!(out);
+        let mut out = core::pin::pin!(out);
         disc.serialize(&mut out).await?;
 
         #[cfg(feature = "progress")]

@@ -4,6 +4,7 @@ use geckolib::iso::builder::PatchBuilder;
 use geckolib::parse_config;
 use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_patch};
 
+#[cfg(feature = "progress")]
 use geckolib::{update::UpdaterType, UPDATER};
 
 mod progress;
@@ -21,6 +22,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         progress::init_cli_progress();
     }
 
+    #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_type(UpdaterType::Spinner)?;
         updater.init(Some(4))?;
@@ -73,5 +75,12 @@ fn main() -> color_eyre::eyre::Result<()> {
             new(&name)?;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn empty_iso_and_empty_patch() {
     }
 }
