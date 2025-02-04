@@ -1,0 +1,2 @@
+importScripts("worker.js");
+

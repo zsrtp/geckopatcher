@@ -30,6 +30,8 @@ async-std = "1.13.0"
 wasm-tracing-allocator = { version = "0.1.1", optional = true }
 lazy_static = { version = "1.5.0" }
 futures = { version = "0.3.30" }
+rayon = { version = "^1.10", optional = true }
+wasm-bindgen-rayon = { version = "^1.3", optional = true, features = ["no-bundler"]}
 
 [dependencies.web-sys]
 version = "0.3.77"
@@ -67,3 +69,4 @@ features = [
 default = ["console_error_panic_hook"]
 debug_alloc = ["wasm-tracing-allocator"]
 generic_patch = []
+parallel = ["dep:rayon", "dep:wasm-bindgen-rayon"]

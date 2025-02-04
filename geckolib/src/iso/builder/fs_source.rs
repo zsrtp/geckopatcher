@@ -70,8 +70,7 @@ impl<R: Read + Seek> FSSource<R> {
         match self {
             FSSource::Zip(zip) => zip
                 .index_for_path(path)
-                .and_then(|idx| zip.by_index(idx).ok())
-                .map_or(false, |entry| entry.is_dir()),
+                .and_then(|idx| zip.by_index(idx).ok()).is_some_and(|entry| entry.is_dir()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
@@ -84,8 +83,7 @@ impl<R: Read + Seek> FSSource<R> {
         match self {
             FSSource::Zip(zip) => zip
                 .index_for_path(path)
-                .and_then(|idx| zip.by_index(idx).ok())
-                .map_or(false, |entry| entry.is_file()),
+                .and_then(|idx| zip.by_index(idx).ok()).is_some_and(|entry| entry.is_file()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);

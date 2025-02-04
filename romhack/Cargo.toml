@@ -14,6 +14,7 @@ publish = false
 geckolib = { path = "../geckolib", default-features = false, features = ["progress"]}
 color-eyre = "^0.6"
 async-std = "^1.12"
+smol = "^2.0"
 env_logger = { version = "^0.11", optional = true }
 log = { version = "^0.4", optional = true }
 futures = "^0.3"

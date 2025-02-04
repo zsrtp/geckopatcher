@@ -9,6 +9,7 @@ pub struct Config {
     pub name: String,
     pub short_name: String,
     pub icon_path: PathBuf,
+    pub multithreaded: bool,
 }
 
 fn main() {
@@ -19,11 +20,15 @@ fn main() {
     let manifest = manifest.replace("{{name}}", &config.name);
     let manifest = manifest.replace("{{short_name}}", &config.short_name);
 
-    println!("is generic_patch: {}", cfg!(feature = "generic_patch"));
-
     let dist = PathBuf::from(std::env::var_os("TRUNK_STAGING_DIR").expect("unable eval dist dir"));
+    let src = PathBuf::from(std::env::var_os("TRUNK_SOURCE_DIR").expect("unable eval src dir"));
 
     std::fs::write(dist.join("manifest.json"), manifest).unwrap();
+    if config.multithreaded {
+        std::fs::copy(src.join("assets/cargo_config_multithreaded.toml"), src.join(".cargo/config.toml")).unwrap();
+    } else {
+        std::fs::copy(src.join("assets/cargo_config_singlethreaded.toml"), src.join(".cargo/config.toml")).unwrap();
+    }
 
     // Generate the icons
     let tree = {

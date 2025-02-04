@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::{prelude::*, JsCast, JsValue};
 #[cfg(not(feature = "generic_patch"))]
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{console, File, HtmlInputElement, MessageEvent, Worker};
+use web_sys::{console, File, HtmlInputElement, MessageEvent, Worker, WorkerOptions};
 #[cfg(not(feature = "generic_patch"))]
 use web_sys::{Blob, Response};
-use yew::prelude::*;
+use yew::{html::onerror::Event as ErrorEvent, prelude::*};
 
 pub mod io;
 pub mod progress;
@@ -32,6 +32,7 @@ extern "C" {
 
 pub struct App {
     worker: Rc<Worker>,
+    is_worker_ready: bool,
     is_patching: Rc<bool>,
     msg: Rc<Option<String>>,
     progress: Rc<Option<f64>>,
@@ -39,6 +40,7 @@ pub struct App {
 
 #[derive(Debug)]
 pub enum Message {
+    WorkerReady,
     PatchIso(Patch, Iso),
     PatchError,
     PatchedIso,
@@ -50,8 +52,26 @@ impl Component for App {
     type Properties = ();
 
     fn create(ctx: &Context<Self>) -> Self {
-        // TODO Create a worker and send it a MessageChannel
-        let worker = Rc::new(Worker::new("app_worker.js").expect("Could not create the worker"));
+        web_sys::console::info_1(&"Initializing application...".into());
+        let progress_callback: Callback<Message> = ctx.link().callback(|msg| msg);
+        progress_callback.emit(Message::PatchProgress(Some("Starting Application...".into()), None));
+
+        let worker_options = WorkerOptions::new();
+        worker_options.set_type(web_sys::WorkerType::Module);
+        worker_options.set_name("patcher_thread");
+        let worker = Rc::new(Worker::new_with_options("app_worker.js", &worker_options).expect("Could not create the worker"));
+        let error_closure = Closure::wrap(Box::new(move |event: ErrorEvent| {
+            progress_callback.emit(Message::PatchProgress(Some("Error loading app".into()), Some(100.0)));
+            web_sys::console::error_1(&event);
+        }) as Box<dyn FnMut(ErrorEvent)>);
+        worker.set_onerror(Some(
+            &error_closure
+                .into_js_value()
+                .dyn_into()
+                .expect("Cannot convert Closure to Function"),
+        ));
+
+        web_sys::console::info_2(&"Created Worker".into(), &format!("{:?}", worker).into());
 
         let callback: Callback<Message> = ctx.link().callback(|msg| msg);
         let progress_callback: Callback<Message> = ctx.link().callback(|msg| msg);
@@ -64,6 +84,9 @@ impl Component for App {
                     return;
                 }
             };
+            if type_.as_string().is_some_and(|s| &s == "ready") {
+                callback.emit(Message::WorkerReady);
+            }
             if type_.as_string().is_some_and(|s| &s == "cancelled") {
                 callback.emit(Message::PatchError);
             }
@@ -111,6 +134,7 @@ impl Component for App {
 
         Self {
             worker,
+            is_worker_ready: false,
             is_patching: Rc::new(false),
             msg: Rc::new(None),
             progress: Rc::new(None),
@@ -119,6 +143,10 @@ impl Component for App {
 
     fn update(&mut self, _ctx: &Context<Self>, msg: Self::Message) -> bool {
         match msg {
+            Message::WorkerReady => {
+                self.is_worker_ready = true;
+                true
+            },
             Message::PatchIso(patch, iso) => {
                 log::info!("PatchIso({patch:?}, {iso:?})");
                 // TODO Send the data to the Worker
@@ -199,7 +227,7 @@ impl Component for App {
             .as_ref()
             .map(|msg| msg.to_owned());
         html! {
-            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching} status={msg} progress={*self.progress}></MainForm>
+            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching || !self.is_worker_ready} status={msg} progress={*self.progress}></MainForm>
         }
     }
 }

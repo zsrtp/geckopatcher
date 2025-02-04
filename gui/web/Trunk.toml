@@ -2,6 +2,7 @@
 filehash = false
 target = "index.html"
 dist = "dist"
+minify = "always"
 
 [[hooks]]
 stage = "pre_build"
@@ -12,6 +13,10 @@ command_arguments = ["xtask"]
 tls_key_path = "key.pem"
 tls_cert_path = "cert.pem"
 port = 8080
+headers = { "Cross-Origin-Resource-Policy" = "same-site", "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }
 
 [tools]
 wasm_opt = "version_120"
+
+[clean]
+cargo = true

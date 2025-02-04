@@ -265,8 +265,8 @@
     <div class="lds-dual-ring"></div>
 
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" data-bin="app" data-type="main" data-weak-refs data-reference-types data-wasm-opt="0" />
-    <link data-trunk rel="rust" data-bin="worker" data-type="worker" data-weak-refs data-reference-types data-wasm-opt="3" />
+    <link data-trunk rel="rust" data-bin="app"    data-type="main"   data-wasm-opt="z" data-reference-types data-reference-types data-bindgen-target="web" />
+    <link data-trunk rel="rust" data-bin="worker" data-type="worker" data-wasm-opt="3" data-reference-types data-reference-types data-bindgen-target="web" />
 </body>
 
 </html>

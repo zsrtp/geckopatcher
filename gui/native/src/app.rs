@@ -6,6 +6,7 @@ use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use futures_lite::AsyncWriteExt;
 use geckolib::iso::builder::Builder;
 use geckolib::open_config_from_patch;
+use regex::Regex;
 use rfd::FileHandle;
 use std::path::PathBuf;
 
@@ -87,6 +88,7 @@ pub struct PatcherApp {
     is_patching: bool,
     status: Option<String>,
     progress: Option<f32>,
+    game_code_regex: Regex,
 }
 
 async fn apply(patch: PathBuf, iso: PathBuf, save: PathBuf) -> Result<(), eyre::Error> {
@@ -305,6 +307,9 @@ impl PatcherApp {
             is_patching: false,
             status: None,
             progress: None,
+            game_code_regex: Regex::new(
+                "^((([RSGUDP0124])([A-Z0-9]{2})([DEFIJKPRSTU]))([A-Z0-9]{2}))",
+            ).expect("Couldn't parse the GameCode RegEx"),
         }
     }
 }
@@ -327,6 +332,7 @@ impl eframe::App for PatcherApp {
             is_patching,
             status,
             progress,
+            game_code_regex: re,
         } = self;
 
         egui_extras::install_image_loaders(ctx);
@@ -527,10 +533,6 @@ impl eframe::App for PatcherApp {
                                 break;
                             }
                             let _ = file.seek(std::io::SeekFrom::Start(0));
-                            let re = regex::Regex::new(
-                                "^((([RSGUDP0124])([A-Z0-9]{2})([DEFIJKPRSTU]))([A-Z0-9]{2}))",
-                            )
-                            .expect("Couldn't parse the GameCode RegEx");
                             let is_game = re.is_match(&String::from_utf8_lossy(&buf));
                             if is_game {
                                 *in_file = Some(InFile::Dropped(f));

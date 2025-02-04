@@ -1,4 +1,4 @@
-importScripts("worker.js");
+import init from "./worker.js";
 
 async function registerLocalStorage(patch, iso) {
     const root = await navigator.storage.getDirectory();
@@ -40,7 +40,19 @@ async function deleteLocalStorage(patch, iso) {
 
 let is_running = false;
 
-wasm_bindgen("worker_bg.wasm").then((_) => {
+console.info("Initializing worker");
+globalThis.postMessage({ type: "progress", title: "Loading Application..." });
+
+init({ module_or_path: "worker_bg.wasm" }).then((wasm_bindgen) => {
+    console.info("Initialized worker wasm binary");
+    if ("initThreadPool" in wasm_bindgen) {
+        console.info("Running multi threaded");
+        return wasm_bindgen.initThreadPool(navigator.hardwareConcurrency).then(() => wasm_bindgen);
+    } else {
+        console.info("Running single threaded");
+        return wasm_bindgen;
+    }
+}).then((wasm_bindgen) => {
     globalThis.addEventListener("message", (event) => {
         switch (event.data.type) {
             case "run": {
@@ -50,23 +62,19 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
                     registerLocalStorage(event.data.patch, event.data.file).then(([patch, file, save]) => {
                         console.dir(patch, file, save);
                         return wasm_bindgen.run_patch(patch, file, save).then((filename) => [[patch, file], filename]);
-                    })
-                        .then(async ([[patch, file], filename]) => {
-                            let f = await file.getFile();
-                            return Promise.all([filename, deleteLocalStorage(patch, file)]);
-                        })
-                        .then(([filename,]) => {
-                            console.debug("Done", filename);
-                            globalThis.postMessage({ type: "done", filename: filename });
-                        })
-                        .catch((err) => {
-                            globalThis.postMessage({ type: "cancelled", msg: err });
-                            globalThis.postMessage({ type: "progress", title: err });
-                            throw err;
-                        })
-                        .finally(() => {
-                            is_running = false;
-                        });
+                    }).then(async ([[patch, file], filename]) => {
+                        let f = await file.getFile();
+                        return Promise.all([filename, deleteLocalStorage(patch, file)]);
+                    }).then(([filename,]) => {
+                        console.debug("Done", filename);
+                        globalThis.postMessage({ type: "done", filename: filename });
+                    }).catch((err) => {
+                        globalThis.postMessage({ type: "cancelled", msg: err });
+                        globalThis.postMessage({ type: "progress", title: err, progress: 100.0 });
+                        // throw err;
+                    }).finally(() => {
+                        is_running = false;
+                    });
                 }
                 break;
             }
@@ -76,5 +84,14 @@ wasm_bindgen("worker_bg.wasm").then((_) => {
             }
         }
     });
-    console.debug("Registered message listener");
+    console.info("Registered message listener");
+}).then(() => {
+    globalThis.postMessage({ type: "progress" });
+    globalThis.postMessage({ type: "ready" })
+    console.log("started worker!");
+}).catch((err) => {
+    globalThis.postMessage({ type: "cancelled", msg: err });
+    globalThis.postMessage({ type: "progress", title: "Error loading application", progress: 100.0 });
+    console.error(err);
+    globalThis.close();
 });

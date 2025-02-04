@@ -6,5 +6,5 @@
 
 [toolchain]
 channel = "nightly" # 1.70.0 for stable
-components = [ "rustfmt", "clippy" ]
+components = [ "rustsrc", "rustfmt", "clippy" ]
 targets = [ "wasm32-unknown-unknown" ]

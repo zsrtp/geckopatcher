@@ -1,4 +1,4 @@
-use async_std::task;
+use async_std::fs::{File, OpenOptions};
 use clap::Parser;
 use geckolib::iso::builder::PatchBuilder;
 use geckolib::parse_config;
@@ -10,8 +10,13 @@ use geckolib::{update::UpdaterType, UPDATER};
 mod progress;
 
 use romhack::cli::{Cli, Commands};
+use smol::block_on;
 
 fn main() -> color_eyre::eyre::Result<()> {
+    block_on(async_main())
+}
+
+async fn async_main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
     #[cfg(feature = "log")]
     env_logger::init();
@@ -31,37 +36,35 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     match args.cmd {
         Commands::Build { patch, raw: _ } => {
-            task::block_on::<_, color_eyre::eyre::Result<()>>(async {
-                if patch {
-                    let config = parse_config(std::fs::File::open("RomHack.toml")?)?;
-                    let mut builder = PatchBuilder::with_config(config);
-                    builder.build().await
-                } else {
-                    let config = parse_config(&std::fs::File::open("RomHack.toml")?)?;
-                    let writer = async_std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .truncate(true)
-                        .open(&config.build.iso)
-                        .await?;
-                    let disc_reader = async_std::fs::File::open(&config.src.iso).await?;
-                    let mut builder = open_config_from_fs_iso(config, disc_reader, writer).await?;
-                    builder.build().await
-                }
-            })
+            if patch {
+                let config = parse_config(std::fs::File::open("RomHack.toml")?)?;
+                let mut builder = PatchBuilder::with_config(config);
+                builder.build().await
+            } else {
+                let config = parse_config(&std::fs::File::open("RomHack.toml")?)?;
+                let writer = OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(&config.build.iso)
+                    .await?;
+                let disc_reader = File::open(&config.src.iso).await?;
+                let mut builder = open_config_from_fs_iso(config, disc_reader, writer).await?;
+                builder.build().await
+            }
         }
         Commands::Apply {
             patch,
             original_game,
             output,
-        } => task::block_on::<_, color_eyre::eyre::Result<()>>(async {
+        } => {
             let mut builder = open_config_from_patch(
                 std::fs::OpenOptions::new().read(true).open(patch)?,
-                async_std::fs::OpenOptions::new()
+                OpenOptions::new()
                     .read(true)
                     .open(original_game)
                     .await?,
-                async_std::fs::OpenOptions::new()
+                OpenOptions::new()
                     .write(true)
                     .create(true)
                     .truncate(true)
@@ -70,7 +73,7 @@ fn main() -> color_eyre::eyre::Result<()> {
             )
             .await?;
             builder.build().await
-        }),
+        }
         Commands::New { name } => {
             new(&name)?;
             Ok(())
@@ -84,20 +87,20 @@ mod tests {
     use std::{pin::Pin, task::{Context, Poll}};
 
     use async_std::io;
-    use futures::{AsyncReadExt, AsyncSeek, AsyncWrite};
+    use futures::{executor::block_on, AsyncReadExt, AsyncSeek, AsyncWrite};
     use geckolib::{iso::{builder::Builder, read::DiscReader}, open_config_from_patch};
 
     #[derive(Copy, Clone, Default)]
     pub struct Sink {
         _private: (),
     }
-    
+
     impl fmt::Debug for Sink {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             f.pad("Sink { .. }")
         }
     }
-    
+
     impl AsyncWrite for Sink {
         #[inline]
         fn poll_write(
@@ -107,12 +110,12 @@ mod tests {
         ) -> Poll<io::Result<usize>> {
             Poll::Ready(Ok(buf.len()))
         }
-    
+
         #[inline]
         fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
             Poll::Ready(Ok(()))
         }
-    
+
         #[inline]
         fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
             Poll::Ready(Ok(()))
@@ -132,10 +135,10 @@ mod tests {
             }
         }
     }
-    
+
     #[test]
     fn empty_iso_can_be_read() {
-        async_std::task::block_on(async {
+        block_on(async {
             let mut reader =
                 DiscReader::new(async_std::fs::File::open("assets/empty.iso").await.unwrap())
                     .await
@@ -152,7 +155,7 @@ mod tests {
 
     #[test]
     fn empty_patch_can_be_loaded_and_built() {
-        async_std::task::block_on(async {
+        block_on(async {
             let mut builder = open_config_from_patch(
                 std::fs::File::open("assets/empty.patch").unwrap(),
                 async_std::fs::File::open("assets/empty.iso").await.unwrap(),
