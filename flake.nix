@@ -14,7 +14,7 @@
       {
         defaultPackage = naersk-lib.buildPackage ./.;
         devShell = with pkgs; mkShell {
-          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy libxkbcommon wayland xorg.libX11 ];
+          buildInputs = [ cargo rustc rustfmt pre-commit rustPackages.clippy libxkbcommon wayland xorg.libX11 trunk nodejs ];
           RUST_SRC_PATH = rustPlatform.rustLibSrc;
           LD_LIBRARY_PATH = "${wayland.outPath}/lib:${libxkbcommon.outPath}/lib:${xorg.libX11.outPath}/lib";
         };

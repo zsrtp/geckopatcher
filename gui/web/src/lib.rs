@@ -472,7 +472,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     let disabled = is_patching;
     #[cfg(not(feature = "generic_patch"))]
     let tpgz_link = html! {
-        <a href="https://github.com/zsrtp/tpgz"><img src="github-mark-white.png" alt="GitHub Logo"/>{"tpgz"}</a>
+        <a href="https://github.com/zsrtp/tpgz"><img class="gh-img" src="github-mark-white.png" alt="GitHub Logo"/>{"tpgz"}</a>
     };
     #[cfg(feature = "generic_patch")]
     let tpgz_link = html! {
@@ -480,19 +480,17 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     };
     html! {
         <>
-            <div id="main_container">
             <fieldset id="main_form">
                 <legend>{"ISO Patcher"}</legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
                 <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().map(|(_,version)| get_mapping(version))} />
-                <div/>
+                <span data-tooltip="Nothing is uploaded, processing is done on your device">{"🛈"}</span>
                 <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
             </fieldset>
             <div id="links">
-                <a href="https://github.com/zsrtp/geckopatcher"><img src="github-mark-white.png" alt="GitHub Logo"/>{"GeckoPatcher"}</a>
+                <a href="https://github.com/zsrtp/geckopatcher"><img class="gh-img" src="github-mark-white.png" alt="GitHub Logo"/>{"GeckoPatcher"}</a>
                 {tpgz_link}
-            </div>
             </div>
         </>
     }

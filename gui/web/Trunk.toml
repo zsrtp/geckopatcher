@@ -7,22 +7,7 @@ minify = "always"
 [[hooks]]
 stage = "pre_build"
 command = "cargo"
-command_arguments = [
-    "build",
-    "--target",
-    "wasm32-unknown-unknown",
-]
-
-[[hooks]]
-stage = "build"
-command = "cargo"
-command_arguments = [
-    "run",
-    "--release",
-    "--manifest-path",
-    "./xtask/Cargo.toml",
-    "--",
-] # alias of `cargo xtask`. Can't use `xtask` here because of the build script that needs to copy the `.cargo/config.toml` from the assets.
+command_arguments = ["xtask"]
 
 [serve]
 tls_key_path = "key.pem"

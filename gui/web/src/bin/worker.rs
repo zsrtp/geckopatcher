@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsValue;
 use web_gui_patcher::io::{WebFile, WebReadable, WebWritable};
 
-#[cfg(feature = "parallel")]
+#[cfg(all(feature = "parallel", target_feature = "atomics", target_feature = "bulk-memory"))]
 pub use wasm_bindgen_rayon::init_thread_pool;
 
 #[cfg(feature = "debug_alloc")]

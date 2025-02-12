@@ -12,7 +12,7 @@ You can customize the patcher to use for your application by modifying in `asset
 
 ## How to compile
 
-The web patcher uses [trunk](https://trunkrs.dev) to build itself. It can be installed from cargo with `cargo install trunk`.
+The web patcher is built using [trunk](https://trunkrs.dev). It can be installed from cargo with `cargo install trunk`.
 Once that is installed, you can build the project by running `trunk build`. This will compile and package the web application
 to the `dist` folder. The option `--release` is available to build a release version.
 
