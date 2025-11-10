@@ -110,7 +110,7 @@ fn parse_count(text: &str) -> Result<(usize, &str), Cow<'static, str>> {
     Ok((count, text))
 }
 
-fn parse_type(text: &str) -> Result<(Option<Type>, &str), Cow<'static, str>> {
+fn parse_type(text: &str) -> Result<(Option<Type<'_>>, &str), Cow<'static, str>> {
     let original_text = text;
     let mut text = text;
     let first_char = text.chars().next();
@@ -259,7 +259,7 @@ fn base_name(function: &str) -> (&str, Option<&str>) {
     }
 }
 
-pub fn demangle(function: &str) -> Result<Cow<str>, Cow<'static, str>> {
+pub fn demangle(function: &str) -> Result<Cow<'_, str>, Cow<'static, str>> {
     fn extend_by_params(signature: &mut String, typ: Type) -> Result<(), Cow<'static, str>> {
         if let Type::Function(is_const, return_value, params) = typ {
             signature.push('(');

@@ -351,12 +351,10 @@ fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]
         part.header.h3_offset as usize - (PartHeader::BLOCK_SIZE + part.tmd.get_size());
     //let mut buf = vec![0u8; PartHeader::BLOCK_SIZE + part.tmd.get_size()];
     buf.extend_from_slice(&<[u8; PartHeader::BLOCK_SIZE]>::from(&part.header));
-    buf.extend(std::iter::repeat(0).take(part.tmd.get_size() + h3_padding));
+    buf.extend(std::iter::repeat_n(0, part.tmd.get_size() + h3_padding));
     buf.extend(hashes.iter().flatten());
     buf.extend(
-        std::iter::repeat(0).take(
-            (consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize,
-        ),
+        std::iter::repeat_n(0, (consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize),
     );
     TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
     buf
@@ -467,9 +465,7 @@ where
                         crate::trace!("Reached end of group #{}", group_idx);
                     }
                 }
-                if (status.cursor + (buf.len() - curr_buf.len()) as u64)
-                    % (consts::WII_SECTOR_DATA_SIZE * 64)
-                    == 0
+                if (status.cursor + (buf.len() - curr_buf.len()) as u64).is_multiple_of(consts::WII_SECTOR_DATA_SIZE * 64)
                 {
                     // We are at the start of a group. We can hash and encrypt the group and write it.
                     crate::trace!("Hashing and encrypting group #{}", group_idx);
@@ -549,8 +545,7 @@ where
             }
             _ => {
                 crate::error!("Unexpected state: {:?}", state);
-                Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Poll::Ready(Err(std::io::Error::other(
                     "Unexpected state",
                 )))
             }
@@ -740,8 +735,7 @@ where
             WiiDiscWriterState::Done => Poll::Ready(Ok(())),
             _ => {
                 crate::error!("Unexpected state: {:?}", state);
-                Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
+                Poll::Ready(Err(std::io::Error::other(
                     "Unexpected state",
                 )))
             }

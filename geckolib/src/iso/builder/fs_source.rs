@@ -92,7 +92,7 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
-    pub fn get_file<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<File> {
+    pub fn get_file<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<File<'_>> {
         match self {
             FSSource::Zip(zip) => Ok(File::Zip(Box::new(
                 zip.by_name(

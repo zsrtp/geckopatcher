@@ -1,7 +1,7 @@
 [package]
 name = "geckolib"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,7 +18,7 @@ cbc = { version = "^0.1" }
 eyre = "^0.6"
 thiserror = "^2.0"
 num = "^0.4"
-toml = "^0.8"
+toml = "^0.9"
 zip = { version = "^2.1", default-features = false, features = ["deflate"] }
 regex = "^1.10"
 rustc-demangle = "^0.1"
@@ -38,6 +38,7 @@ human_bytes = { version = "^0.4", optional = true, default-features = false }
 static_assertions = "^1.1"
 syn = "^2.0"
 encoding_rs = "^0.8"
+indextree = { version = "^4.7" }
 
 [features]
 default = ["parallel"]

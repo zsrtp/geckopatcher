@@ -14,6 +14,7 @@ extern crate sha1_smol;
 extern crate static_assertions;
 extern crate regex;
 extern crate syn;
+extern crate indextree;
 
 pub mod config;
 pub mod crypto;

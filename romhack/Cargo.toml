@@ -25,6 +25,7 @@ num = "^0.4"
 lazy_static = "^1.4"
 colored = { version = "^3.0" }
 clap_complete = { version = "4.4.1" }
+rayon = { version = "^1.11", optional = true }
 
 [build-dependencies]
 
@@ -39,7 +40,7 @@ log = [
     "async-std/log",
     "async-std/kv-log-macro",
 ]
-parallel = ["geckolib/parallel"]
+parallel = ["geckolib/parallel", "dep:rayon"]
 progress = []
 
 [[example]]

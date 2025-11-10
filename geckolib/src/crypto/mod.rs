@@ -189,7 +189,7 @@ pub enum WiiCryptoError {
 
 impl From<WiiCryptoError> for std::io::Error {
     fn from(value: WiiCryptoError) -> Self {
-        std::io::Error::new(std::io::ErrorKind::Other, value)
+        std::io::Error::other(value)
     }
 }
 

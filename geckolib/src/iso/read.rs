@@ -2,12 +2,13 @@ use super::disc::*;
 use crate::crypto::{aes_decrypt_inplace, consts, Unpackable, WiiCryptoError};
 use crate::iso::consts as iso_consts;
 use byteorder::{ByteOrder, BE};
+use futures::executor::block_on;
 use futures::{lock::Mutex, ready, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::error::Error;
 use std::fmt::Display;
-use std::io::SeekFrom;
+use std::io::{self, ErrorKind, SeekFrom};
 use std::pin::{pin, Pin};
 use std::sync::Arc;
 use std::task::Poll;
@@ -80,7 +81,7 @@ enum WiiDiscReaderState {
     Reading(Vec<u8>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct WiiDiscReaderStatus {
     // Virtual cursor which tracks where in the decrypted partition we are reading from.
     cursor: u64,
@@ -235,10 +236,7 @@ where
                 if state.cursor as i64 + pos < 0i64
                     || state.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
                 {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Invalid argument",
-                    )));
+                    return Poll::Ready(Err(std::io::Error::from(ErrorKind::InvalidInput)));
                 }
                 state.cursor = (state.cursor as i64 + pos) as u64;
             }
@@ -246,24 +244,77 @@ where
                 if state.cursor as i64 + pos < 0i64
                     || state.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
                 {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Invalid argument",
-                    )));
+                    return Poll::Ready(Err(std::io::Error::from(ErrorKind::InvalidInput)));
                 }
                 state.cursor = (to_virtual_addr(part.header.data_size) as i64 + pos) as u64;
             }
             SeekFrom::Start(pos) => {
                 if pos > to_virtual_addr(part.header.data_size) {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Invalid argument",
-                    )));
+                    return Poll::Ready(Err(std::io::Error::from(ErrorKind::InvalidInput)));
                 }
                 state.cursor = pos;
             }
         }
         std::task::Poll::Ready(Ok(state.cursor))
+    }
+}
+
+impl<R> std::io::Seek for WiiDiscReader<R>
+where
+    R: std::io::Seek,
+{
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let mut state = block_on(self.status.lock());
+        let part = &self.disc.partitions.partitions[self.disc.partitions.data_idx];
+        match pos {
+            SeekFrom::Current(pos) => {
+                if state.cursor as i64 + pos < 0i64
+                    || state.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
+                {
+                    return Err(std::io::Error::from(ErrorKind::InvalidInput));
+                }
+                state.cursor = (state.cursor as i64 + pos) as u64;
+            }
+            SeekFrom::End(pos) => {
+                if state.cursor as i64 + pos < 0i64
+                    || state.cursor as i64 + pos > to_virtual_addr(part.header.data_size) as i64
+                {
+                    return Err(std::io::Error::from(ErrorKind::InvalidInput));
+                }
+                state.cursor = (to_virtual_addr(part.header.data_size) as i64 + pos) as u64;
+            }
+            SeekFrom::Start(pos) => {
+                if pos > to_virtual_addr(part.header.data_size) {
+                    return Err(std::io::Error::from(ErrorKind::InvalidInput));
+                }
+                state.cursor = pos;
+            }
+        }
+        Ok(state.cursor)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct WiiDiscReaderVirtualIndices {
+    vstart: u64,
+    vend: u64,
+    start_blk_idx: u64,
+    end_blk_idx: u64,
+}
+
+impl WiiDiscReaderVirtualIndices {
+    fn new(cursor: u64, read_size: u64) -> Self {
+        // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
+        let vstart = cursor;
+        let vend = vstart + read_size as u64;
+        let start_blk_idx = vstart / consts::WII_SECTOR_DATA_SIZE;
+        let end_blk_idx = (vend - 1) / consts::WII_SECTOR_DATA_SIZE;
+        Self {
+            vstart,
+            vend,
+            start_blk_idx,
+            end_blk_idx,
+        }
     }
 }
 
@@ -290,11 +341,12 @@ where
         }
         // Calculate the size and bounds of what has to be read.
         let read_size = std::cmp::min(buf.len() as u64, decrypted_size - state.cursor);
-        // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
-        let vstart = state.cursor;
-        let vend = vstart + read_size as u64;
-        let start_blk_idx = vstart / consts::WII_SECTOR_DATA_SIZE;
-        let end_blk_idx = (vend - 1) / consts::WII_SECTOR_DATA_SIZE;
+        let WiiDiscReaderVirtualIndices {
+            vstart,
+            vend,
+            start_blk_idx,
+            end_blk_idx,
+        } = WiiDiscReaderVirtualIndices::new(state.cursor, read_size);
         crate::trace!(
             "Loading data from 0x{:08X} to 0x{:08X} (spanning {} block(s))",
             vstart,
@@ -389,6 +441,107 @@ where
     }
 }
 
+impl<R> std::io::Read for WiiDiscReader<R>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let mut state = futures::executor::block_on(self.status.lock());
+        crate::trace!("Pooling WiiDiscReader for read ({} byte(s))", buf.len());
+        let part = &self.disc.partitions.partitions[self.disc.partitions.data_idx];
+        // If the requested size is 0, or if we are done reading, return without changing buf.
+        let decrypted_size = to_virtual_addr(part.header.data_size);
+        if buf.is_empty() || state.cursor >= decrypted_size {
+            return Ok(0);
+        }
+        // Calculate the size and bounds of what has to be read.
+        let read_size = std::cmp::min(buf.len() as u64, decrypted_size - state.cursor);
+        let WiiDiscReaderVirtualIndices {
+            vstart,
+            vend: _vend,
+            start_blk_idx,
+            end_blk_idx,
+        } = WiiDiscReaderVirtualIndices::new(state.cursor, read_size);
+        // First, seek inner reader.
+        let start_blk_addr = part.part_offset
+            + part.header.data_offset
+            + (start_blk_idx * consts::WII_SECTOR_SIZE as u64);
+        crate::trace!("Seeking to 0x{:08X}", start_blk_addr);
+        self.reader.seek(SeekFrom::Start(start_blk_addr))?;
+        crate::trace!("Seeking succeeded");
+        let n_blk = end_blk_idx - start_blk_idx + 1;
+        let mut buf2 = vec![0u8; (n_blk * consts::WII_SECTOR_SIZE as u64) as usize];
+        // Then, read data into buffer.
+        crate::trace!("Reading...");
+        self.reader.read(&mut buf2)?;
+        crate::trace!("Reading successful");
+        let part_key = decrypt_title_key(
+            &self.disc.partitions.partitions[self.disc.partitions.data_idx]
+                .header
+                .ticket,
+        );
+        crate::trace!("Partition key: {:?}", part_key);
+        #[cfg(feature = "parallel")]
+        let mut data_pool: Vec<&mut [u8]> =
+            buf2.par_chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
+        #[cfg(not(feature = "parallel"))]
+        let mut data_pool: Vec<&mut [u8]> =
+            buf2.chunks_exact_mut(consts::WII_SECTOR_SIZE).collect();
+        crate::trace!("data_pool size: {}", data_pool.len());
+        let disable_disc_encrypt = self.disc.disc_header.disable_disc_encrypt;
+        let decrypt_process = move |data: &mut &mut [u8]| {
+            let mut iv = [0_u8; consts::WII_KEY_SIZE];
+            iv[..consts::WII_KEY_SIZE].copy_from_slice(
+                &data[consts::WII_SECTOR_IV_OFF as usize..][..consts::WII_KEY_SIZE],
+            );
+            crate::trace!("iv: {:?}", iv);
+            crate::trace!("before: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
+            if !disable_disc_encrypt {
+                // Decrypt the hash to check if valid (not required here)
+                aes_decrypt_inplace(
+                    &mut data[..consts::WII_SECTOR_HASH_SIZE],
+                    &[0_u8; consts::WII_KEY_SIZE],
+                    &part_key,
+                );
+                aes_decrypt_inplace(
+                    &mut data[consts::WII_SECTOR_HASH_SIZE..]
+                        [..consts::WII_SECTOR_DATA_SIZE as usize],
+                    &iv,
+                    &part_key,
+                );
+            }
+            crate::trace!("after: {:?}", &data[consts::WII_SECTOR_HASH_SIZE..][..6]);
+        };
+        crate::trace!("Decrypting blocks");
+        #[cfg(feature = "parallel")]
+        data_pool.par_iter_mut().for_each(decrypt_process);
+        #[cfg(not(feature = "parallel"))]
+        data_pool.iter_mut().for_each(decrypt_process);
+        crate::trace!("Decryption done");
+        for (i, block) in data_pool.iter().enumerate() {
+            let block_pos = (start_blk_idx + i as u64) * consts::WII_SECTOR_DATA_SIZE;
+            let buf_write_start: u64 =
+                std::cmp::max(0, block_pos as i64 - vstart as i64) as u64;
+            let buf_write_end: u64 = std::cmp::min(
+                read_size,
+                ((block_pos + consts::WII_SECTOR_DATA_SIZE) as i64 - vstart as i64) as u64,
+            );
+            let block_read_start =
+                std::cmp::max(0, vstart as i64 - block_pos as i64) as usize;
+            let block_read_end = std::cmp::min(
+                consts::WII_SECTOR_DATA_SIZE,
+                (vstart + read_size as u64) - block_pos,
+            ) as usize;
+            buf[buf_write_start as usize..buf_write_end as usize].copy_from_slice(
+                &block[consts::WII_SECTOR_HASH_SIZE..][block_read_start..block_read_end],
+            );
+        }
+        state.cursor += buf.len() as u64;
+        state.state = WiiDiscReaderState::Seeking;
+        Ok(buf.len())
+    }
+}
+
 #[derive(Debug)]
 pub enum DiscReaderError {
     NotDisc(u32, u32),
@@ -458,6 +611,18 @@ where
     }
 }
 
+impl<R> std::io::Seek for DiscReader<R>
+where
+    R: std::io::Seek,
+{
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        match self {
+            DiscReader::Gamecube(reader) => reader.seek(pos),
+            DiscReader::Wii(wii_disc_reader) => wii_disc_reader.seek(pos),
+        }
+    }
+}
+
 impl<R> AsyncRead for DiscReader<R>
 where
     R: AsyncRead + AsyncSeek + Unpin,
@@ -470,6 +635,18 @@ where
         match self.get_mut() {
             DiscReader::Gamecube(reader) => pin!(reader).poll_read(cx, buf),
             DiscReader::Wii(reader) => pin!(reader).poll_read(cx, buf),
+        }
+    }
+}
+
+impl<R> std::io::Read for DiscReader<R>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            DiscReader::Gamecube(reader) => reader.read(buf),
+            DiscReader::Wii(wii_disc_reader) => wii_disc_reader.read(buf),
         }
     }
 }

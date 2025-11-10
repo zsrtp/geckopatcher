@@ -11,15 +11,21 @@ use eyre::{eyre, Result};
 use futures::{io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
+use indextree::{Node as IDNode, NodeId};
 use num::ToPrimitive;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Error, SeekFrom};
+use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::task::{Context, Poll};
+
+pub mod tree;
+pub mod data_source;
+pub use data_source::FileDataSource;
 
 pub trait Node<R> {
     fn name(&self) -> String;
@@ -597,6 +603,214 @@ where
     }
 }
 
+pub struct FileIteratorRecurse<'a, R> {
+    cursors: Vec<(usize, &'a Directory<R>)>,
+}
+
+impl<'a, R> FileIteratorRecurse<'a, R> {
+    pub fn new(root: &'a Directory<R>) -> Self {
+        if root.children.is_empty() {
+            return Self { cursors: vec![] };
+        }
+        // Find the first file
+        let mut cursors = vec![(0usize, root)];
+        log::debug!("{:?}", cursors.iter().map(|(c, _)| c).collect::<Vec<_>>());
+        Self::fix_cursor(&mut cursors);
+        log::debug!("{:?}", cursors.iter().map(|(c, _)| c).collect::<Vec<_>>());
+        Self { cursors }
+    }
+
+    fn fix_cursor(cursors: &mut Vec<(usize, &Directory<R>)>) {
+        loop {
+            log::debug!(
+                "loop start: {:?}",
+                cursors
+                    .iter()
+                    .map(|(c, d)| (c, d.children.len()))
+                    .collect::<Vec<_>>()
+            );
+            let (cursor, dir) = match cursors.last() {
+                None => break,
+                Some(d) => d,
+            };
+            log::debug!(
+                "found an entry: cursor = {}, dir = {}",
+                cursor,
+                dir.children.len()
+            );
+            if dir.children.len() <= *cursor {
+                log::debug!("entry outside dir's children count. pop it out of list");
+                cursors.pop();
+                if let Some(d) = cursors.last_mut() {
+                    log::debug!(
+                        "found parent: cursor -> {}, dir -> {}; incrementing cursor",
+                        d.0,
+                        d.1.children.len()
+                    );
+                    d.0 += 1;
+                    continue;
+                } else {
+                    log::debug!("No more entries, list empty. Exiting loop");
+                    break;
+                }
+            }
+            log::debug!("Entry inside dir's children count");
+            match dir.children[*cursor].as_enum_ref() {
+                NodeEnumRef::File(_) => {
+                    log::debug!("Entry is a file. we're done");
+                    break;
+                }
+                NodeEnumRef::Directory(directory) => {
+                    log::debug!("Entry is a directory, push it to the stack and loop back.");
+                    cursors.push((0, directory));
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn increment_cursors(&mut self) {
+        // We assume we start in a valid state.
+        if let Some((cursor, _)) = self.cursors.last_mut() {
+            *cursor += 1;
+        }
+        Self::fix_cursor(&mut self.cursors);
+    }
+}
+
+impl<'a, R> std::iter::Iterator for FileIteratorRecurse<'a, R> {
+    type Item = &'a File<R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let file = loop {
+            match self.cursors.last() {
+                None => return None,
+                Some((cursor, dir)) => match dir.children[*cursor].as_enum_ref() {
+                    NodeEnumRef::File(file) => break file,
+                    NodeEnumRef::Directory(_) => {
+                        Self::fix_cursor(&mut self.cursors);
+                        continue;
+                    }
+                },
+            };
+        };
+
+        self.increment_cursors();
+        Some(file)
+    }
+}
+
+pub struct FileIteratorRecurseMut<'a, R> {
+    root: &'a mut Directory<R>,
+    cursors: Vec<usize>,
+}
+
+impl<'a, R> FileIteratorRecurseMut<'a, R> {
+    pub fn new(root: &'a mut Directory<R>) -> Self {
+        if root.children.is_empty() {
+            return Self {
+                root,
+                cursors: vec![],
+            };
+        }
+        // Find the first file
+        let mut cursors = vec![0];
+        Self::fix_cursor(root, &mut cursors);
+        Self { root, cursors }
+    }
+
+    fn gen_cursor_tuple<'b>(
+        root: &'b Directory<R>,
+        cursors: &mut Vec<usize>,
+    ) -> Vec<(usize, &'b Directory<R>)> {
+        cursors
+            .iter()
+            .scan(Some(root), |dir, c| {
+                let current_dir = *dir;
+                let next_dir = dir
+                    .filter(|d| d.children.len() > *c)
+                    .and_then(|d| d.children[*c].as_directory_ref());
+                match current_dir {
+                    Some(d) => {
+                        let tuple = (*c, d);
+                        *dir = next_dir;
+                        Some(tuple)
+                    }
+                    None => None,
+                }
+            })
+            .collect()
+    }
+
+    fn fix_cursor(root: &Directory<R>, cursors: &mut Vec<usize>) {
+        let mut dirs: Vec<(usize, &Directory<R>)> = Self::gen_cursor_tuple(root, cursors);
+        loop {
+            let (cursor, dir) = match dirs.last() {
+                None => break,
+                Some(d) => d,
+            };
+            if dir.children.len() <= *cursor {
+                cursors.pop();
+                if let Some(d) = dirs.last_mut() {
+                    d.0 += 1;
+                    continue;
+                } else {
+                    break;
+                }
+            }
+            match dir.children[*cursor].as_enum_ref() {
+                NodeEnumRef::File(_) => {
+                    break;
+                }
+                NodeEnumRef::Directory(directory) => {
+                    dirs.push((0, directory));
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn increment_cursors(&mut self) {
+        // We assume we start in a valid state.
+        if let Some(cursor) = self.cursors.last_mut() {
+            *cursor += 1;
+        }
+        Self::fix_cursor(self.root, &mut self.cursors);
+    }
+}
+
+/*/
+impl<'a, R> std::iter::Iterator for FileIteratorRecurseMut<'a, R> {
+    type Item = &'a mut File<R>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let cursors_clone = self.cursors.clone();
+        let file = match cursors_clone.split_last() {
+            None => return None,
+            Some((cursor, cursors)) => {
+                let mut dir = Some(self.root.deref_mut());
+                for c in cursors {
+                    if let Some(d) = dir.take() {
+                        if let Some(new_d) = d.children[*c].as_directory_mut() {
+                            dir.replace(new_d);
+                        }
+                    }
+                }
+                dir.and_then(|d| {
+                    if d.children.len() > *cursor {
+                        d.children[*cursor].as_file_mut()
+                    } else {
+                        None
+                    }
+                })
+            }
+        };
+
+        //self.increment_cursors();
+        file
+    }
+}// */
+
 pub struct Directory<R> {
     name: String,
     children: Vec<Box<dyn Node<R>>>,
@@ -776,6 +990,40 @@ where
         stack.into_iter()
     }
 
+    pub fn enumerate_recurse_path(&self) -> impl Iterator<Item = (Box<PathBuf>, &'_ File<R>)> {
+        crate::trace!("Start enumerate_recurse_path");
+        fn traverse_depth<'b, R: 'static>(
+            start: &'b dyn Node<R>,
+            start_path: &PathBuf,
+            stack: &mut Vec<(Box<PathBuf>, &'b File<R>)>,
+        ) {
+            match start.as_enum_ref() {
+                NodeEnumRef::File(file) => {
+                    let mut new_pathbuf = start_path.clone();
+                    new_pathbuf.push(file.name());
+                    stack.push((Box::new(new_pathbuf), file));
+                }
+                NodeEnumRef::Directory(dir) => {
+                    let mut new_pathbuf = start_path.clone();
+                    new_pathbuf.push(dir.name());
+                    for child in &dir.children {
+                        traverse_depth(child.as_ref(), &new_pathbuf, stack);
+                    }
+                }
+            }
+        }
+        let mut stack = Vec::new();
+        let mut path = PathBuf::new();
+        path.push(self.name());
+        traverse_depth(self, &path, &mut stack);
+        crate::debug!("{} fst files", stack.len());
+        stack.into_iter()
+    }
+
+    pub fn enumerate_recurse_path_generator(&self) -> impl Iterator<Item = &'_ File<R>> {
+        FileIteratorRecurse::new(self)
+    }
+
     pub fn get_file(&self, path: &str) -> Result<&File<R>> {
         let self_name = self.name().to_owned();
         self.resolve_node(path)
@@ -884,50 +1132,6 @@ impl<R> Node<R> for Directory<R> {
     }
 }
 
-#[derive(Debug)]
-pub enum FileDataSource<R> {
-    Reader { reader: DiscReader<R>, fst: FstNode },
-    Box { data: Box<[u8]>, name: String },
-}
-
-impl<R> FileDataSource<R> {
-    pub fn name(&self) -> String {
-        match self {
-            Self::Reader { fst, .. } => fst.get_relative_file_name().to_owned(),
-            Self::Box { name, .. } => name.clone(),
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Reader { fst, .. } => fst.get_file_size().unwrap(),
-            Self::Box { data, .. } => data.len(),
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-impl<R> Clone for FileDataSource<R>
-where
-    R: Clone,
-{
-    fn clone(&self) -> Self {
-        match self {
-            Self::Reader { reader, fst } => Self::Reader {
-                reader: reader.clone(),
-                fst: fst.clone(),
-            },
-            Self::Box { data, name } => Self::Box {
-                data: data.clone(),
-                name: name.clone(),
-            },
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 enum FileState {
     #[default]
@@ -953,7 +1157,7 @@ impl<R> File<R> {
         Self {
             status: Arc::new(std::sync::Mutex::new(FileStatus {
                 cursor: 0,
-                state: FileState::Init,
+                state: FileState::default(),
                 data,
             })),
         }
@@ -997,44 +1201,25 @@ where
         let mut status = self
             .status
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
+            .map_err(|_| io::Error::other("Failed to lock the file status"))?;
         let pos = match pos {
             SeekFrom::Start(pos) => {
                 if pos > status.data.len() as u64 {
-                    return Poll::Ready(Err(Error::new(
-                        futures::io::ErrorKind::Other,
-                        eyre::eyre!("Index out of range"),
-                    )));
+                    return Poll::Ready(Err(Error::other(eyre::eyre!("Index out of range"))));
                 }
                 SeekFrom::Start(pos)
             }
             SeekFrom::End(pos) => {
-                let new_pos = self
-                    .len()
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
-                    as i64
-                    + pos;
+                let new_pos = self.len().map_err(io::Error::other)? as i64 + pos;
                 if new_pos < 0 || pos > 0 {
-                    return Poll::Ready(Err(Error::new(
-                        futures::io::ErrorKind::Other,
-                        eyre::eyre!("Index out of range"),
-                    )));
+                    return Poll::Ready(Err(Error::other(eyre::eyre!("Index out of range"))));
                 }
                 SeekFrom::End(pos)
             }
             SeekFrom::Current(pos) => {
                 let new_pos = status.cursor as i64 + pos;
-                if new_pos < 0
-                    || new_pos
-                        > self
-                            .len()
-                            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?
-                            as i64
-                {
-                    return Poll::Ready(Err(Error::new(
-                        futures::io::ErrorKind::Other,
-                        eyre::eyre!("Index out of range"),
-                    )));
+                if new_pos < 0 || new_pos > self.len().map_err(io::Error::other)? as i64 {
+                    return Poll::Ready(Err(Error::other(eyre::eyre!("Index out of range"))));
                 }
                 SeekFrom::Current(pos)
             }
@@ -1089,7 +1274,7 @@ where
         let mut status = self
             .status
             .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Failed to lock the file status"))?;
+            .map_err(|_| io::Error::other("Failed to lock the file status"))?;
         let cursor = status.cursor;
         let end = std::cmp::min(
             buf.len(),
