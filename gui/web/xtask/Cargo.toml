@@ -5,10 +5,10 @@ authors = ["kipcode66 <kipcode66@gmail.com>"]
 edition = "2021"
 
 [dependencies]
-resvg = "^0.44"
+resvg = "^0.45"
 serde = "^1.0"
 serde_derive = "^1.0"
-toml = "^0.8"
+toml = "^0.9"
 
 [features]
 default = []

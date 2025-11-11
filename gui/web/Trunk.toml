@@ -12,7 +12,7 @@ command_arguments = ["xtask"]
 [serve]
 tls_key_path = "key.pem"
 tls_cert_path = "cert.pem"
-port = 8080
+port = 8081
 headers = { "Cross-Origin-Resource-Policy" = "same-site", "Cross-Origin-Opener-Policy" = "same-origin", "Cross-Origin-Embedder-Policy" = "require-corp" }
 
 [tools]

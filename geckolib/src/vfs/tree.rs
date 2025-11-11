@@ -6,9 +6,8 @@ use crate::{
 use byteorder::{BE, ByteOrder};
 use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, io};
 use indextree::{Arena, NodeId};
-use rayon::iter::ParallelIterator;
 #[cfg(feature = "parallel")]
-use rayon::slice::ParallelSlice;
+use rayon::{slice::ParallelSlice, iter::ParallelIterator};
 use std::{
     io::{ErrorKind, Seek, SeekFrom},
     path::{Path, PathBuf},

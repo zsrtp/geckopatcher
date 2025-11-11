@@ -69,7 +69,7 @@ features = [
 ]
 
 [features]
-default = ["console_error_panic_hook", "parallel"]
+default = ["console_error_panic_hook"]
 debug_alloc = ["wasm-tracing-allocator"]
 generic_patch = []
 parallel = ["dep:rayon", "dep:wasm-bindgen-rayon"]
