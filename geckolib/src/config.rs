@@ -12,6 +12,7 @@ pub struct Config {
     pub files: HashMap<String, PathBuf>,
     pub build: Build,
     pub link: Option<Link>,
+    pub diffs: Option<Diffs>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug)]
@@ -45,4 +46,10 @@ pub struct Link {
     pub entries: Vec<String>,
     pub base: String,
     pub libs: Vec<PathBuf>,
+}
+
+#[derive(Deserialize, Serialize, Default, Debug, Clone)]
+pub struct Diffs {
+    pub deletes: Vec<PathBuf>,
+    pub changes: HashMap<PathBuf, PathBuf>,
 }

@@ -11,12 +11,10 @@ use eyre::{eyre, Result};
 use futures::{io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 #[cfg(feature = "progress")]
 use human_bytes::human_bytes;
-use indextree::{Node as IDNode, NodeId};
 use num::ToPrimitive;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use std::io::{Error, SeekFrom};
-use std::ops::DerefMut;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(feature = "progress")]
@@ -699,117 +697,6 @@ impl<'a, R> std::iter::Iterator for FileIteratorRecurse<'a, R> {
         Some(file)
     }
 }
-
-pub struct FileIteratorRecurseMut<'a, R> {
-    root: &'a mut Directory<R>,
-    cursors: Vec<usize>,
-}
-
-impl<'a, R> FileIteratorRecurseMut<'a, R> {
-    pub fn new(root: &'a mut Directory<R>) -> Self {
-        if root.children.is_empty() {
-            return Self {
-                root,
-                cursors: vec![],
-            };
-        }
-        // Find the first file
-        let mut cursors = vec![0];
-        Self::fix_cursor(root, &mut cursors);
-        Self { root, cursors }
-    }
-
-    fn gen_cursor_tuple<'b>(
-        root: &'b Directory<R>,
-        cursors: &mut Vec<usize>,
-    ) -> Vec<(usize, &'b Directory<R>)> {
-        cursors
-            .iter()
-            .scan(Some(root), |dir, c| {
-                let current_dir = *dir;
-                let next_dir = dir
-                    .filter(|d| d.children.len() > *c)
-                    .and_then(|d| d.children[*c].as_directory_ref());
-                match current_dir {
-                    Some(d) => {
-                        let tuple = (*c, d);
-                        *dir = next_dir;
-                        Some(tuple)
-                    }
-                    None => None,
-                }
-            })
-            .collect()
-    }
-
-    fn fix_cursor(root: &Directory<R>, cursors: &mut Vec<usize>) {
-        let mut dirs: Vec<(usize, &Directory<R>)> = Self::gen_cursor_tuple(root, cursors);
-        loop {
-            let (cursor, dir) = match dirs.last() {
-                None => break,
-                Some(d) => d,
-            };
-            if dir.children.len() <= *cursor {
-                cursors.pop();
-                if let Some(d) = dirs.last_mut() {
-                    d.0 += 1;
-                    continue;
-                } else {
-                    break;
-                }
-            }
-            match dir.children[*cursor].as_enum_ref() {
-                NodeEnumRef::File(_) => {
-                    break;
-                }
-                NodeEnumRef::Directory(directory) => {
-                    dirs.push((0, directory));
-                    continue;
-                }
-            }
-        }
-    }
-
-    fn increment_cursors(&mut self) {
-        // We assume we start in a valid state.
-        if let Some(cursor) = self.cursors.last_mut() {
-            *cursor += 1;
-        }
-        Self::fix_cursor(self.root, &mut self.cursors);
-    }
-}
-
-/*/
-impl<'a, R> std::iter::Iterator for FileIteratorRecurseMut<'a, R> {
-    type Item = &'a mut File<R>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let cursors_clone = self.cursors.clone();
-        let file = match cursors_clone.split_last() {
-            None => return None,
-            Some((cursor, cursors)) => {
-                let mut dir = Some(self.root.deref_mut());
-                for c in cursors {
-                    if let Some(d) = dir.take() {
-                        if let Some(new_d) = d.children[*c].as_directory_mut() {
-                            dir.replace(new_d);
-                        }
-                    }
-                }
-                dir.and_then(|d| {
-                    if d.children.len() > *cursor {
-                        d.children[*cursor].as_file_mut()
-                    } else {
-                        None
-                    }
-                })
-            }
-        };
-
-        //self.increment_cursors();
-        file
-    }
-}// */
 
 pub struct Directory<R> {
     name: String,

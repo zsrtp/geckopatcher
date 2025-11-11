@@ -160,6 +160,71 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     Err(WiiCryptoError::NoGamePartition.into())
 }
 
+fn get_partitions_sync<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+    part_info: &PartInfo,
+) -> Result<WiiPartitions, WiiDiscReaderError> {
+    crate::debug!("Fetching partitions from reader");
+    let mut ret_vec: Vec<WiiPartition> = Vec::new();
+    let mut data_idx: Option<usize> = None;
+    for entry in part_info.entries.iter() {
+        let mut tmd_count_buf = [0u8; 2];
+        reader.seek(SeekFrom::Start(entry.offset))?;
+        reader.read_exact(&mut tmd_count_buf)?;
+        let tmd_count = BE::read_u16(&tmd_count_buf);
+        let mut buf = vec![0u8; 0x2C0 + TitleMetaData::get_size_n(tmd_count)];
+        reader.seek(SeekFrom::Start(entry.offset))?;
+        reader.read_exact(&mut buf)?;
+        let header = PartHeader::try_from(&buf[..0x2C0])?;
+        let tmd = TitleMetaData::from_partition(&buf[0x2C0..], 0);
+        let mut buf = vec![0u8; header.cert_size];
+        reader.seek(SeekFrom::Start(header.cert_offset))?;
+        reader.read_exact(&mut buf)?;
+        let cert = buf.into_boxed_slice();
+        let part = WiiPartition {
+            part_offset: entry.offset,
+            part_type: entry.part_type.into(),
+            header,
+            tmd,
+            cert,
+        };
+        if part.part_type == PartitionType::Data && data_idx.is_none() {
+            data_idx = Some(ret_vec.len());
+        }
+        ret_vec.push(part);
+    }
+    crate::debug!("{:} partitions found", ret_vec.len());
+    #[cfg(feature = "log")]
+    ret_vec
+        .iter()
+        .enumerate()
+        .for_each(|(i, p)| crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset));
+    if !ret_vec.is_empty() {
+        if let Some(data_idx) = data_idx {
+            crate::trace!(
+                "(cert_offset: {:#08X})",
+                ret_vec[data_idx].header.cert_offset
+            );
+            crate::trace!(
+                "(data_offset: {:#08X})",
+                ret_vec[data_idx].header.data_offset
+            );
+            crate::trace!(
+                "(data_size: {:#08X}; decrypted size: {:#08X})",
+                ret_vec[data_idx].header.data_size,
+                to_virtual_addr(ret_vec[data_idx].header.data_size)
+            );
+            return Ok(WiiPartitions {
+                data_idx,
+                part_info: part_info.clone(),
+                partitions: ret_vec,
+            });
+        }
+    }
+    crate::warn!("No Game Partition found!");
+    Err(WiiCryptoError::NoGamePartition.into())
+}
+
 impl<R> WiiDiscReader<R>
 where
     R: AsyncRead + AsyncSeek + Unpin,
@@ -199,6 +264,48 @@ where
         let part_info = disc_get_part_info_async(&mut pin!(&mut this.reader).as_mut()).await?;
         this.disc.partitions =
             get_partitions(&mut pin!(&mut this.reader).as_mut(), &part_info).await?;
+        Ok(this)
+    }
+}
+
+impl<R> WiiDiscReader<R>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    pub fn try_parse_sync(reader: R) -> Result<Self, WiiDiscReaderError> {
+        crate::debug!("Trying to parse a Wii Disc from the reader");
+        let mut this = Self {
+            reader,
+            status: Arc::new(Mutex::new(WiiDiscReaderStatus {
+                cursor: 0,
+                state: WiiDiscReaderState::Seeking,
+            })),
+            disc: WiiDisc {
+                disc_header: Default::default(),
+                disc_region: Default::default(),
+                partitions: Default::default(),
+            },
+        };
+        let mut buf = vec![0u8; WiiDiscHeader::BLOCK_SIZE];
+        pin!(&mut this.reader).seek(SeekFrom::Start(0))?;
+        pin!(&mut this.reader).read_exact(&mut buf)?;
+        this.disc.disc_header = disc_get_header(&buf);
+        let disc_header = this.disc.disc_header;
+        let mut buf = vec![0u8; WiiDiscRegion::BLOCK_SIZE];
+        pin!(&mut this.reader)
+            .seek(SeekFrom::Start(0x4E000))?;
+        pin!(&mut this.reader).read_exact(&mut buf)?;
+        this.disc.disc_region = WiiDiscRegion::parse(&buf);
+        crate::trace!("{:?}", disc_header);
+        if disc_header.wii_magic != iso_consts::WII_MAGIC {
+            return Err(WiiCryptoError::NotWiiDisc {
+                magic: disc_header.wii_magic,
+            }
+            .into());
+        }
+        let part_info = disc_get_part_info(&mut this.reader)?;
+        this.disc.partitions =
+            get_partitions_sync(&mut this.reader, &part_info)?;
         Ok(this)
     }
 }
@@ -651,6 +758,22 @@ where
     }
 }
 
+impl<R> DiscReader<R> {
+    pub fn get_type(&self) -> DiscType {
+        match self {
+            DiscReader::Gamecube(_) => DiscType::Gamecube,
+            DiscReader::Wii(_) => DiscType::Wii,
+        }
+    }
+
+    pub fn get_disc_info(&self) -> Option<WiiDisc> {
+        match self {
+            DiscReader::Gamecube(_) => None,
+            DiscReader::Wii(wii) => Some(wii.disc.clone()),
+        }
+    }
+}
+
 impl<R> DiscReader<R>
 where
     R: AsyncRead + AsyncSeek + Unpin,
@@ -673,18 +796,28 @@ where
             ))
         }
     }
+}
 
-    pub fn get_type(&self) -> DiscType {
-        match self {
-            DiscReader::Gamecube(_) => DiscType::Gamecube,
-            DiscReader::Wii(_) => DiscType::Wii,
-        }
-    }
-
-    pub fn get_disc_info(&self) -> Option<WiiDisc> {
-        match self {
-            DiscReader::Gamecube(_) => None,
-            DiscReader::Wii(wii) => Some(wii.disc.clone()),
+impl<R> DiscReader<R>
+where
+    R: std::io::Read + std::io::Seek,
+{
+    pub fn new_sync(mut reader: R) -> Result<Self, DiscReaderError> {
+        pin!(&mut reader).seek(SeekFrom::Start(0x18))?;
+        let mut buf = [0u8; 8];
+        let _ = pin!(&mut reader).read(&mut buf)?;
+        crate::debug!("Magics: {:?}", buf);
+        if BE::read_u32(&buf[4..][..4]) == iso_consts::GC_MAGIC {
+            crate::debug!("Loading Gamecube disc");
+            Ok(Self::Gamecube(reader))
+        } else if BE::read_u32(&buf[..][..4]) == iso_consts::WII_MAGIC {
+            crate::debug!("Loading Wii disc");
+            Ok(Self::Wii(Box::new(WiiDiscReader::try_parse_sync(reader)?)))
+        } else {
+            Err(DiscReaderError::NotDisc(
+                BE::read_u32(&buf[4..][..4]),
+                BE::read_u32(&buf[..][..4]),
+            ))
         }
     }
 }

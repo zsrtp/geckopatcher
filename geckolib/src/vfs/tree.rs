@@ -1,10 +1,6 @@
 use crate::{
     crypto::Unpackable,
-    iso::{
-        FstEntry, FstNode, consts,
-        disc::{DiscType},
-        read::DiscReader,
-    },
+    iso::{FstEntry, FstNode, consts, disc::DiscType, read::DiscReader},
     vfs::data_source::FileDataSource,
 };
 use byteorder::{BE, ByteOrder};
@@ -14,7 +10,10 @@ use rayon::iter::ParallelIterator;
 #[cfg(feature = "parallel")]
 use rayon::slice::ParallelSlice;
 use std::{
-    io::{ErrorKind, Seek, SeekFrom}, path::{Path, PathBuf}, sync::{Arc, Mutex}, task::{Context, Poll}
+    io::{ErrorKind, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
 };
 use thiserror::Error;
 
@@ -45,7 +44,7 @@ pub(super) struct FileStatus {
     state: FileState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FsFile<R> {
     data: Arc<Mutex<FileDataSource<R>>>,
     status: Arc<Mutex<FileStatus>>,
@@ -514,20 +513,133 @@ pub struct GeckoFS<R> {
     arena: Arena<FsNode<R>>,
 }
 
-impl<R> GeckoFS<R>
-where
-    R: AsyncRead + AsyncSeek + Clone + Unpin + 'static,
-{
-    #[doc = r"Utility function to read the disc."]
-    async fn read_exact(
-        reader: &mut DiscReader<R>,
-        pos: SeekFrom,
-        buf: &mut [u8],
-    ) -> Result<(), GeckoFSError> {
-        reader.seek(pos).await?;
-        Ok(reader.read_exact(buf).await?)
+impl<R> GeckoFS<R> {
+    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return None;
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .and_then(|n| self.arena.get(n))
+            .map(indextree::Node::get)
+            .filter(|n| n.is_file())
     }
 
+    pub fn get_file_mut<P: AsRef<Path>>(
+        &mut self,
+        root: NodeId,
+        path: P,
+    ) -> Option<&mut FsNode<R>> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return None;
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .and_then(|n| self.arena.get_mut(n))
+            .map(indextree::Node::get_mut)
+            .filter(|n| n.is_file())
+    }
+
+    pub fn get_dir_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return None;
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .and_then(|n| self.arena.get(n))
+            .map(indextree::Node::get)
+            .filter(|n| n.is_dir())
+    }
+
+    pub fn get_dir_mut<P: AsRef<Path>>(&mut self, root: NodeId, path: P) -> Option<&mut FsNode<R>> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return None;
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .and_then(|n| self.arena.get_mut(n))
+            .map(indextree::Node::get_mut)
+            .filter(|n| n.is_dir())
+    }
+
+    #[doc = "Iterates through all entries under the provided root node using Depth First Search"]
+    pub fn iter_dfs(&self, root: NodeId) -> impl Iterator<Item = PathBuf> {
+        let root_clone = root.clone();
+        root.descendants(&self.arena).skip(1).map(move |d| {
+            d.ancestors(&self.arena)
+                .filter(|a| *a != root_clone)
+                .filter_map(|a| self.arena.get(a))
+                .map(|a| a.get().name())
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+                .collect()
+        })
+    }
+
+    pub fn iter_nodes_dfs<'a>(&'a self, root: NodeId) -> impl Iterator<Item = &'a FsNode<R>> {
+        root.descendants(&self.arena)
+            .skip(1)
+            .filter_map(|n| self.arena.get(n).map(|node| node.get()))
+    }
+
+    pub fn enumerate_nodes_dfs<'a>(
+        &'a self,
+        root: NodeId,
+    ) -> impl Iterator<Item = (PathBuf, &'a FsNode<R>)> {
+        let root_clone = root.clone();
+        root.descendants(&self.arena).skip(1).filter_map(move |n| {
+            let path = n
+                .ancestors(&self.arena)
+                .filter(|a| *a != root_clone)
+                .filter_map(|a| self.arena.get(a))
+                .map(|a| a.get().name())
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+                .collect();
+            self.arena.get(n).map(|node| (path, node.get()))
+        })
+    }
+}
+
+impl<R: Clone> GeckoFS<R> {
     fn get_dir_structure_recursive(
         cur_index: &mut usize,
         fst: &Vec<FstNode>,
@@ -572,7 +684,22 @@ where
             }
         }
     }
+}
 
+#[doc = r"Utility function to read the disc."]
+async fn read_exact_async<R: AsyncRead + AsyncSeek + Unpin>(
+    reader: &mut DiscReader<R>,
+    pos: SeekFrom,
+    buf: &mut [u8],
+) -> Result<(), GeckoFSError> {
+    reader.seek(pos).await?;
+    Ok(reader.read_exact(buf).await?)
+}
+
+impl<R> GeckoFS<R>
+where
+    R: AsyncRead + AsyncSeek + Clone + Unpin + 'static,
+{
     pub async fn parse(mut reader: DiscReader<R>) -> Result<Self, GeckoFSError> {
         let mut arena: Arena<FsNode<R>> = Arena::new();
         let root = arena.new_node(FsNode::Directory { name: "".into() });
@@ -590,21 +717,20 @@ where
                 }
             );
             let mut buf = [0u8; 4];
-            GeckoFS::read_exact(
+            read_exact_async(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_OFFSET as u64),
                 &mut buf,
             )
             .await?;
             let fst_offset = (BE::read_u32(&buf[..]) as u64) << (if is_wii { 2 } else { 0 });
-            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
+            read_exact_async(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
             let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
-            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf)
-                .await?;
+            read_exact_async(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf).await?;
             let string_table_offset = num_entries as u64 * FstEntry::BLOCK_SIZE as u64;
 
-            GeckoFS::read_exact(
+            read_exact_async(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
                 &mut buf,
@@ -612,7 +738,7 @@ where
             .await?;
             let fst_size = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
             let mut str_tbl_buf = vec![0u8; (fst_size - string_table_offset) as usize];
-            GeckoFS::read_exact(
+            read_exact_async(
                 &mut reader,
                 SeekFrom::Start(string_table_offset + fst_offset),
                 &mut str_tbl_buf,
@@ -651,7 +777,7 @@ where
             })
             .collect();
 
-            GeckoFS::read_exact(
+            read_exact_async(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_DOL_OFFSET as u64),
                 &mut buf,
@@ -911,95 +1037,170 @@ where
 
         Ok(())
     }// */
+}
 
-    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref().iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get(n))
-            .map(indextree::Node::get)
-            .filter(|n| n.is_file())
+impl<R> GeckoFS<R>
+where
+    R: std::io::Read + std::io::Seek + Clone,
+{
+    #[doc = r"Utility function to read the disc."]
+    fn read_exact(
+        reader: &mut DiscReader<R>,
+        pos: SeekFrom,
+        buf: &mut [u8],
+    ) -> Result<(), GeckoFSError> {
+        reader.seek(pos)?;
+        Ok(std::io::Read::read_exact(reader, buf)?)
     }
 
-    pub fn get_file_mut<P: AsRef<Path>>(&mut self, root: NodeId, path: P) -> Option<&mut FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref().iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get_mut(n))
-            .map(indextree::Node::get_mut)
-            .filter(|n| n.is_file())
-    }
+    pub fn parse_sync(mut reader: DiscReader<R>) -> Result<Self, GeckoFSError> {
+        let mut arena: Arena<FsNode<R>> = Arena::new();
+        let root = arena.new_node(FsNode::Directory { name: "".into() });
+        let sys = arena.new_node(FsNode::Directory {
+            name: "&&systemdata".into(),
+        });
+        {
+            let is_wii = reader.get_type() == DiscType::Wii;
+            crate::debug!(
+                "{}",
+                if is_wii {
+                    "The disc is a Wii game"
+                } else {
+                    "The disc is NOT a Wii game"
+                }
+            );
+            let mut buf = [0u8; 4];
+            GeckoFS::read_exact(
+                &mut reader,
+                SeekFrom::Start(consts::OFFSET_FST_OFFSET as u64),
+                &mut buf,
+            )?;
+            let fst_offset = (BE::read_u32(&buf[..]) as u64) << (if is_wii { 2 } else { 0 });
+            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf)?;
+            let num_entries = BE::read_u32(&buf[..]) as usize;
+            let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
+            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf)?;
+            let string_table_offset = num_entries as u64 * FstEntry::BLOCK_SIZE as u64;
 
-    pub fn get_dir_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref().iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get(n))
-            .map(indextree::Node::get)
-            .filter(|n| n.is_dir())
-    }
+            GeckoFS::read_exact(
+                &mut reader,
+                SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
+                &mut buf,
+            )?;
+            let fst_size = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
+            let mut str_tbl_buf = vec![0u8; (fst_size - string_table_offset) as usize];
+            GeckoFS::read_exact(
+                &mut reader,
+                SeekFrom::Start(string_table_offset + fst_offset),
+                &mut str_tbl_buf,
+            )?;
 
-    pub fn get_dir_mut<P: AsRef<Path>>(&mut self, root: NodeId, path: P) -> Option<&mut FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref().iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get_mut(n))
-            .map(indextree::Node::get_mut)
-            .filter(|n| n.is_dir())
-    }
+            crate::debug!(
+                "#fst enties: {}; #names: {}",
+                num_entries,
+                str_tbl_buf.split(|b| *b == 0).count()
+            );
 
-    #[doc = "Iterates through all entries under the provided root node using Depth First Search"]
-    pub fn iter_dfs(&self, root: NodeId) -> impl Iterator<Item = PathBuf> {
-        let root_clone = root.clone();
-        root.descendants(&self.arena).skip(1).map(move |d| {
-            d.ancestors(&self.arena)
-                .filter(|a| *a != root_clone)
-                .filter_map(|a| self.arena.get(a))
-                .map(|a| a.get().name())
-                .collect::<Vec<_>>()
-                .iter()
-                .rev()
-                .collect()
-        })
+            let fst_entries: Vec<FstNode> = {
+                #[cfg(feature = "parallel")]
+                let chunks = fst_list_buf.par_chunks_exact(FstEntry::BLOCK_SIZE);
+                #[cfg(not(feature = "parallel"))]
+                let chunks = fst_list_buf.chunks_exact(FstEntry::BLOCK_SIZE);
+                chunks
+            }
+            .map(|entry_buf| {
+                let entry = FstEntry::try_from(entry_buf).unwrap();
+                let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
+
+                if is_wii {
+                    match &mut node {
+                        FstNode::File { file_offset, .. } => {
+                            *file_offset <<= 2;
+                        }
+                        FstNode::Directory { parent_dir, .. } => {
+                            *parent_dir <<= 2;
+                        }
+                    }
+                }
+
+                node
+            })
+            .collect();
+
+            GeckoFS::read_exact(
+                &mut reader,
+                SeekFrom::Start(consts::OFFSET_DOL_OFFSET as u64),
+                &mut buf,
+            )?;
+            let dol_offset = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
+            crate::debug!(
+                "fst_size: 0x{:08X}; fst entries list size: 0x{:08X}",
+                fst_size,
+                num_entries * FstEntry::BLOCK_SIZE
+            );
+
+            let _ = FsNode::new_file(
+                sys,
+                FileDataSource::Reader {
+                    reader: reader.clone(),
+                    fst: FstNode::File {
+                        relative_file_name: "iso.hdr".to_owned(),
+                        file_offset: 0,
+                        file_size: consts::HEADER_LENGTH,
+                    },
+                },
+                &mut arena,
+            );
+            let _ = FsNode::new_file(
+                sys,
+                FileDataSource::Reader {
+                    reader: reader.clone(),
+                    fst: FstNode::File {
+                        relative_file_name: "AppLoader.ldr".to_owned(),
+                        file_offset: consts::HEADER_LENGTH as u64,
+                        file_size: (dol_offset - consts::HEADER_LENGTH as u64) as usize,
+                    },
+                },
+                &mut arena,
+            );
+            let _ = FsNode::new_file(
+                sys,
+                FileDataSource::Reader {
+                    reader: reader.clone(),
+                    fst: FstNode::File {
+                        relative_file_name: "Start.dol".to_owned(),
+                        file_offset: dol_offset,
+                        file_size: (fst_offset - dol_offset) as usize,
+                    },
+                },
+                &mut arena,
+            );
+            let _ = FsNode::new_file(
+                sys,
+                FileDataSource::Reader {
+                    reader: reader.clone(),
+                    fst: FstNode::File {
+                        relative_file_name: "Game.toc".to_owned(),
+                        file_offset: fst_offset,
+                        file_size: fst_size as usize,
+                    },
+                },
+                &mut arena,
+            );
+
+            let mut count = 1;
+            while count < num_entries {
+                let _ = GeckoFS::get_dir_structure_recursive(
+                    &mut count,
+                    &fst_entries,
+                    root,
+                    &mut arena,
+                    &reader,
+                );
+                count += 1;
+            }
+        }
+        crate::debug!("{} children", root.children(&arena).count());
+        Ok(Self { root, sys, arena })
     }
 }

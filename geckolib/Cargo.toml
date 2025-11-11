@@ -39,6 +39,8 @@ static_assertions = "^1.1"
 syn = "^2.0"
 encoding_rs = "^0.8"
 indextree = { version = "^4.7" }
+bsdiff = { version = "^0.2" }
+deko = { version = "^0.5" }
 
 [features]
 default = ["parallel"]

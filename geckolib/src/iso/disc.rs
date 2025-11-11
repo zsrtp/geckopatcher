@@ -277,6 +277,37 @@ pub async fn disc_get_part_info_async<R: AsyncRead + AsyncSeek>(
     })
 }
 
+pub fn disc_get_part_info<R: std::io::Read + std::io::Seek>(
+    reader: &mut R,
+) -> Result<PartInfo, DiscError> {
+    crate::debug!("Parsing partition info (async)");
+    let mut entries: Vec<PartInfoEntry> = Vec::new();
+    let mut buf: [u8; 8] = [0u8; 8];
+    reader
+        .seek(SeekFrom::Start(consts::WII_PARTITION_INFO_OFFSET))?;
+    let _ = reader.read(&mut buf)?;
+    let n_part = BE::read_u32(&buf[..]) as u64;
+    let part_info_offset = (BE::read_u32(&buf[4..]) as u64) << 2;
+    crate::debug!(
+        "Found {:} entries, partition info at offset 0x{:08X}",
+        n_part,
+        part_info_offset
+    );
+    for i in 0..n_part {
+        reader
+            .seek(SeekFrom::Start(part_info_offset + (8 * i)))?;
+        let _ = reader.read(&mut buf)?;
+        entries.push(PartInfoEntry {
+            offset: (BE::read_u32(&buf[..]) as u64) << 2,
+            part_type: BE::read_u32(&buf[4..]),
+        });
+    }
+    Ok(PartInfo {
+        offset: part_info_offset,
+        entries,
+    })
+}
+
 pub fn disc_set_part_info(buffer: &mut [u8], pi: &PartInfo) {
     BE::write_u32(&mut buffer[0x40000..], pi.entries.len() as u32);
     BE::write_u32(&mut buffer[0x40004..], (pi.offset >> 2) as u32);

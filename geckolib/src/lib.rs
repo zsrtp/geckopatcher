@@ -24,6 +24,7 @@ pub mod patch;
 #[cfg(feature = "progress")]
 pub mod update;
 pub mod vfs;
+pub mod diff;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::{File, OpenOptions};

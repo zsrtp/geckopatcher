@@ -1,15 +1,15 @@
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
 use async_std::fs::{File, OpenOptions};
-use async_std::path::PathBuf;
 use clap::Parser;
 use geckolib::iso::builder::PatchBuilder;
 use geckolib::iso::read::DiscReader;
 use geckolib::parse_config;
 use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_patch};
-#[cfg(feature = "parallel")]
-use rayon::iter::{ParallelBridge, ParallelIterator};
 
 #[cfg(feature = "progress")]
-use geckolib::{update::UpdaterType, UPDATER};
+use geckolib::{UPDATER, update::UpdaterType};
 
 mod progress;
 
@@ -64,10 +64,7 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
         } => {
             let mut builder = open_config_from_patch(
                 std::fs::OpenOptions::new().read(true).open(patch)?,
-                OpenOptions::new()
-                    .read(true)
-                    .open(original_game)
-                    .await?,
+                OpenOptions::new().read(true).open(original_game).await?,
                 OpenOptions::new()
                     .write(true)
                     .create(true)
@@ -82,40 +79,100 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
             new(&name)?;
             Ok(())
         }
-        Commands::Extract { original_game, patched_game, output } => {
+        Commands::Extract {
+            original_game,
+            patched_game,
+            output,
+        } => {
             println!("Extracting... Failed. Not implemented.");
             extract(
-                OpenOptions::new().read(true).open(original_game).await?,
-                OpenOptions::new().read(true).open(patched_game).await?,
-                async_std::path::PathBuf::from_iter(output.iter())).await?;
+                std::fs::OpenOptions::new().read(true).open(original_game)?,
+                std::fs::OpenOptions::new().read(true).open(patched_game)?,
+                std::path::PathBuf::from_iter(output.iter()),
+            )?;
             Ok(())
         }
     }
 }
 
-async fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::Result<()> {
-    let original_fs = geckolib::vfs::tree::GeckoFS::parse(DiscReader::new(original).await?).await?;
-    let patched_fs = geckolib::vfs::tree::GeckoFS::parse(DiscReader::new(patched).await?).await?;
+fn extract(
+    original: std::fs::File,
+    patched: std::fs::File,
+    output: std::path::PathBuf,
+) -> color_eyre::eyre::Result<()> {
+    let original_fs =
+        geckolib::vfs::tree::GeckoFS::parse_sync(DiscReader::new_sync(Arc::new(original))?)?;
+    let patched_fs =
+        geckolib::vfs::tree::GeckoFS::parse_sync(DiscReader::new_sync(Arc::new(patched))?)?;
     println!("output: {:?}", output);
-    #[cfg(feature = "parallel")]
-    patched_fs.iter_dfs(patched_fs.root).par_bridge().filter(|p| patched_fs.get_dir_ref(patched_fs.root, &p).is_some()).for_each(|file| {
-        println!("/{}; found {} files in original", file.to_string_lossy(), original_fs.iter_dfs(original_fs.root).filter(|f| *f == file).count());
-    });
-    #[cfg(feature = "parallel")]
-    patched_fs.iter_dfs(patched_fs.sys).par_bridge().filter(|p| patched_fs.get_dir_ref(patched_fs.sys, &p).is_some()).for_each(|file| {
-        println!("&&systemdata/{}; found {} files in original", file.to_string_lossy(), original_fs.iter_dfs(original_fs.sys).filter(|f| *f == file).count());
-    });
+    let sum = AtomicU64::new(0);
+    patched_fs
+        .enumerate_nodes_dfs(patched_fs.root)
+        .filter_map(|(p, file)| file.as_file_ref().map(|f| (p, f)))
+        .for_each(|(path, file)| {
+            use std::io::Read;
+            let original_file =
+                if let Some(o_file) = original_fs.get_file_ref(original_fs.root, &path).and_then(|o_f| o_f.as_file_ref()) {
+                    o_file
+                } else {
+                    return;
+                };
+            let mut patched_data = Vec::new();
+            let mut original_data = Vec::new();
+            if file.clone().read_to_end(&mut patched_data).and(original_file.clone().read_to_end(&mut original_data)).is_ok() {
+                let patch = geckolib::diff::diff(original_data.as_slice(), patched_data.as_slice());
+                if let Ok(Some(patch_val)) = patch {
+                    use std::io::BufReader;
+                    sum.fetch_add(patch_val.len() as u64, std::sync::atomic::Ordering::Relaxed);
+
+                    let repatched = geckolib::diff::patch(original_data.as_slice(), BufReader::new(patch_val.as_slice()));
+                    println!("/{}; {:?} B; {:?}", path.to_string_lossy(), patch_val.len(), repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data));
+                }
+            }
+        });
+    patched_fs
+        .enumerate_nodes_dfs(patched_fs.sys)
+        .filter(|(p,_)| p.to_string_lossy() == "Start.dol")
+        .filter_map(|(p, file)| file.as_file_ref().map(|f| (p, f)))
+        .for_each(|(path, file)| {
+            use std::io::Read;
+            let original_file =
+                if let Some(o_file) = original_fs.get_file_ref(original_fs.sys, &path).and_then(|o_f| o_f.as_file_ref()) {
+                    o_file
+                } else {
+                    return;
+                };
+            let mut patched_data = Vec::new();
+            let mut original_data = Vec::new();
+            if file.clone().read_to_end(&mut patched_data).and(original_file.clone().read_to_end(&mut original_data)).is_ok() {
+                let patch = geckolib::diff::diff(original_data.as_slice(), patched_data.as_slice());
+                if let Ok(Some(patch_val)) = patch {
+                    use std::io::BufReader;
+                    sum.fetch_add(patch_val.len() as u64, std::sync::atomic::Ordering::Relaxed);
+
+                    let repatched = geckolib::diff::patch(original_data.as_slice(), BufReader::new(patch_val.as_slice()));
+                    println!("&&systemdata/{}; {:?} B; {:?}", path.to_string_lossy(), patch_val.len(), repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data));
+                }
+            }
+        });
+    println!("Total size of patches: {} B", sum.into_inner());
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use core::fmt;
-    use std::{pin::Pin, task::{Context, Poll}};
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
 
     use async_std::io;
-    use futures::{executor::block_on, AsyncReadExt, AsyncSeek, AsyncWrite};
-    use geckolib::{iso::{builder::Builder, read::DiscReader}, open_config_from_patch};
+    use futures::{AsyncReadExt, AsyncSeek, AsyncWrite, executor::block_on};
+    use geckolib::{
+        iso::{builder::Builder, read::DiscReader},
+        open_config_from_patch,
+    };
 
     #[derive(Copy, Clone, Default)]
     pub struct Sink {
@@ -188,7 +245,8 @@ mod tests {
                 async_std::fs::File::open("assets/empty.iso").await.unwrap(),
                 Sink::default(),
             )
-            .await.unwrap();
+            .await
+            .unwrap();
             builder.build().await.unwrap();
         });
     }
