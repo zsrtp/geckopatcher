@@ -5,7 +5,7 @@ use async_std::{io::prelude::*, task};
 use clap::{Parser, ValueHint};
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
-use geckolib::vfs::GeckoFS;
+use geckolib::vfs::GeckoFSLegacy;
 #[cfg(feature = "progress")]
 use romhack::progress::init_cli_progress;
 
@@ -48,7 +48,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                 .expect("This game has no title")
         );
         {
-            let mut fs = GeckoFS::parse(f).await?;
+            let mut fs = GeckoFSLegacy::parse(f).await?;
             let file = fs.sys_mut().get_file_mut("Start.dol")?;
             let size = file.seek(SeekFrom::End(0)).await? as usize;
             file.seek(SeekFrom::Start(0)).await?;

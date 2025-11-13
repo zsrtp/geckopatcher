@@ -1,4 +1,4 @@
-use std::ffi::CStr;
+use std::ffi::{CStr, FromBytesUntilNulError};
 
 use crate::crypto::Unpackable;
 
@@ -36,17 +36,20 @@ pub enum FstNodeType {
     Directory = 1,
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum FstNodeTypeError {
+    #[error("Out of range value for FstNodeType [value = {0}]")]
+    OutOfRange(u8),
+}
+
 impl TryFrom<u8> for FstNodeType {
-    type Error = eyre::ErrReport;
+    type Error = FstNodeTypeError;
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             0 => Ok(FstNodeType::File),
             1 => Ok(FstNodeType::Directory),
-            n => Err(eyre::eyre!(
-                "Out of range value for FstNodeType [value = {}]",
-                n
-            )),
+            n => Err(FstNodeTypeError::OutOfRange(n)),
         }
     }
 }
@@ -88,6 +91,12 @@ impl TryFrom<&[u8]> for FstEntry {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum FstEntryError {
+    #[error("File offset is too large [offset = 0x{:X}; max = 0x{:X}]", .0, u32::MAX)]
+    FileOffsetTooLarge(u64),
+}
+
 impl FstEntry {
     pub fn pack(&self) -> [u8; Self::BLOCK_SIZE] {
         let mut buf = [0u8; Self::BLOCK_SIZE];
@@ -123,13 +132,9 @@ impl FstEntry {
         &mut self,
         file_offset_parent_dir: u64,
         is_wii: bool,
-    ) -> eyre::Result<()> {
+    ) -> Result<(), FstEntryError> {
         if file_offset_parent_dir > ((u32::MAX as u64) << 2) {
-            return Err(eyre::eyre!(
-                "File offset is too large [offset = 0x{:X}; max = 0x{:X}]",
-                file_offset_parent_dir,
-                u32::MAX
-            ));
+            return Err(FstEntryError::FileOffsetTooLarge(file_offset_parent_dir));
         }
         self.file_offset_parent_dir = (file_offset_parent_dir >> if is_wii { 2 } else { 0 }) as u32;
         Ok(())
@@ -148,7 +153,7 @@ impl FstEntry {
         file_offset: u64,
         file_size: u32,
         is_wii: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self, FstEntryError> {
         let mut node = Self::default();
         node.set_node_type(FstNodeType::File);
         node.set_file_name_offset(file_name_offset);
@@ -162,7 +167,7 @@ impl FstEntry {
         parent_dir: u64,
         next_dir_index: u32,
         is_wii: bool,
-    ) -> eyre::Result<Self> {
+    ) -> Result<Self, FstEntryError> {
         let mut node = Self::default();
         node.set_node_type(FstNodeType::Directory);
         node.set_file_name_offset(file_name_offset);
@@ -202,8 +207,16 @@ impl Default for FstNode {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum FstNodeError {
+    #[error(transparent)]
+    FromBytesUntilNullError(#[from] FromBytesUntilNulError),
+    #[error(transparent)]
+    FstNodeTypeError(#[from] FstNodeTypeError),
+}
+
 impl FstNode {
-    pub fn from_fstnode(node: &FstEntry, file_name_table: &[u8]) -> eyre::Result<Self> {
+    pub fn from_fstnode(node: &FstEntry, file_name_table: &[u8]) -> Result<Self, FstNodeError> {
         // Get the file name
         let pos = (node.node_type_file_name_offset & 0x00FFFFFF) as usize;
         let relative_file_name = CStr::from_bytes_until_nul(&file_name_table[pos..])?

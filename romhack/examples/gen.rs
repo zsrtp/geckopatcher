@@ -7,7 +7,7 @@ use geckolib::{
     iso::{
         disc::{WiiDisc, WiiDiscHeader}, read::DiscReader, write::DiscWriter
     },
-    vfs::{self, GeckoFS},
+    vfs::{self, GeckoFSLegacy},
 };
 #[cfg(feature = "progress")]
 use romhack::progress;
@@ -75,7 +75,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                 partitions: disc.partitions.clone(),
             }
         });
-        let mut gfs = GeckoFS::parse(reader).await?;
+        let mut gfs = GeckoFSLegacy::parse(reader).await?;
         let children: Vec<_> = gfs.root().iter().map(|item| item.name()).collect();
         for item in children {
             gfs.root_mut().rm(item)?;

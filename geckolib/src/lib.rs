@@ -41,7 +41,7 @@ use iso::builder::IsoBuilder;
 use iso::read::DiscReader;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
-use vfs::GeckoFS;
+use vfs::tree::GeckoFS;
 use zip::ZipArchive;
 
 #[cfg(feature = "progress")]

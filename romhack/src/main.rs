@@ -1,7 +1,8 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use async_std::fs::{File, OpenOptions};
+use async_std::io::ReadExt as _;
+use async_std::path::PathBuf;
 use clap::Parser;
 use geckolib::iso::builder::PatchBuilder;
 use geckolib::iso::read::DiscReader;
@@ -86,72 +87,103 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
         } => {
             println!("Extracting... Failed. Not implemented.");
             extract(
-                std::fs::OpenOptions::new().read(true).open(original_game)?,
-                std::fs::OpenOptions::new().read(true).open(patched_game)?,
-                std::path::PathBuf::from_iter(output.iter()),
+                OpenOptions::new().read(true).open(original_game).await?,
+                OpenOptions::new().read(true).open(patched_game).await?,
+                PathBuf::from_iter(output.iter()),
             )?;
             Ok(())
         }
     }
 }
 
-fn extract(
-    original: std::fs::File,
-    patched: std::fs::File,
-    output: std::path::PathBuf,
-) -> color_eyre::eyre::Result<()> {
-    let original_fs =
-        geckolib::vfs::tree::GeckoFS::parse_sync(DiscReader::new_sync(Arc::new(original))?)?;
-    let patched_fs =
-        geckolib::vfs::tree::GeckoFS::parse_sync(DiscReader::new_sync(Arc::new(patched))?)?;
+fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::Result<()> {
+    use geckolib::vfs::tree::GeckoFS;
+    let (original_dr, patched_dr) =
+        block_on(async { futures::join!(DiscReader::new(original), DiscReader::new(patched)) });
+    let (original_dr, patched_dr) = (original_dr?, patched_dr?);
+    let (original_fs, patched_fs) = block_on(async {
+        futures::join!(
+            GeckoFS::parse(original_dr),
+            GeckoFS::parse(patched_dr)
+        )
+    });
+    let (original_fs, patched_fs) = (original_fs?, patched_fs?);
     println!("output: {:?}", output);
     let sum = AtomicU64::new(0);
     patched_fs
         .enumerate_nodes_dfs(patched_fs.root)
         .filter_map(|(p, file)| file.as_file_ref().map(|f| (p, f)))
         .for_each(|(path, file)| {
-            use std::io::Read;
-            let original_file =
-                if let Some(o_file) = original_fs.get_file_ref(original_fs.root, &path).and_then(|o_f| o_f.as_file_ref()) {
-                    o_file
-                } else {
-                    return;
-                };
+            let original_file = if let Some(o_file) = original_fs
+                .get_file_ref(original_fs.root, &path)
+                .and_then(|o_f| o_f.as_file_ref())
+            {
+                o_file
+            } else {
+                return;
+            };
             let mut patched_data = Vec::new();
             let mut original_data = Vec::new();
-            if file.clone().read_to_end(&mut patched_data).and(original_file.clone().read_to_end(&mut original_data)).is_ok() {
+            if block_on(file.clone().read_to_end(&mut patched_data))
+                .and(block_on(
+                    original_file.clone().read_to_end(&mut original_data),
+                ))
+                .is_ok()
+            {
                 let patch = geckolib::diff::diff(original_data.as_slice(), patched_data.as_slice());
                 if let Ok(Some(patch_val)) = patch {
                     use std::io::BufReader;
                     sum.fetch_add(patch_val.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    let repatched = geckolib::diff::patch(original_data.as_slice(), BufReader::new(patch_val.as_slice()));
-                    println!("/{}; {:?} B; {:?}", path.to_string_lossy(), patch_val.len(), repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data));
+                    let repatched = geckolib::diff::patch(
+                        original_data.as_slice(),
+                        BufReader::new(patch_val.as_slice()),
+                    );
+                    println!(
+                        "/{}; {:?} B; {:?}",
+                        path.to_string_lossy(),
+                        patch_val.len(),
+                        repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data)
+                    );
                 }
             }
         });
     patched_fs
         .enumerate_nodes_dfs(patched_fs.sys)
-        .filter(|(p,_)| p.to_string_lossy() == "Start.dol")
+        .filter(|(p, _)| p.to_string_lossy() == "Start.dol")
         .filter_map(|(p, file)| file.as_file_ref().map(|f| (p, f)))
         .for_each(|(path, file)| {
-            use std::io::Read;
-            let original_file =
-                if let Some(o_file) = original_fs.get_file_ref(original_fs.sys, &path).and_then(|o_f| o_f.as_file_ref()) {
-                    o_file
-                } else {
-                    return;
-                };
+            let original_file = if let Some(o_file) = original_fs
+                .get_file_ref(original_fs.sys, &path)
+                .and_then(|o_f| o_f.as_file_ref())
+            {
+                o_file
+            } else {
+                return;
+            };
             let mut patched_data = Vec::new();
             let mut original_data = Vec::new();
-            if file.clone().read_to_end(&mut patched_data).and(original_file.clone().read_to_end(&mut original_data)).is_ok() {
+            if block_on(file.clone().read_to_end(&mut patched_data))
+                .and(block_on(
+                    original_file.clone().read_to_end(&mut original_data),
+                ))
+                .is_ok()
+            {
                 let patch = geckolib::diff::diff(original_data.as_slice(), patched_data.as_slice());
                 if let Ok(Some(patch_val)) = patch {
                     use std::io::BufReader;
                     sum.fetch_add(patch_val.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
-                    let repatched = geckolib::diff::patch(original_data.as_slice(), BufReader::new(patch_val.as_slice()));
-                    println!("&&systemdata/{}; {:?} B; {:?}", path.to_string_lossy(), patch_val.len(), repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data));
+                    let repatched = geckolib::diff::patch(
+                        original_data.as_slice(),
+                        BufReader::new(patch_val.as_slice()),
+                    );
+                    println!(
+                        "&&systemdata/{}; {:?} B; {:?}",
+                        path.to_string_lossy(),
+                        patch_val.len(),
+                        repatched.is_ok_and(|r| r.len() == patched_data.len() && r == patched_data)
+                    );
                 }
             }
         });

@@ -8,7 +8,7 @@ use futures::AsyncWriteExt;
 use geckolib::UPDATER;
 use geckolib::{
     iso::{read::DiscReader, write::DiscWriter},
-    vfs::GeckoFS,
+    vfs::tree::GeckoFS,
 };
 #[cfg(feature = "progress")]
 use romhack::progress;

@@ -1,4 +1,4 @@
-use eyre::Context;
+use eyre::{Context, ContextCompat as _};
 use futures::AsyncWrite;
 use futures::{prelude::*, AsyncRead, AsyncSeek};
 use std::collections::HashMap;
@@ -22,7 +22,9 @@ use crate::patch::banner::Banner;
 
 use crate::iso::write::DiscWriter;
 use crate::patch::dol::DolFile;
-use crate::vfs::{self, Directory, GeckoFS};
+use crate::vfs::tree::FsNode;
+use crate::vfs::{self, tree::GeckoFS};
+// use crate::vfs::Directory;
 #[cfg(feature = "progress")]
 use crate::UPDATER;
 use crate::{
@@ -109,7 +111,8 @@ fn add_file_to_iso<
 >(
     iso_path: &String,
     actual_path: &P,
-    iso: &mut Directory<R>,
+    iso: &mut GeckoFS<R>,
+    // iso: &mut Directory<R>,
     files: &mut FSSource<R2>,
 ) -> eyre::Result<()> {
     if files.is_file(actual_path) {
@@ -118,7 +121,8 @@ fn add_file_to_iso<
         }
 
         let mut file = files.get_file(actual_path)?;
-        if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
+        if let Ok(FsNode::File { file: f }) = iso.get_node_mut(iso.root, iso_path) {
+        // if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
             f.set_data(buffer.into_boxed_slice())?;
@@ -130,13 +134,18 @@ fn add_file_to_iso<
                 .to_string_lossy()
                 .into_owned();
             p.pop();
-            let dir = iso.mkdirs(p)?;
+            let dir = iso.mkdirs(iso.root, p)?;
+            // let dir = iso.mkdirs(p)?;
             let mut data = Vec::new();
             file.read_to_end(&mut data)?;
-            dir.add_file(vfs::File::new(vfs::FileDataSource::Box {
+            /* dir.add_file(vfs::File::new(vfs::FileDataSource::Box {
                 data: data.into_boxed_slice(),
                 name: file_name,
-            }));
+            })); */
+            let _ = iso.new_file(dir, vfs::FileDataSource::Box {
+                data: data.into_boxed_slice(),
+                name: file_name,
+            });
         }
     }
     Ok(())
@@ -146,7 +155,8 @@ fn add_file_to_iso<
 fn add_node_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
     iso_path: &String,
     actual_path: &PathBuf,
-    iso: &mut Directory<R>,
+    iso: &mut GeckoFS<R>,
+    // iso: &mut Directory<R>,
     files: &mut FSSource<R2>,
 ) -> eyre::Result<()> {
     if files.is_dir(actual_path) {
@@ -202,9 +212,9 @@ where
 
         for (iso_path, actual_path) in &self.config.files {
             #[cfg(target_os = "unknown")]
-            add_file_to_iso(iso_path, actual_path, disc.root_mut(), &mut self.fs)?;
+            add_file_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
             #[cfg(not(target_os = "unknown"))]
-            add_node_to_iso(iso_path, actual_path, disc.root_mut(), &mut self.fs)?;
+            add_node_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
         }
 
         let original_symbols = if let Some(framework_map) = self
@@ -212,7 +222,8 @@ where
             .src
             .map
             .as_mut()
-            .and_then(|m| disc.root_mut().resolve_node_mut(m))
+            //.and_then(|m| disc.root_mut().resolve_node_mut(m))
+            .and_then(|m| disc.get_node_mut(disc.root, m).ok())
             .and_then(|n| n.as_file_mut())
         {
             #[cfg(feature = "progress")]
@@ -317,8 +328,9 @@ where
             }
 
             let main_dol = disc
-                .sys_mut()
-                .get_file_mut("Start.dol")
+                // .sys_mut()
+                // .get_file_mut("Start.dol")
+                .get_file_mut(disc.sys, "Start.dol")
                 .context("Dol file not found")?;
 
             let original = DolFile::parse(main_dol).await?;
@@ -336,7 +348,8 @@ where
                 updater.set_title("Patching banner...".into())?;
             }
 
-            if let Ok(banner_file) = disc.root_mut().get_file_mut("opening.bnr") {
+            // if let Ok(banner_file) = disc.root_mut().get_file_mut("opening.bnr") {
+            if let Some(banner_file) = disc.get_file_mut(disc.root, "opening.bnr") {
                 // TODO Not always true
                 let is_japanese = true;
                 let mut buf = Vec::new();

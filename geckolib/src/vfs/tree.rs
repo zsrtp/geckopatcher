@@ -1,13 +1,26 @@
+#[cfg(feature = "progress")]
+use crate::UPDATER;
 use crate::{
     crypto::Unpackable,
-    iso::{FstEntry, FstNode, consts, disc::DiscType, read::DiscReader},
+    iso::{
+        FstEntry, FstEntryError, FstNode, FstNodeType,
+        consts::{self, *},
+        disc::{DiscType, align_addr},
+        read::DiscReader,
+        write::DiscWriter,
+    },
     vfs::data_source::FileDataSource,
 };
 use byteorder::{BE, ByteOrder};
-use futures::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, io};
+use futures::{
+    AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt as _, io,
+};
 use indextree::{Arena, NodeId};
+use num::ToPrimitive as _;
 #[cfg(feature = "parallel")]
-use rayon::{slice::ParallelSlice, iter::ParallelIterator};
+use rayon::{iter::ParallelIterator, slice::ParallelSlice};
+#[cfg(feature = "progress")]
+use std::sync::TryLockError;
 use std::{
     io::{ErrorKind, Seek, SeekFrom},
     path::{Path, PathBuf},
@@ -400,7 +413,11 @@ where
 #[derive(Debug, thiserror::Error)]
 pub enum FsNodeError {
     #[error("FileSystem node {0:?} is not a directory: {1:?}")]
-    NodeIsNotDirectory(String, PathBuf),
+    NodeIsNotADirectory(String, PathBuf),
+    #[error("FileSystem node is not a file: {0:?}")]
+    NodeIsNotAFile(PathBuf),
+    #[error(transparent)]
+    FsFileError(#[from] FsFileError),
 }
 
 #[derive(Debug)]
@@ -423,7 +440,7 @@ impl<R> FsNode<R> {
                 .iter()
                 .rev()
                 .collect();
-            return Err(FsNodeError::NodeIsNotDirectory(n.get().name(), path));
+            return Err(FsNodeError::NodeIsNotADirectory(n.get().name(), path));
         }
         Ok(())
     }
@@ -500,10 +517,30 @@ impl<R> FsNode<R> {
 
 #[derive(Debug, thiserror::Error)]
 pub enum GeckoFSError {
-    #[error("Error while reading the disc")]
+    #[error("Error while reading the disc {0}")]
     ReadError(#[from] std::io::Error),
     #[error(transparent)]
     FsNodeError(#[from] FsNodeError),
+    #[error(transparent)]
+    FsFileError(#[from] FsFileError),
+    #[error("File {0:?} not found")]
+    FileNotFount(PathBuf),
+    #[error("An invalid node was provided")]
+    InvalidNode,
+    #[error("The buffer too large, it will exceed the u64 limit of the cursor")]
+    BufferTooLarge,
+    #[error("The provided path {0:?} is not valid")]
+    InvalidPath(PathBuf),
+    #[error("Node {0:?} not found")]
+    NodeNotFound(PathBuf),
+    #[error(transparent)]
+    FstEntryError(#[from] FstEntryError),
+    #[error("Directory stack underflowed while serializing")]
+    DirStackUnderflow,
+    #[error(transparent)]
+    UpdaterError(#[from] eyre::Report),
+    #[error("The provided path contains a file {0}")]
+    NodeIsAFile(PathBuf),
 }
 
 pub struct GeckoFS<R> {
@@ -513,9 +550,29 @@ pub struct GeckoFS<R> {
 }
 
 impl<R> GeckoFS<R> {
-    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
+    pub fn new_directory<S: Into<String>>(
+        &mut self,
+        parent: NodeId,
+        name: S,
+    ) -> Result<NodeId, GeckoFSError> {
+        FsNode::new_directory(parent, name, &mut self.arena).map_err(Into::into)
+    }
+
+    pub fn new_file(
+        &mut self,
+        parent: NodeId,
+        data: FileDataSource<R>,
+    ) -> Result<NodeId, GeckoFSError> {
+        FsNode::new_file(parent, data, &mut self.arena).map_err(Into::into)
+    }
+
+    pub fn get_node_ref<P: AsRef<Path>>(
+        &self,
+        root: NodeId,
+        path: P,
+    ) -> Result<&FsNode<R>, GeckoFSError> {
         if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
+            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
         }
         path.as_ref()
             .iter()
@@ -530,71 +587,54 @@ impl<R> GeckoFS<R> {
             })
             .and_then(|n| self.arena.get(n))
             .map(indextree::Node::get)
-            .filter(|n| n.is_file())
+            .ok_or(GeckoFSError::NodeNotFound(path.as_ref().into()))
+    }
+
+    pub fn get_node_mut<P: AsRef<Path>>(
+        &mut self,
+        root: NodeId,
+        path: P,
+    ) -> Result<&mut FsNode<R>, GeckoFSError> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .and_then(|n| self.arena.get_mut(n))
+            .map(indextree::Node::get_mut)
+            .ok_or(GeckoFSError::NodeNotFound(path.as_ref().into()))
+    }
+
+    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
+        self.get_node_ref(root, path).ok().filter(|n| n.is_file())
     }
 
     pub fn get_file_mut<P: AsRef<Path>>(
         &mut self,
         root: NodeId,
         path: P,
-    ) -> Option<&mut FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref()
-            .iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get_mut(n))
-            .map(indextree::Node::get_mut)
+    ) -> Option<&mut FsFile<R>> {
+        self.get_node_mut(root, path)
+            .ok()
             .filter(|n| n.is_file())
+            .and_then(|f| f.as_file_mut())
     }
 
     pub fn get_dir_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref()
-            .iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get(n))
-            .map(indextree::Node::get)
-            .filter(|n| n.is_dir())
+        self.get_node_ref(root, path).ok().filter(|n| n.is_dir())
     }
 
     pub fn get_dir_mut<P: AsRef<Path>>(&mut self, root: NodeId, path: P) -> Option<&mut FsNode<R>> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return None;
-        }
-        path.as_ref()
-            .iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
-            .and_then(|n| self.arena.get_mut(n))
-            .map(indextree::Node::get_mut)
-            .filter(|n| n.is_dir())
+        self.get_node_mut(root, path).ok().filter(|n| n.is_dir())
     }
 
     #[doc = "Iterates through all entries under the provided root node using Depth First Search"]
@@ -635,6 +675,50 @@ impl<R> GeckoFS<R> {
                 .collect();
             self.arena.get(n).map(|node| (path, node.get()))
         })
+    }
+
+    fn get_file_len<P: AsRef<Path>>(&self, root: NodeId, file: P) -> Result<usize, GeckoFSError> {
+        Ok(self
+            .get_node_ref(root, file.as_ref())
+            .and_then(|n| {
+                n.as_file_ref()
+                    .ok_or(GeckoFSError::FileNotFount(file.as_ref().into()))
+            })
+            .and_then(|f| f.len().map_err(Into::into))?)
+    }
+
+    pub fn mkdirs<P: AsRef<Path>>(
+        &mut self,
+        root: NodeId,
+        path: P,
+    ) -> Result<NodeId, GeckoFSError> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
+        }
+        let mut current_node = root.clone();
+        for component in path.as_ref().iter().filter_map(|c| c.to_str()) {
+            // Check if a node exists with `component` name in the current_node
+            current_node = match current_node.children(&self.arena).find(|n| {
+                self.arena
+                    .get(*n)
+                    .map(|n| n.get())
+                    .is_some_and(|n| n.name() == component)
+            }) {
+                Some(node) => {
+                    // We found a child with `component` name. Check if it is a directory
+                    if self.arena.get(node).filter(|n| n.get().is_dir()).is_none() {
+                        return Err(GeckoFSError::NodeIsAFile(path.as_ref().into()));
+                    } else {
+                        node
+                    }
+                }
+                None => {
+                    // We didn't find any children with `component` name. Create a new one
+                    FsNode::new_directory(current_node, component, &mut self.arena)?
+                }
+            }
+        }
+        Ok(current_node)
     }
 }
 
@@ -682,6 +766,44 @@ impl<R: Clone> GeckoFS<R> {
                 Ok(())
             }
         }
+    }
+}
+
+impl<R> GeckoFS<R> {
+    /// Visits the directory tree to calculate the length of the FST table
+    fn visitor_fst_len(&self, mut acc: u64, node: NodeId) -> Result<u64, GeckoFSError> {
+        match self.arena.get(node).ok_or(GeckoFSError::InvalidNode)?.get() {
+            FsNode::Directory { name } => {
+                acc += 12 + name.len() as u64 + 1;
+
+                for child in node.children(&self.arena) {
+                    acc = self.visitor_fst_len(acc, child)?;
+                }
+            }
+            FsNode::File { file } => {
+                acc += 12 + file.name().len() as u64 + 1;
+            }
+        };
+        Ok(acc)
+    }
+}
+
+impl<R> GeckoFS<R>
+where
+    R: AsyncRead + AsyncSeek + Unpin,
+{
+    async fn read_file_to_end<P: AsRef<Path>>(
+        &mut self,
+        root: NodeId,
+        file: P,
+        buf: &mut Vec<u8>,
+    ) -> Result<usize, GeckoFSError> {
+        let f = self
+            .get_node_mut(root, file.as_ref())?
+            .as_file_mut()
+            .ok_or(FsNodeError::NodeIsNotAFile(file.as_ref().into()))?;
+        f.seek(SeekFrom::Start(0)).await?;
+        Ok(f.read_to_end(buf).await?)
     }
 }
 
@@ -854,30 +976,27 @@ where
         Ok(Self { root, sys, arena })
     }
 
-    /*/
-    pub async fn serialize<W>(&mut self, writer: &mut DiscWriter<W>) -> Result<()>
+    pub async fn serialize<W>(&mut self, writer: &mut DiscWriter<W>) -> Result<(), GeckoFSError>
     where
         W: AsyncWrite + AsyncSeek + Unpin,
     {
         crate::debug!("Serializing the FileSystem");
         let is_wii = writer.get_type() == DiscType::Wii;
         let mut pos: u64 = 0;
-        let header_size = self.iter_dfs(self.sys).find(|c| c.eq("iso.hdr"))
-            .get_file("iso.hdr")?
-            .len()? as u64;
-        let apploader_size = self.sys().get_file("AppLoader.ldr")?.len()? as u64;
+        let header_size = self.get_file_len(self.sys, "iso.hdr")? as u64;
+        let apploader_size = self.get_file_len(self.sys, "AppLoader.ldr")? as u64;
 
         // Calculate dynamic offsets
         let dol_offset_raw = header_size + apploader_size;
         let dol_offset = align_addr(dol_offset_raw, consts::DOL_ALIGNMENT_BIT);
         let dol_padding_size = dol_offset - dol_offset_raw;
-        let dol_size = self.sys().get_file("Start.dol")?.len()? as u64;
+        let dol_size = self.get_file_len(self.sys, "Start.dol")? as u64;
 
         let fst_list_offset_raw = dol_offset + dol_size;
         let fst_list_offset = align_addr(fst_list_offset_raw, consts::FST_ALIGNMENT_BIT);
         let fst_list_padding_size = fst_list_offset - fst_list_offset_raw;
 
-        let fst_len = GeckoFS::visitor_fst_len(0, &self.root) - 1;
+        let fst_len = self.visitor_fst_len(0, self.root)? - 1;
 
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
@@ -890,33 +1009,26 @@ where
 
         // Write header and app loader
         let mut buf = Vec::new();
-        self.sys_mut()
-            .get_file_mut("iso.hdr")?
-            .read_to_end(&mut buf)
-            .await?;
+        self.read_file_to_end(self.sys, "iso.hdr", &mut buf).await?;
         writer.write_all(&buf[..OFFSET_DOL_OFFSET]).await?;
         writer.write_all(&b).await?;
         writer.write_all(&buf[OFFSET_DOL_OFFSET + 0x10..]).await?;
-        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
+        pos += buf.len().to_u64().ok_or(GeckoFSError::BufferTooLarge)?;
         buf.clear();
-        self.sys_mut()
-            .get_file_mut("AppLoader.ldr")?
-            .read_to_end(&mut buf)
+        self.read_file_to_end(self.sys, "AppLoader.ldr", &mut buf)
             .await?;
         writer.write_all(&buf).await?;
-        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
+        pos += buf.len().to_u64().ok_or(GeckoFSError::BufferTooLarge)?;
         writer
             .write_all(&vec![0u8; dol_padding_size as usize])
             .await?;
         pos += dol_padding_size;
 
         buf.clear();
-        self.sys_mut()
-            .get_file_mut("Start.dol")?
-            .read_to_end(&mut buf)
+        self.read_file_to_end(self.sys, "Start.dol", &mut buf)
             .await?;
         writer.write_all(&buf).await?;
-        pos += buf.len().to_u64().ok_or(eyre::eyre!("Buffer too large"))?;
+        pos += buf.len().to_u64().ok_or(GeckoFSError::BufferTooLarge)?;
         writer
             .write_all(&vec![0u8; fst_list_padding_size as usize])
             .await?;
@@ -927,17 +1039,86 @@ where
         let mut files = Vec::new();
 
         let mut offset = fst_list_offset + fst_len;
-        for node in self.root_mut().iter_mut() {
-            let l = 0;
-            GeckoFS::visitor_fst_entries(
-                node.as_mut(),
-                &mut output_fst,
-                &mut files,
-                &mut fst_name_bank,
-                l,
-                &mut offset,
-                is_wii,
-            )?;
+        // for node in self.root_mut().iter_mut() {
+        //     let l = 0;
+        //     GeckoFS::visitor_fst_entries(
+        //         node.as_mut(),
+        //         &mut output_fst,
+        //         &mut files,
+        //         &mut fst_name_bank,
+        //         l,
+        //         &mut offset,
+        //         is_wii,
+        //     )?;
+        // }
+        let mut cur_parent_dir_index: Vec<u64> = vec![0];
+        for edge in self.root.traverse(&self.arena).filter(|e| {
+            self.root
+                != match e {
+                    indextree::NodeEdge::Start(node_id) => *node_id,
+                    indextree::NodeEdge::End(node_id) => *node_id,
+                }
+        }) {
+            match edge {
+                indextree::NodeEdge::Start(node_id) => {
+                    match self.arena.get(node_id).map(|n| n.get()) {
+                        None => return Err(GeckoFSError::InvalidNode),
+                        Some(FsNode::File { file }) => {
+                            let pos = align_addr(offset, 5);
+                            offset = pos;
+
+                            let fst_entry = FstEntry::new_file(
+                                fst_name_bank.len() as u32,
+                                pos as u64,
+                                file.len()? as u32,
+                                is_wii,
+                            )?;
+
+                            fst_name_bank.extend_from_slice(file.name().as_bytes());
+                            fst_name_bank.push(0);
+
+                            offset += file.len()? as u64;
+                            offset = align_addr(offset, 2);
+
+                            output_fst.push(fst_entry);
+                            files.push((file.clone(), pos));
+                        }
+                        Some(FsNode::Directory { name }) => {
+                            let fst_entry = FstEntry::new_directory(
+                                fst_name_bank.len() as u32,
+                                *cur_parent_dir_index
+                                    .last()
+                                    .ok_or(GeckoFSError::DirStackUnderflow)?
+                                    as u64,
+                                0,
+                                is_wii,
+                            )?;
+
+                            fst_name_bank.extend_from_slice(name.as_bytes());
+                            fst_name_bank.push(0);
+
+                            let this_dir_index = output_fst.len();
+
+                            output_fst.push(fst_entry);
+                            cur_parent_dir_index.push(this_dir_index as u64);
+                        }
+                    }
+                }
+                indextree::NodeEdge::End(node_id) => {
+                    match self.arena.get(node_id).map(|n| n.get()) {
+                        None => return Err(GeckoFSError::InvalidNode),
+                        Some(FsNode::File { .. }) => {}
+                        Some(FsNode::Directory { .. }) => {
+                            let this_dir_index = cur_parent_dir_index
+                                .pop()
+                                .ok_or(GeckoFSError::DirStackUnderflow)?
+                                as usize;
+                            let next_dir_index = output_fst.len() as u32;
+                            output_fst[this_dir_index].set_file_size_next_dir_index(next_dir_index);
+                        }
+                    }
+                }
+            }
         }
         {
             let next_dir_index = output_fst.len();
@@ -966,7 +1147,7 @@ where
         pos += fst_name_bank
             .len()
             .to_u64()
-            .ok_or(eyre::eyre!("Buffer too large"))?;
+            .ok_or(GeckoFSError::BufferTooLarge)?;
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
@@ -984,7 +1165,7 @@ where
                 updater.set_message(format!(
                     "{:<32.32} ({:>8})",
                     file.name(),
-                    human_bytes(file.len()? as f64)
+                    human_bytes::human_bytes(file.len()? as f64)
                 ))?;
             }
             let padding_size = (file_offset - offset) as usize;
@@ -1035,7 +1216,7 @@ where
         writer.close().await?;
 
         Ok(())
-    }// */
+    }
 }
 
 impl<R> GeckoFS<R>

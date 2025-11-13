@@ -14,7 +14,7 @@ use async_std::io::prelude::{ReadExt, SeekExt};
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
-use geckolib::vfs::GeckoFS;
+use geckolib::vfs::tree::GeckoFS;
 
 use crate::progress::init_gui_progress;
 

@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::io::{Read, Seek};
 use std::path::Path;
 #[cfg(not(target_os = "unknown"))]
@@ -5,13 +6,23 @@ use std::path::PathBuf;
 use zip::{read::ZipFile, ZipArchive};
 
 /// A file from an arbitrary source
-pub enum File<'a> {
-    Zip(Box<ZipFile<'a>>),
+pub enum File<'a, R: Read> {
+    Zip(Box<ZipFile<'a, R>>),
     #[cfg(not(target_os = "unknown"))]
     FS(String, std::fs::File),
 }
 
-impl File<'_> {
+impl<'a, R: Debug + Read> Debug for File<'a, R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Zip(_) => f.debug_tuple("Zip").finish(),
+            #[cfg(not(target_os = "unknown"))]
+            Self::FS(arg0, arg1) => f.debug_tuple("FS").field(arg0).field(arg1).finish(),
+        }
+    }
+}
+
+impl<R: Read> File<'_, R> {
     #[allow(dead_code)]
     pub fn name(&self) -> &str {
         match self {
@@ -22,7 +33,7 @@ impl File<'_> {
     }
 }
 
-impl Read for File<'_> {
+impl<R: Read> Read for File<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
             File::Zip(zip_file) => zip_file.read(buf),
@@ -92,7 +103,7 @@ impl<R: Read + Seek> FSSource<R> {
         }
     }
 
-    pub fn get_file<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<File<'_>> {
+    pub fn get_file<P: AsRef<Path>>(&mut self, path: P) -> eyre::Result<File<'_, R>> {
         match self {
             FSSource::Zip(zip) => Ok(File::Zip(Box::new(
                 zip.by_name(

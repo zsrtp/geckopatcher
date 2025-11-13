@@ -81,12 +81,14 @@ pub enum NodeEnum<R> {
     Directory(Directory<R>),
 }
 
-pub struct GeckoFS<R> {
+pub use tree::{GeckoFS, GeckoFSError};
+
+pub struct GeckoFSLegacy<R> {
     pub(super) root: Directory<R>,
     pub(super) system: Directory<R>,
 }
 
-impl<R> GeckoFS<R>
+impl<R> GeckoFSLegacy<R>
 where
     R: 'static,
 {
@@ -98,7 +100,7 @@ where
     }
 }
 
-impl<R> GeckoFS<R>
+impl<R> GeckoFSLegacy<R>
 where
     R: AsyncRead + AsyncSeek + Unpin + Clone + 'static,
 {
@@ -126,7 +128,7 @@ where
 
                 while *cur_index < next_dir_index - 1 {
                     *cur_index += 1;
-                    GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, reader);
+                    GeckoFSLegacy::get_dir_structure_recursive(cur_index, fst, dir, reader);
                 }
             }
             FstNode::File {
@@ -160,21 +162,21 @@ where
                 }
             );
             let mut buf = [0u8; 4];
-            GeckoFS::read_exact(
+            GeckoFSLegacy::read_exact(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_OFFSET as u64),
                 &mut buf,
             )
             .await?;
             let fst_offset = (BE::read_u32(&buf[..]) as u64) << (if is_wii { 2 } else { 0 });
-            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
+            GeckoFSLegacy::read_exact(&mut reader, SeekFrom::Start(fst_offset + 8), &mut buf).await?;
             let num_entries = BE::read_u32(&buf[..]) as usize;
             let mut fst_list_buf = vec![0u8; num_entries * FstEntry::BLOCK_SIZE];
-            GeckoFS::read_exact(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf)
+            GeckoFSLegacy::read_exact(&mut reader, SeekFrom::Start(fst_offset), &mut fst_list_buf)
                 .await?;
             let string_table_offset = num_entries as u64 * FstEntry::BLOCK_SIZE as u64;
 
-            GeckoFS::read_exact(
+            GeckoFSLegacy::read_exact(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_FST_SIZE as u64),
                 &mut buf,
@@ -182,7 +184,7 @@ where
             .await?;
             let fst_size = (BE::read_u32(&buf) as u64) << (if is_wii { 2 } else { 0 });
             let mut str_tbl_buf = vec![0u8; (fst_size - string_table_offset) as usize];
-            GeckoFS::read_exact(
+            GeckoFSLegacy::read_exact(
                 &mut reader,
                 SeekFrom::Start(string_table_offset + fst_offset),
                 &mut str_tbl_buf,
@@ -221,7 +223,7 @@ where
             })
             .collect();
 
-            GeckoFS::read_exact(
+            GeckoFSLegacy::read_exact(
                 &mut reader,
                 SeekFrom::Start(consts::OFFSET_DOL_OFFSET as u64),
                 &mut buf,
@@ -269,7 +271,7 @@ where
 
             let mut count = 1;
             while count < num_entries {
-                GeckoFS::get_dir_structure_recursive(&mut count, &fst_entries, &mut root, &reader);
+                GeckoFSLegacy::get_dir_structure_recursive(&mut count, &fst_entries, &mut root, &reader);
                 count += 1;
             }
         }
@@ -284,7 +286,7 @@ where
                 acc += 12 + dir.name().len() as u64 + 1;
 
                 for child in &dir.children {
-                    acc = GeckoFS::visitor_fst_len(acc, child.as_ref());
+                    acc = GeckoFSLegacy::visitor_fst_len(acc, child.as_ref());
                 }
             }
             NodeEnumRef::File(file) => {
@@ -320,7 +322,7 @@ where
                 output_fst.push(fst_entry);
 
                 for child in &mut dir.children {
-                    GeckoFS::visitor_fst_entries(
+                    GeckoFSLegacy::visitor_fst_entries(
                         child.as_mut(),
                         output_fst,
                         files,
@@ -378,7 +380,7 @@ where
         let fst_list_offset = align_addr(fst_list_offset_raw, consts::FST_ALIGNMENT_BIT);
         let fst_list_padding_size = fst_list_offset - fst_list_offset_raw;
 
-        let fst_len = GeckoFS::visitor_fst_len(0, &self.root) - 1;
+        let fst_len = GeckoFSLegacy::visitor_fst_len(0, &self.root) - 1;
 
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
@@ -430,7 +432,7 @@ where
         let mut offset = fst_list_offset + fst_len;
         for node in self.root_mut().iter_mut() {
             let l = 0;
-            GeckoFS::visitor_fst_entries(
+            GeckoFSLegacy::visitor_fst_entries(
                 node.as_mut(),
                 &mut output_fst,
                 &mut files,
@@ -555,7 +557,7 @@ where
     }
 }
 
-impl<R> Default for GeckoFS<R>
+impl<R> Default for GeckoFSLegacy<R>
 where
     R: AsyncRead + AsyncSeek + Unpin + 'static,
 {
@@ -564,7 +566,7 @@ where
     }
 }
 
-impl<R> Node<R> for GeckoFS<R>
+impl<R> Node<R> for GeckoFSLegacy<R>
 where
     R: AsyncRead + AsyncSeek,
 {
