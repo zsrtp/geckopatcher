@@ -1,9 +1,9 @@
 #[cfg(feature = "progress")]
-use crate::UPDATER;
+use crate::{UPDATER, iso::FstNodeType};
 use crate::{
     crypto::Unpackable,
     iso::{
-        FstEntry, FstEntryError, FstNode, FstNodeType,
+        FstEntry, FstEntryError, FstNode,
         consts::{self, *},
         disc::{DiscType, align_addr},
         read::DiscReader,
@@ -15,14 +15,19 @@ use byteorder::{BE, ByteOrder};
 use futures::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt as _, io,
 };
-use indextree::{Arena, NodeEdge, NodeId};
+use indextree::{Arena, NodeId};
 use num::ToPrimitive as _;
 #[cfg(feature = "parallel")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::{
-    borrow::{Borrow, BorrowMut}, io::{ErrorKind, Seek, SeekFrom}, ops::{Deref, DerefMut}, path::{Path, PathBuf}, sync::{Arc, Mutex}, task::{Context, Poll}
+    borrow::{Borrow, BorrowMut},
+    io::{ErrorKind, Seek, SeekFrom},
+    ops::{Deref, DerefMut},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
 };
 use thiserror::Error;
 
@@ -516,48 +521,6 @@ impl<R> FsNode<R> {
     }
 }
 
-pub struct IterPathDfs<'a, R> {
-    arena: &'a Arena<FsNode<R>>,
-    root: NodeId,
-    next: Option<NodeEdge>,
-}
-
-impl<'a, R> IterPathDfs<'a, R> {
-    fn next_of_next(&self, next: NodeEdge) -> Option<NodeEdge> {
-        if next == NodeEdge::End(self.root) {
-            return None;
-        }
-        let next_of_next = next.next_traverse(self.arena)?;
-        match next_of_next {
-            NodeEdge::Start(_) => Some(next_of_next),
-            NodeEdge::End(_) => self.next_of_next(next_of_next),
-        }
-    }
-
-    fn get_path(&self, node_id: NodeId) -> PathBuf {
-        node_id.ancestors(self.arena)
-            .filter_map(|a| self.arena.get(a).map(|a| a.get().name()))
-            .collect::<Vec<_>>()
-            .iter()
-            .rev()
-            .skip(1)
-            .collect()
-    }
-}
-
-impl<'a, R> Iterator for IterPathDfs<'a, R> {
-    type Item = PathBuf;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let next = self.next.take()?;
-        self.next = self.next_of_next(next);
-        Some(match next {
-            NodeEdge::Start(node_id) => self.get_path(node_id),
-            NodeEdge::End(node_id) => self.get_path(node_id),
-        })
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum GeckoFSError {
     #[error("Error while reading the disc {0}")]
@@ -636,7 +599,9 @@ impl<R> GeckoFS<R> {
     }
 
     pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsFile<R>> {
-        self.get_node_ref(root, path).ok().and_then(|f| f.as_file_ref())
+        self.get_node_ref(root, path)
+            .ok()
+            .and_then(|f| f.as_file_ref())
     }
 
     pub fn get_file_mut<P: AsRef<Path>>(
@@ -659,11 +624,10 @@ impl<R> GeckoFS<R> {
     }
 
     pub fn get_path(&self, node: NodeId) -> Option<PathBuf> {
-        if node.ancestors(&self.arena).any(|a| {
-            self.arena
-                .get(a)
-                .is_none()
-        }) {
+        if node
+            .ancestors(&self.arena)
+            .any(|a| self.arena.get(a).is_none())
+        {
             return None;
         }
         Some(
@@ -720,10 +684,7 @@ impl<R> GeckoFS<R> {
             .filter_map(|n| self.arena.get(n).map(|node| node.get()))
     }
 
-    pub fn enumerate_nodes_dfs(
-        &self,
-        root: NodeId,
-    ) -> impl Iterator<Item = (PathBuf, &FsNode<R>)> {
+    pub fn enumerate_nodes_dfs(&self, root: NodeId) -> impl Iterator<Item = (PathBuf, &FsNode<R>)> {
         root.descendants(&self.arena).skip(1).filter_map(move |n| {
             let path = n
                 .ancestors(&self.arena)
@@ -739,12 +700,13 @@ impl<R> GeckoFS<R> {
     }
 
     pub fn iter_path_dfs(&self, root: NodeId) -> impl Iterator<Item = PathBuf> {
-        root.descendants(&self.arena).skip(1).filter_map(|node| self.get_path(node))
+        root.descendants(&self.arena)
+            .skip(1)
+            .filter_map(|node| self.get_path(node))
     }
 
     fn get_file_len<P: AsRef<Path>>(&self, root: NodeId, file: P) -> Result<usize, GeckoFSError> {
-        self
-            .get_node_ref(root, file.as_ref())
+        self.get_node_ref(root, file.as_ref())
             .and_then(|n| {
                 n.as_file_ref()
                     .ok_or(GeckoFSError::FileNotFount(file.as_ref().into()))
@@ -790,7 +752,8 @@ impl<R> GeckoFS<R> {
     where
         P: AsRef<Path>,
     {
-        self.get_nodeid(root, path).map(|n| n.remove_subtree(&mut self.arena))
+        self.get_nodeid(root, path)
+            .map(|n| n.remove_subtree(&mut self.arena))
     }
 }
 
@@ -810,11 +773,21 @@ impl<R: Clone> GeckoFS<R> {
                 parent_dir: _,
                 next_dir_index,
             } => {
-                let dir = FsNode::new_directory(parent_dir, relative_file_name.clone(), arena.deref_mut())?;
+                let dir = FsNode::new_directory(
+                    parent_dir,
+                    relative_file_name.clone(),
+                    arena.deref_mut(),
+                )?;
 
                 while *cur_index < next_dir_index - 1 {
                     *cur_index += 1;
-                    GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, arena.deref_mut(), reader)?;
+                    GeckoFS::get_dir_structure_recursive(
+                        cur_index,
+                        fst,
+                        dir,
+                        arena.deref_mut(),
+                        reader,
+                    )?;
                 }
                 Ok(())
             }

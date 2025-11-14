@@ -12,6 +12,7 @@ use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_
 #[cfg(feature = "progress")]
 use geckolib::{UPDATER, update::UpdaterType};
 
+#[cfg(feature = "progress")]
 mod progress;
 
 use romhack::cli::{Cli, Commands};
@@ -28,6 +29,7 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
 
     let args = Cli::parse();
 
+    #[cfg(feature = "progress")]
     if !args.no_progress {
         progress::init_cli_progress();
     }
@@ -80,7 +82,7 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
             new(&name)?;
             Ok(())
         }
-        Commands::Extract {
+        Commands::Diff {
             original_game,
             patched_game,
             output,
@@ -89,13 +91,13 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
                 OpenOptions::new().read(true).open(original_game).await?,
                 OpenOptions::new().read(true).open(patched_game).await?,
                 PathBuf::from_iter(output.iter()),
-            )?;
+            ).await?;
             Ok(())
         }
     }
 }
 
-fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::Result<()> {
+async fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::Result<()> {
     use geckolib::vfs::tree::GeckoFS;
     let (original_dr, patched_dr) =
         block_on(async { futures::join!(DiscReader::new(original), DiscReader::new(patched)) });
@@ -103,14 +105,16 @@ fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::
     let (original_fs, patched_fs) =
         block_on(async { futures::join!(GeckoFS::parse(original_dr), GeckoFS::parse(patched_dr)) });
     let (original_fs, patched_fs) = (original_fs?, patched_fs?);
-    block_on(async {
-        generate_from_diff(
-            original_fs,
-            patched_fs,
-            std::fs::File::options().write(true).create(true).truncate(true).open(output)?,
-        )
-        .await
-    })?;
+    generate_from_diff(
+        original_fs,
+        patched_fs,
+        std::fs::File::options()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(output)?,
+    )
+    .await?;
     Ok(())
 }
 

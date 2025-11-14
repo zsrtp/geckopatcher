@@ -43,8 +43,8 @@ pub enum Commands {
         #[arg(value_hint = ValueHint::Other)]
         name: String,
     },
-    /// Create a patch by producing the xdiff3 of each file in the ISO
-    Extract {
+    /// Create a patch by producing the bsdiff of each file in the ISO
+    Diff {
         #[arg(value_hint = ValueHint::FilePath)]
         /// Input path to original game ISO
         original_game: PathBuf,

@@ -117,6 +117,7 @@ fn add_file_to_iso<
     files: &mut FSSource<R2>,
 ) -> eyre::Result<()> {
     if files.is_file(actual_path) {
+        #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_message(&**iso_path)?;
         }

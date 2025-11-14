@@ -1,8 +1,10 @@
+#[cfg(feature = "progress")]
+use crate::UPDATER;
+use crate::info;
 use crate::patch::dol::{DolFile, Section};
-use crate::{info, UPDATER};
-use byteorder::{ByteOrder, BE};
+use byteorder::{BE, ByteOrder};
 use goblin::archive::{Archive, Member};
-use goblin::elf::{section_header, sym, Elf, Reloc};
+use goblin::elf::{Elf, Reloc, section_header, sym};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 pub static BASIC_LIB: &[u8] = include_bytes!("../../../resources/libbasic.a");
@@ -109,7 +111,9 @@ fn resolve_symbol_to_archive<'a: 'b, 'b>(
     archives: &'b [Option<Archive<'a>>],
 ) -> Option<(usize, &'b Archive<'a>)> {
     for (index, archive) in archives.iter().enumerate() {
-        if let Some(a) = archive && a.member_of_symbol(symbol).is_some() {
+        if let Some(a) = archive
+            && a.member_of_symbol(symbol).is_some()
+        {
             return Some((index, a));
         }
     }
@@ -382,6 +386,7 @@ fn relocate_and_collect<'a>(
                             }
                             unreachable!()
                         } else {
+                            #[cfg(feature = "progress")]
                             if let Ok(mut updater) = UPDATER.lock() {
                                 let _ = updater.set_message(format!(
                                     "Game Symbol {} at addr: {:08x}",

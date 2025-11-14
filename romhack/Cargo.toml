@@ -32,7 +32,7 @@ rayon = { version = "^1.11", optional = true }
 [dev-dependencies]
 
 [features]
-default = ["parallel", "log"]
+default = ["parallel", "log", "progress"]
 log = [
     "geckolib/log",
     "dep:env_logger",

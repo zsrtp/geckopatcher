@@ -3,9 +3,9 @@ use crate::iso::consts::OFFSET_DOL_OFFSET;
 use crate::iso::disc::{align_addr, DiscType};
 use crate::iso::read::DiscReader;
 use crate::iso::write::DiscWriter;
-use crate::iso::{consts, FstEntry, FstNode, FstNodeType};
+use crate::iso::{consts, FstEntry, FstNode};
 #[cfg(feature = "progress")]
-use crate::UPDATER;
+use crate::{UPDATER, iso::FstNodeType};
 use byteorder::{ByteOrder, BE};
 use eyre::{eyre, Result};
 use futures::{io, AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
