@@ -475,7 +475,7 @@ where
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_len(write_total_size as usize)?;
-            updater.set_title("Writing virtual FileSystem".to_string())?;
+            updater.set_title("Writing virtual FileSystem")?;
             updater.set_type(crate::update::UpdaterType::Progress)?;
         }
         let mut offset = pos;
@@ -883,17 +883,17 @@ where
         crate::trace!("Start enumerate_recurse_path");
         fn traverse_depth<'b, R: 'static>(
             start: &'b dyn Node<R>,
-            start_path: &PathBuf,
+            start_path: &Path,
             stack: &mut Vec<(Box<PathBuf>, &'b File<R>)>,
         ) {
             match start.as_enum_ref() {
                 NodeEnumRef::File(file) => {
-                    let mut new_pathbuf = start_path.clone();
+                    let mut new_pathbuf = start_path.to_path_buf();
                     new_pathbuf.push(file.name());
                     stack.push((Box::new(new_pathbuf), file));
                 }
                 NodeEnumRef::Directory(dir) => {
-                    let mut new_pathbuf = start_path.clone();
+                    let mut new_pathbuf = start_path.to_path_buf();
                     new_pathbuf.push(dir.name());
                     for child in &dir.children {
                         traverse_depth(child.as_ref(), &new_pathbuf, stack);

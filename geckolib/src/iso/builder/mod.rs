@@ -1,6 +1,6 @@
 use eyre::{Context, ContextCompat as _};
 use futures::AsyncWrite;
-use futures::{prelude::*, AsyncRead, AsyncSeek};
+use futures::{AsyncRead, AsyncSeek, prelude::*};
 use std::collections::HashMap;
 #[cfg(not(target_os = "unknown"))]
 use std::fs::read;
@@ -17,6 +17,7 @@ use zip::ZipWriter;
 
 use self::fs_source::FSSource;
 use crate::config::Config;
+use crate::diff;
 use crate::patch::assembler::{Assembler, Instruction};
 use crate::patch::banner::Banner;
 
@@ -117,12 +118,12 @@ fn add_file_to_iso<
 ) -> eyre::Result<()> {
     if files.is_file(actual_path) {
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message(iso_path.to_string())?;
+            updater.set_message(&**iso_path)?;
         }
 
         let mut file = files.get_file(actual_path)?;
         if let Ok(FsNode::File { file: f }) = iso.get_node_mut(iso.root, iso_path) {
-        // if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
+            // if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
             f.set_data(buffer.into_boxed_slice())?;
@@ -142,10 +143,13 @@ fn add_file_to_iso<
                 data: data.into_boxed_slice(),
                 name: file_name,
             })); */
-            let _ = iso.new_file(dir, vfs::FileDataSource::Box {
-                data: data.into_boxed_slice(),
-                name: file_name,
-            });
+            let _ = iso.new_file(
+                dir,
+                vfs::FileDataSource::Box {
+                    data: data.into_boxed_slice(),
+                    name: file_name,
+                },
+            );
         }
     }
     Ok(())
@@ -199,15 +203,15 @@ where
     async fn build(&mut self) -> eyre::Result<()> {
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("Loading game...".into())?;
+            updater.set_message("Loading game...")?;
         }
 
         let disc = &mut self.gfs;
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Replacing files...".into())?;
+            updater.set_message("")?;
+            updater.set_title("Replacing files...")?;
         }
 
         for (iso_path, actual_path) in &self.config.files {
@@ -215,6 +219,79 @@ where
             add_file_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
             #[cfg(not(target_os = "unknown"))]
             add_node_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
+        }
+
+        if let Some(diffs) = &self.config.diffs {
+            for path in &diffs.deletions {
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    updater
+                        .set_message(format!("Removing {}", path.to_str().unwrap_or("<unk>")))?;
+                }
+                disc.rm(disc.root, path)?;
+            }
+            for (game_path, patch_path) in &diffs.changes {
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    updater.set_message(format!(
+                        "Patching {}",
+                        game_path.to_str().unwrap_or("<unk>")
+                    ))?;
+                }
+                let mut file_buf = None;
+                if let Some(file) = disc.get_file_mut(disc.root, game_path) {
+                    let mut buf = Vec::new();
+                    file.seek(std::io::SeekFrom::Start(0)).await?;
+                    file.read_to_end(&mut buf).await?;
+                    file_buf = Some(buf);
+                }
+                if let Some((file_data, patch_data)) = file_buf
+                    .iter_mut()
+                    .zip(self.fs.get_file(patch_path).ok())
+                    .next()
+                {
+                    let new_data = diff::patch(file_data, std::io::BufReader::new(patch_data))?;
+                    if let Some(f) = disc.get_file_mut(disc.root, game_path) {
+                        f.set_data(new_data.into_boxed_slice())?;
+                    }
+                }
+            }
+            if let Some(start_dol) = &diffs.dol {
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    updater.set_message("Patching Start.dol")?;
+                }
+                if let Some((patch_data, dol_file)) = self
+                    .fs
+                    .get_file(start_dol)
+                    .ok()
+                    .zip(disc.get_file_mut(disc.sys, "Start.dol"))
+                {
+                    let mut buf = Vec::new();
+                    dol_file.seek(std::io::SeekFrom::Start(0)).await?;
+                    dol_file.read_to_end(&mut buf).await?;
+                    let new_data = diff::patch(buf, std::io::BufReader::new(patch_data))?;
+                    dol_file.set_data(new_data.into_boxed_slice())?;
+                }
+            }
+            if let Some(app_loader) = &diffs.loader {
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    updater.set_message("Patching AppLoader.ldr")?;
+                }
+                if let Some((patch_data, ldr_file)) = self
+                    .fs
+                    .get_file(app_loader)
+                    .ok()
+                    .zip(disc.get_file_mut(disc.sys, "AppLoader.ldr"))
+                {
+                    let mut buf = Vec::new();
+                    ldr_file.seek(std::io::SeekFrom::Start(0)).await?;
+                    ldr_file.read_to_end(&mut buf).await?;
+                    let new_data = diff::patch(buf, std::io::BufReader::new(patch_data))?;
+                    ldr_file.set_data(new_data.into_boxed_slice())?;
+                }
+            }
         }
 
         let original_symbols = if let Some(framework_map) = self
@@ -228,24 +305,24 @@ where
         {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("Parsing symbol map...".into())?;
+                updater.set_message("")?;
+                updater.set_title("Parsing symbol map...")?;
             }
 
             framework_map::parse(framework_map).await?
         } else {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("[Warning] No symbol map specified or it wasn't found".into())?;
+                updater.set_message("")?;
+                updater.set_title("[Warning] No symbol map specified or it wasn't found")?;
             }
             HashMap::new()
         };
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Linking...".into())?;
+            updater.set_message("")?;
+            updater.set_title("Linking...")?;
         }
 
         let mut libs_to_link;
@@ -289,14 +366,14 @@ where
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Creating symbol map...".into())?;
+            updater.set_message("")?;
+            updater.set_title("Creating symbol map...")?;
         }
 
         let instructions = if let Some(patch) = self.config.src.patch.take() {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("Parsing patch".into())?;
+                updater.set_message("Parsing patch")?;
             }
 
             let mut asm = self.fs.get_file(&patch).context(format!(
@@ -323,8 +400,8 @@ where
         {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("Patching game...".into())?;
+                updater.set_message("")?;
+                updater.set_title("Patching game...")?;
             }
 
             let main_dol = disc
@@ -344,8 +421,8 @@ where
         if self.wii_disc.is_none() {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("Patching banner...".into())?;
+                updater.set_message("")?;
+                updater.set_title("Patching banner...")?;
             }
 
             // if let Ok(banner_file) = disc.root_mut().get_file_mut("opening.bnr") {
@@ -388,8 +465,8 @@ where
                 warn!("No banner to patch");
                 #[cfg(feature = "progress")]
                 if let Ok(mut updater) = UPDATER.lock() {
-                    updater.set_message("".into())?;
-                    updater.set_title("Patching banner...".into())?;
+                    updater.set_message("")?;
+                    updater.set_title("Patching banner...")?;
                 }
             }
         }
@@ -405,7 +482,7 @@ where
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Finished".into())?;
+            updater.set_title("Finished")?;
             updater.finish()?;
         }
 
@@ -421,6 +498,17 @@ pub struct PatchBuilder {
 #[cfg(not(target_os = "unknown"))]
 impl PatchBuilder {
     pub fn with_config(config: Config) -> Self {
+        Self { config }
+    }
+
+    pub async fn from_diff<R, R2>(_original: R, _patched: R2) -> Self
+    where
+        R: AsyncRead + AsyncSeek + Unpin,
+        R2: AsyncRead + AsyncSeek + Unpin,
+    {
+        let config = Config {
+            ..Default::default()
+        };
         Self { config }
     }
 }
@@ -495,7 +583,7 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("Creating patch file...".into())?;
+            updater.set_message("Creating patch file...")?;
         }
 
         crate::info!("Creating patch file");
@@ -505,8 +593,8 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Storing replacement files...".into())?;
+            updater.set_message("")?;
+            updater.set_title("Storing replacement files...")?;
         }
 
         let mut new_map = HashMap::new();
@@ -521,8 +609,8 @@ impl Builder for PatchBuilder {
 
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("Storing libraries...".into())?;
+                updater.set_message("")?;
+                updater.set_title("Storing libraries...")?;
             }
 
             let libs = &mut link.libs;
@@ -551,7 +639,7 @@ impl Builder for PatchBuilder {
 
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("Storing patch.asm...".into())?;
+                updater.set_message("Storing patch.asm...")?;
             }
 
             write_file_to_zip(&mut zip, "patch.asm", &read(path)?)?;
@@ -562,8 +650,8 @@ impl Builder for PatchBuilder {
 
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.lock() {
-                updater.set_message("".into())?;
-                updater.set_title("Storing banner...".into())?;
+                updater.set_message("")?;
+                updater.set_title("Storing banner...")?;
             }
 
             write_file_to_zip(&mut zip, "banner.dat", &read(path)?)?;
@@ -573,8 +661,8 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("".into())?;
-            updater.set_title("Storing patch index...".into())?;
+            updater.set_message("")?;
+            updater.set_title("Storing patch index...")?;
         }
 
         config.src.iso = PathBuf::new();
@@ -589,7 +677,7 @@ impl Builder for PatchBuilder {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Finished".into())?;
+            updater.set_title("Finished")?;
             updater.finish()?;
         }
 

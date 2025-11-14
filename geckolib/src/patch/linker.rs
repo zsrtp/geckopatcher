@@ -109,10 +109,8 @@ fn resolve_symbol_to_archive<'a: 'b, 'b>(
     archives: &'b [Option<Archive<'a>>],
 ) -> Option<(usize, &'b Archive<'a>)> {
     for (index, archive) in archives.iter().enumerate() {
-        if let Some(archive) = archive {
-            if archive.member_of_symbol(symbol).is_some() {
-                return Some((index, archive));
-            }
+        if let Some(a) = archive && a.member_of_symbol(symbol).is_some() {
+            return Some((index, a));
         }
     }
     None

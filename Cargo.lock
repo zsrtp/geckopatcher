@@ -1975,7 +1975,7 @@ dependencies = [
 
 [[package]]
 name = "geckolib"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "bsdiff",
@@ -1997,6 +1997,7 @@ dependencies = [
  "rayon",
  "regex",
  "rustc-demangle",
+ "semver",
  "serde",
  "serde_derive",
  "sha1_smol",
@@ -2221,7 +2222,7 @@ dependencies = [
 
 [[package]]
 name = "gui-patcher"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-std",
  "eframe",
@@ -3737,7 +3738,7 @@ dependencies = [
 
 [[package]]
 name = "romhack"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-std",
  "clap",
@@ -3852,6 +3853,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.96",
+]
+
+[[package]]
+name = "semver"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+dependencies = [
+ "serde",
+ "serde_core",
 ]
 
 [[package]]

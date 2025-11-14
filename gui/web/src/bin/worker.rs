@@ -70,7 +70,7 @@ async fn _reproc<
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_type(UpdaterType::Spinner)?;
         updater.init(Some(4))?;
-        updater.set_title("Initializing...".into())?;
+        updater.set_title("Initializing...")?;
     }
 
     log::info!("Loading virtual FileSystem...");

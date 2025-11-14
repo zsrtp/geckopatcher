@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash, Default)]
 pub enum UpdaterType {
     #[default]
@@ -70,7 +72,7 @@ impl<E, U: num::Unsigned> Updater<E, U> {
         }
     }
     pub fn finish(&mut self) -> Result<(), E> {
-        if let Some(finish_cb) = self.finish_cb {
+        if let Some(finish_cb) = self.finish_cb.take() {
             return finish_cb();
         }
         Ok(())
@@ -88,9 +90,9 @@ impl<E, U: num::Unsigned> Updater<E, U> {
         Ok(())
     }
 
-    pub fn set_message(&mut self, msg: String) -> Result<(), E> {
+    pub fn set_message<S: Deref<Target = str>>(&mut self, msg: S) -> Result<(), E> {
         if let Some(on_msg_cb) = self.on_msg_cb {
-            return on_msg_cb(msg);
+            return on_msg_cb(msg.to_owned());
         }
         Ok(())
     }
@@ -100,9 +102,9 @@ impl<E, U: num::Unsigned> Updater<E, U> {
         }
         Ok(())
     }
-    pub fn set_title(&mut self, title: String) -> Result<(), E> {
+    pub fn set_title<S: Deref<Target = str>>(&mut self, title: S) -> Result<(), E> {
         if let Some(on_title_cb) = self.on_title_cb {
-            return on_title_cb(title);
+            return on_title_cb(title.to_owned());
         }
         Ok(())
     }
@@ -211,6 +213,14 @@ impl<E, U: num::Unsigned> UpdaterBuilder<E, U> {
             on_msg_cb: self.on_msg_cb,
             on_type_cb: self.on_type_cb,
             on_title_cb: self.on_title_cb,
+        }
+    }
+}
+
+impl<E, U: num::Unsigned> Drop for Updater<E, U> {
+    fn drop(&mut self) {
+        if let Some(finish_cb) = self.finish_cb {
+            let _ = finish_cb();
         }
     }
 }

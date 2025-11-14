@@ -12,23 +12,27 @@ extern crate serde;
 extern crate sha1_smol;
 #[macro_use]
 extern crate static_assertions;
+extern crate indextree;
 extern crate regex;
 extern crate syn;
-extern crate indextree;
 
 pub mod config;
 pub mod crypto;
+pub mod diff;
 pub mod iso;
 pub(crate) mod logs;
 pub mod patch;
 #[cfg(feature = "progress")]
 pub mod update;
 pub mod vfs;
-pub mod diff;
 
+#[cfg(not(target_arch = "wasm32"))]
+use std::collections::HashMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::fs::{File, OpenOptions};
 use std::io::Read;
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{Seek, Write};
 #[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 
@@ -37,6 +41,8 @@ use config::Config;
 use eyre::Context;
 use futures::AsyncWrite;
 use futures::{AsyncRead, AsyncSeek};
+#[cfg(not(target_arch = "wasm32"))]
+use indextree::NodeId;
 use iso::builder::IsoBuilder;
 use iso::read::DiscReader;
 #[cfg(not(target_arch = "wasm32"))]
@@ -97,11 +103,7 @@ pub async fn open_config_from_fs_iso<
 ) -> eyre::Result<IsoBuilder<File, R, W>> {
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
-        updater.set_message(
-            "Parsing RomHack.toml
-        ..."
-            .into(),
-        )?;
+        updater.set_message("Parsing RomHack.toml...")?;
     }
 
     let disc_reader = DiscReader::new(input).await?;
@@ -114,6 +116,231 @@ pub async fn open_config_from_fs_iso<
         wii_disc,
         output,
     ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug)]
+struct Changes {
+    additions: Vec<PathBuf>,
+    deletions: Vec<PathBuf>,
+    changes: HashMap<PathBuf, Vec<u8>>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn extract_changes<R, R2>(
+    original: &mut GeckoFS<R>,
+    original_root: NodeId,
+    patched: &mut GeckoFS<R2>,
+    patched_root: NodeId,
+) -> Result<Changes, eyre::Report>
+where
+    R: AsyncRead + AsyncSeek + Unpin,
+    R2: AsyncRead + AsyncSeek + Unpin,
+{
+    let orig_files: Vec<_> = original
+        .iter_path_dfs(original_root)
+        .filter(|p| {
+            original
+                .get_node_ref(original_root, p)
+                .ok()
+                .is_some_and(|node| node.is_file())
+        })
+        .collect();
+    let patch_files: Vec<_> = patched
+        .iter_path_dfs(patched_root)
+        .filter(|p| {
+            patched
+                .get_node_ref(patched_root, p)
+                .ok()
+                .is_some_and(|node| node.is_file())
+        })
+        .collect();
+
+    let mut deletions: Vec<PathBuf> = Vec::new();
+    let mut changes: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+
+    for orig_path in orig_files.iter() {
+        if patch_files.contains(orig_path) {
+            #[cfg(feature = "progress")]
+            if let Ok(mut updater) = UPDATER.try_lock() {
+                updater.set_message(format!(
+                    "Checking {}",
+                    orig_path
+                        .iter()
+                        .next_back()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("<unk>")
+                ))?;
+            }
+            // File from original found in patched, check if content differs
+            use futures::{AsyncReadExt, AsyncSeekExt};
+            let mut orig_buf = Vec::new();
+            let orig_file = original
+                .get_file_mut(original_root, orig_path)
+                .expect("path is a file");
+            orig_file.seek(std::io::SeekFrom::Start(0)).await?;
+            orig_file.read_to_end(&mut orig_buf).await?;
+            let mut patch_buf = Vec::new();
+            let patch_file = patched
+                .get_file_mut(patched_root, orig_path)
+                .expect("path is a file");
+            patch_file.seek(std::io::SeekFrom::Start(0)).await?;
+            patch_file.read_to_end(&mut patch_buf).await?;
+            let diff = diff::diff(orig_buf, patch_buf)?;
+            if let Some(diff) = diff {
+                // There is a difference between the files, save it in the changes.
+                changes.insert(orig_path.clone(), diff);
+            }
+        } else {
+            // File from original not found in patched, add to delete list
+            deletions.push(orig_path.clone());
+        }
+    }
+
+    let mut additions: Vec<PathBuf> = Vec::new();
+
+    for patch_path in patch_files
+        .iter()
+        .filter(|path| !orig_files.contains(path))
+        .cloned()
+    {
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.try_lock() {
+            updater.set_message(format!(
+                "Removing {}",
+                patch_path
+                    .iter()
+                    .next_back()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("<unk>")
+            ))?;
+        }
+        // The file isn't in original, include it in the the additions
+        additions.push(patch_path);
+    }
+
+    Ok(Changes {
+        additions,
+        deletions,
+        changes,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn generate_from_diff<R, R2, RConfig>(
+    mut original: GeckoFS<R>,
+    mut patched: GeckoFS<R2>,
+    output: RConfig,
+) -> Result<(), eyre::Report>
+where
+    R: AsyncRead + AsyncSeek + Unpin,
+    R2: AsyncRead + AsyncSeek + Unpin,
+    RConfig: Write + Seek,
+{
+    use std::str::FromStr;
+
+    use zip::ZipWriter;
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.try_lock() {
+        updater.set_message("")?;
+        updater.set_title("Extracting FileSystem changes...")?;
+    }
+
+    let (original_root, patched_root) = (original.root, patched.root);
+    let root_changes =
+        extract_changes(&mut original, original_root, &mut patched, patched_root).await?;
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.try_lock() {
+        updater.set_message("")?;
+        updater.set_title("Extracting SystemData changes...")?;
+    }
+
+    let (original_sys, patched_sys) = (original.sys, patched.sys);
+    let sys_changes =
+        extract_changes(&mut original, original_sys, &mut patched, patched_sys).await?;
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.try_lock() {
+        updater.set_message("")?;
+        updater.set_title("Generating Patch File...")?;
+    }
+
+    let mut out_zip = ZipWriter::new(output);
+    let mut start_dol_change = None;
+    if let Some(dol_change) = sys_changes.changes.get(&PathBuf::from_str("Start.dol")?) {
+        out_zip.start_file("start_dol.bs.gz2", zip::write::FileOptions::<()>::default())?;
+        out_zip.write_all(dol_change)?;
+        start_dol_change = Some(PathBuf::from_str("start_dol.bs.gz2")?);
+    }
+
+    let mut apploader_change = None;
+    if let Some(ldr_change) = sys_changes
+        .changes
+        .get(&PathBuf::from_str("AppLoader.ldr")?)
+    {
+        out_zip.start_file("apploader.bs.gz2", zip::write::FileOptions::<()>::default())?;
+        out_zip.write_all(ldr_change)?;
+        apploader_change = Some(PathBuf::from_str("apploader.bs.gz2")?);
+    }
+
+    let mut changes = HashMap::new();
+    for (i, (path, diff)) in root_changes.changes.iter().enumerate() {
+        let name = format!("change{}.bs.gz2", i);
+        out_zip.start_file(&name, zip::write::FileOptions::<()>::default())?;
+        out_zip.write_all(diff)?;
+        changes.insert(path.to_owned(), PathBuf::from_str(&name)?);
+    }
+
+    let mut additions = HashMap::new();
+    for (i, file) in root_changes.additions.iter().enumerate() {
+        let name = format!("replace{}.dat", i);
+        if let Some(file_reader) = patched.get_file_mut(patched.root, file) {
+            use futures::{AsyncReadExt, AsyncSeekExt};
+
+            let mut buf = Vec::new();
+            file_reader.seek(std::io::SeekFrom::Start(0)).await?;
+            file_reader.read_to_end(&mut buf).await?;
+            out_zip.start_file(&name, zip::write::FileOptions::<()>::default())?;
+            out_zip.write_all(&buf)?;
+            additions.insert(file.to_string_lossy().into(), PathBuf::from_str(&name)?);
+        }
+    }
+
+    let config = Config {
+        info: config::Info {
+            ..Default::default()
+        },
+        src: config::Src {
+            iso: "".into(),
+            ..Default::default()
+        },
+        build: config::Build {
+            iso: "".into(),
+            ..Default::default()
+        },
+        files: additions,
+        diffs: Some(config::Diffs {
+            deletions: root_changes.deletions,
+            changes,
+            dol: start_dol_change,
+            loader: apploader_change,
+        }),
+        ..Default::default()
+    };
+    let config_data = toml::to_string(&config)?;
+    out_zip.start_file("RomHack.toml", zip::write::FileOptions::<()>::default())?;
+    out_zip.write_all(config_data.as_bytes())?;
+    out_zip.finish()?;
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.lock() {
+        updater.set_title("Finished")?;
+        updater.finish()?;
+    }
+
+    Ok(())
 }
 
 #[cfg(not(target_arch = "wasm32"))]

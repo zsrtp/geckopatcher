@@ -1,6 +1,6 @@
 [package]
 name = "geckolib"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 resolver = "2"
 
@@ -19,6 +19,7 @@ eyre = "^0.6"
 thiserror = "^2.0"
 num = "^0.4"
 toml = "^0.9"
+semver = { version = "^1.0", features = ["serde"]}
 zip = { version = "^6.0", default-features = false, features = ["deflate"] }
 regex = "^1.10"
 rustc-demangle = "^0.1"
@@ -47,7 +48,7 @@ version = "^0.5"
 features = ["libbz2-rs-sys"]
 
 [features]
-default = ["parallel"]
+default = ["parallel", "progress"]
 web = []
 parallel = ["rayon", "image/rayon"]
 log = []

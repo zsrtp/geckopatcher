@@ -49,7 +49,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     if let Ok(mut updater) = UPDATER.lock() {
         updater.set_type(UpdaterType::Spinner)?;
         updater.init(Some(4))?;
-        updater.set_title("Initializing...".into())?;
+        updater.set_title("Initializing...")?;
     }
 
     async_std::task::block_on(async {
@@ -108,7 +108,7 @@ fn main() -> color_eyre::eyre::Result<()> {
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_title("Finished".into())?;
+            updater.set_title("Finished")?;
             updater.finish()?;
         }
 

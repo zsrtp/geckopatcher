@@ -1,6 +1,6 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.2"
 authors = ["kipcode66 <kipcode66@gmail.com>"]
 edition = "2021"
 

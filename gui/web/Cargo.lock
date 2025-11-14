@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "geckolib"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes",
  "bsdiff",
@@ -688,6 +688,7 @@ dependencies = [
  "pin-project",
  "regex",
  "rustc-demangle",
+ "semver",
  "serde",
  "serde_derive",
  "sha1_smol",
@@ -1721,6 +1722,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "semver"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+dependencies = [
+ "serde",
+ "serde_core",
+]
+
+[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2172,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "web-gui-patcher"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "async-std",
  "cc",

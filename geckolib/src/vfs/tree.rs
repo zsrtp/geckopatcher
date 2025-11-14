@@ -15,17 +15,14 @@ use byteorder::{BE, ByteOrder};
 use futures::{
     AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt, AsyncWrite, AsyncWriteExt as _, io,
 };
-use indextree::{Arena, NodeId};
+use indextree::{Arena, NodeEdge, NodeId};
 use num::ToPrimitive as _;
 #[cfg(feature = "parallel")]
 use rayon::{iter::ParallelIterator, slice::ParallelSlice};
 #[cfg(feature = "progress")]
 use std::sync::TryLockError;
 use std::{
-    io::{ErrorKind, Seek, SeekFrom},
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    task::{Context, Poll},
+    borrow::{Borrow, BorrowMut}, io::{ErrorKind, Seek, SeekFrom}, ops::{Deref, DerefMut}, path::{Path, PathBuf}, sync::{Arc, Mutex}, task::{Context, Poll}
 };
 use thiserror::Error;
 
@@ -427,48 +424,52 @@ pub enum FsNode<R> {
 }
 
 impl<R> FsNode<R> {
-    fn assert_dir(node: NodeId, arena: &Arena<FsNode<R>>) -> Result<(), FsNodeError> {
+    fn assert_dir<A: Deref<Target = Arena<FsNode<R>>>>(
+        node: NodeId,
+        arena: A,
+    ) -> Result<(), FsNodeError> {
         // First, check the parent is a directory
         if let Some(n) = arena.get(node)
             && let FsNode::File { .. } = n.get()
         {
             let path = node
-                .ancestors(&arena)
+                .ancestors(arena.borrow())
                 .filter_map(|n| arena.get(n))
                 .map(|n| n.get().name())
                 .collect::<Vec<_>>()
                 .iter()
                 .rev()
+                .skip(1)
                 .collect();
             return Err(FsNodeError::NodeIsNotADirectory(n.get().name(), path));
         }
         Ok(())
     }
 
-    pub fn new_file(
+    pub fn new_file<A: DerefMut<Target = Arena<FsNode<R>>>>(
         parent: NodeId,
         data: FileDataSource<R>,
-        arena: &mut Arena<FsNode<R>>,
+        mut arena: A,
     ) -> Result<NodeId, FsNodeError> {
         // First, check the parent is a directory
-        Self::assert_dir(parent, &arena)?;
+        Self::assert_dir(parent, arena.deref())?;
         let id = parent.append_value(
             Self::File {
                 file: FsFile::new(data),
             },
-            arena,
+            arena.borrow_mut(),
         );
         Ok(id)
     }
 
-    pub fn new_directory<S: Into<String>>(
+    pub fn new_directory<S: Into<String>, A: DerefMut<Target = Arena<FsNode<R>>>>(
         parent: NodeId,
         name: S,
-        arena: &mut Arena<FsNode<R>>,
+        mut arena: A,
     ) -> Result<NodeId, FsNodeError> {
         // First, check the parent is a directory
-        Self::assert_dir(parent, &arena)?;
-        let id = parent.append_value(Self::Directory { name: name.into() }, arena);
+        Self::assert_dir(parent, arena.deref())?;
+        let id = parent.append_value(Self::Directory { name: name.into() }, arena.borrow_mut());
         Ok(id)
     }
 
@@ -515,6 +516,48 @@ impl<R> FsNode<R> {
     }
 }
 
+pub struct IterPathDfs<'a, R> {
+    arena: &'a Arena<FsNode<R>>,
+    root: NodeId,
+    next: Option<NodeEdge>,
+}
+
+impl<'a, R> IterPathDfs<'a, R> {
+    fn next_of_next(&self, next: NodeEdge) -> Option<NodeEdge> {
+        if next == NodeEdge::End(self.root) {
+            return None;
+        }
+        let next_of_next = next.next_traverse(self.arena)?;
+        match next_of_next {
+            NodeEdge::Start(_) => Some(next_of_next),
+            NodeEdge::End(_) => self.next_of_next(next_of_next),
+        }
+    }
+
+    fn get_path(&self, node_id: NodeId) -> PathBuf {
+        node_id.ancestors(self.arena)
+            .filter_map(|a| self.arena.get(a).map(|a| a.get().name()))
+            .collect::<Vec<_>>()
+            .iter()
+            .rev()
+            .skip(1)
+            .collect()
+    }
+}
+
+impl<'a, R> Iterator for IterPathDfs<'a, R> {
+    type Item = PathBuf;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next = self.next.take()?;
+        self.next = self.next_of_next(next);
+        Some(match next {
+            NodeEdge::Start(node_id) => self.get_path(node_id),
+            NodeEdge::End(node_id) => self.get_path(node_id),
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum GeckoFSError {
     #[error("Error while reading the disc {0}")]
@@ -541,6 +584,8 @@ pub enum GeckoFSError {
     UpdaterError(#[from] eyre::Report),
     #[error("The provided path contains a file {0}")]
     NodeIsAFile(PathBuf),
+    #[error(transparent)]
+    PoisonError(eyre::Report),
 }
 
 pub struct GeckoFS<R> {
@@ -571,20 +616,8 @@ impl<R> GeckoFS<R> {
         root: NodeId,
         path: P,
     ) -> Result<&FsNode<R>, GeckoFSError> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
-        }
-        path.as_ref()
-            .iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
+        self.get_nodeid(root, path.as_ref())
+            .ok()
             .and_then(|n| self.arena.get(n))
             .map(indextree::Node::get)
             .ok_or(GeckoFSError::NodeNotFound(path.as_ref().into()))
@@ -595,27 +628,15 @@ impl<R> GeckoFS<R> {
         root: NodeId,
         path: P,
     ) -> Result<&mut FsNode<R>, GeckoFSError> {
-        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
-            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
-        }
-        path.as_ref()
-            .iter()
-            .filter_map(|c| c.to_str())
-            .try_fold(root, |node, c| {
-                node.children(&self.arena).find(|ch| {
-                    self.arena
-                        .get(*ch)
-                        .map(|n| n.get())
-                        .is_some_and(|n| n.name() == c)
-                })
-            })
+        self.get_nodeid(root, path.as_ref())
+            .ok()
             .and_then(|n| self.arena.get_mut(n))
             .map(indextree::Node::get_mut)
             .ok_or(GeckoFSError::NodeNotFound(path.as_ref().into()))
     }
 
-    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsNode<R>> {
-        self.get_node_ref(root, path).ok().filter(|n| n.is_file())
+    pub fn get_file_ref<P: AsRef<Path>>(&self, root: NodeId, path: P) -> Option<&FsFile<R>> {
+        self.get_node_ref(root, path).ok().and_then(|f| f.as_file_ref())
     }
 
     pub fn get_file_mut<P: AsRef<Path>>(
@@ -637,54 +658,98 @@ impl<R> GeckoFS<R> {
         self.get_node_mut(root, path).ok().filter(|n| n.is_dir())
     }
 
+    pub fn get_path(&self, node: NodeId) -> Option<PathBuf> {
+        if node.ancestors(&self.arena).any(|a| {
+            self.arena
+                .get(a)
+                .is_none()
+        }) {
+            return None;
+        }
+        Some(
+            node.ancestors(&self.arena)
+                .filter_map(|a| self.arena.get(a).map(|a| a.get()))
+                .map(|a| a.name())
+                .collect::<Vec<_>>()
+                .iter()
+                .rev()
+                .skip(1)
+                .collect(),
+        )
+    }
+
+    pub fn get_nodeid<P: AsRef<Path>>(
+        &self,
+        root: NodeId,
+        path: P,
+    ) -> Result<NodeId, GeckoFSError> {
+        if path.as_ref().iter().any(|c| c.to_str().is_none()) {
+            return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
+        }
+        path.as_ref()
+            .iter()
+            .filter_map(|c| c.to_str())
+            .try_fold(root, |node, c| {
+                node.children(&self.arena).find(|ch| {
+                    self.arena
+                        .get(*ch)
+                        .map(|n| n.get())
+                        .is_some_and(|n| n.name() == c)
+                })
+            })
+            .ok_or(GeckoFSError::NodeNotFound(path.as_ref().into()))
+    }
+
     #[doc = "Iterates through all entries under the provided root node using Depth First Search"]
     pub fn iter_dfs(&self, root: NodeId) -> impl Iterator<Item = PathBuf> {
-        let root_clone = root.clone();
         root.descendants(&self.arena).skip(1).map(move |d| {
             d.ancestors(&self.arena)
-                .filter(|a| *a != root_clone)
                 .filter_map(|a| self.arena.get(a))
                 .map(|a| a.get().name())
                 .collect::<Vec<_>>()
                 .iter()
                 .rev()
+                .skip(1)
                 .collect()
         })
     }
 
-    pub fn iter_nodes_dfs<'a>(&'a self, root: NodeId) -> impl Iterator<Item = &'a FsNode<R>> {
+    pub fn iter_nodes_dfs(&self, root: NodeId) -> impl Iterator<Item = &FsNode<R>> {
         root.descendants(&self.arena)
             .skip(1)
             .filter_map(|n| self.arena.get(n).map(|node| node.get()))
     }
 
-    pub fn enumerate_nodes_dfs<'a>(
-        &'a self,
+    pub fn enumerate_nodes_dfs(
+        &self,
         root: NodeId,
-    ) -> impl Iterator<Item = (PathBuf, &'a FsNode<R>)> {
-        let root_clone = root.clone();
+    ) -> impl Iterator<Item = (PathBuf, &FsNode<R>)> {
         root.descendants(&self.arena).skip(1).filter_map(move |n| {
             let path = n
                 .ancestors(&self.arena)
-                .filter(|a| *a != root_clone)
                 .filter_map(|a| self.arena.get(a))
                 .map(|a| a.get().name())
                 .collect::<Vec<_>>()
                 .iter()
                 .rev()
+                .skip(1)
                 .collect();
             self.arena.get(n).map(|node| (path, node.get()))
         })
     }
 
+    pub fn iter_path_dfs(&self, root: NodeId) -> impl Iterator<Item = PathBuf> {
+        root.descendants(&self.arena).skip(1).filter_map(|node| self.get_path(node))
+    }
+
     fn get_file_len<P: AsRef<Path>>(&self, root: NodeId, file: P) -> Result<usize, GeckoFSError> {
-        Ok(self
+        self
             .get_node_ref(root, file.as_ref())
             .and_then(|n| {
                 n.as_file_ref()
                     .ok_or(GeckoFSError::FileNotFount(file.as_ref().into()))
             })
-            .and_then(|f| f.len().map_err(Into::into))?)
+            .and_then(|f| f.len().map_err(Into::into))
     }
 
     pub fn mkdirs<P: AsRef<Path>>(
@@ -695,7 +760,7 @@ impl<R> GeckoFS<R> {
         if path.as_ref().iter().any(|c| c.to_str().is_none()) {
             return Err(GeckoFSError::InvalidPath(path.as_ref().into()));
         }
-        let mut current_node = root.clone();
+        let mut current_node = root;
         for component in path.as_ref().iter().filter_map(|c| c.to_str()) {
             // Check if a node exists with `component` name in the current_node
             current_node = match current_node.children(&self.arena).find(|n| {
@@ -720,14 +785,21 @@ impl<R> GeckoFS<R> {
         }
         Ok(current_node)
     }
+
+    pub fn rm<P>(&mut self, root: NodeId, path: P) -> Result<(), GeckoFSError>
+    where
+        P: AsRef<Path>,
+    {
+        self.get_nodeid(root, path).map(|n| n.remove_subtree(&mut self.arena))
+    }
 }
 
 impl<R: Clone> GeckoFS<R> {
-    fn get_dir_structure_recursive(
+    fn get_dir_structure_recursive<A: DerefMut<Target = Arena<FsNode<R>>>>(
         cur_index: &mut usize,
         fst: &Vec<FstNode>,
         parent_dir: NodeId,
-        arena: &mut Arena<FsNode<R>>,
+        mut arena: A,
         reader: &DiscReader<R>,
     ) -> Result<(), GeckoFSError> {
         let entry = &fst[*cur_index];
@@ -738,11 +810,11 @@ impl<R: Clone> GeckoFS<R> {
                 parent_dir: _,
                 next_dir_index,
             } => {
-                let dir = FsNode::new_directory(parent_dir, relative_file_name.clone(), arena)?;
+                let dir = FsNode::new_directory(parent_dir, relative_file_name.clone(), arena.deref_mut())?;
 
                 while *cur_index < next_dir_index - 1 {
                     *cur_index += 1;
-                    GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, arena, reader)?;
+                    GeckoFS::get_dir_structure_recursive(cur_index, fst, dir, arena.deref_mut(), reader)?;
                 }
                 Ok(())
             }
@@ -1153,7 +1225,7 @@ where
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
             updater.set_len(write_total_size as usize)?;
-            updater.set_title("Writing virtual FileSystem".to_string())?;
+            updater.set_title("Writing virtual FileSystem")?;
             updater.set_type(crate::update::UpdaterType::Progress)?;
         }
         let mut offset = pos;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use semver::Version;
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Default, Debug)]
@@ -33,6 +34,7 @@ pub struct Info {
     pub full_developer_name: Option<String>,
     pub description: Option<String>,
     pub image: Option<PathBuf>,
+    pub version: Option<Version>,
 }
 
 #[derive(Deserialize, Serialize, Default, Debug)]
@@ -50,6 +52,13 @@ pub struct Link {
 
 #[derive(Deserialize, Serialize, Default, Debug, Clone)]
 pub struct Diffs {
-    pub deletes: Vec<PathBuf>,
+    /// List of the paths in the game's filesystem to remove.
+    pub deletions: Vec<PathBuf>,
+    /// List of pairs of paths in the game's file system to modify, and the paths
+    /// within the patch archive to the gzip2 compressed bsdiff file for the changes to apply to the file.
     pub changes: HashMap<PathBuf, PathBuf>,
+    /// Path within the patch archive to the gzip2 compressed bsdiff file for the changes to apply to the main DOL of the game.
+    pub dol: Option<PathBuf>,
+    /// Path within the patch archive to the gzip2 compressed bsdiff file for the changes to apply to the AppLoader of the game.
+    pub loader: Option<PathBuf>
 }

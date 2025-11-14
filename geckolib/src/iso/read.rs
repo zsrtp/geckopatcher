@@ -134,27 +134,25 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
         .iter()
         .enumerate()
         .for_each(|(i, p)| crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset));
-    if !ret_vec.is_empty() {
-        if let Some(data_idx) = data_idx {
-            crate::trace!(
-                "(cert_offset: {:#08X})",
-                ret_vec[data_idx].header.cert_offset
-            );
-            crate::trace!(
-                "(data_offset: {:#08X})",
-                ret_vec[data_idx].header.data_offset
-            );
-            crate::trace!(
-                "(data_size: {:#08X}; decrypted size: {:#08X})",
-                ret_vec[data_idx].header.data_size,
-                to_virtual_addr(ret_vec[data_idx].header.data_size)
-            );
-            return Ok(WiiPartitions {
-                data_idx,
-                part_info: part_info.clone(),
-                partitions: ret_vec,
-            });
-        }
+    if !ret_vec.is_empty() && let Some(data_idx) = data_idx {
+        crate::trace!(
+            "(cert_offset: {:#08X})",
+            ret_vec[data_idx].header.cert_offset
+        );
+        crate::trace!(
+            "(data_offset: {:#08X})",
+            ret_vec[data_idx].header.data_offset
+        );
+        crate::trace!(
+            "(data_size: {:#08X}; decrypted size: {:#08X})",
+            ret_vec[data_idx].header.data_size,
+            to_virtual_addr(ret_vec[data_idx].header.data_size)
+        );
+        return Ok(WiiPartitions {
+            data_idx,
+            part_info: part_info.clone(),
+            partitions: ret_vec,
+        });
     }
     crate::warn!("No Game Partition found!");
     Err(WiiCryptoError::NoGamePartition.into())
@@ -199,27 +197,25 @@ fn get_partitions_sync<R: std::io::Read + std::io::Seek>(
         .iter()
         .enumerate()
         .for_each(|(i, p)| crate::debug!("[#{}] offset: {:#X?}", i, p.part_offset));
-    if !ret_vec.is_empty() {
-        if let Some(data_idx) = data_idx {
-            crate::trace!(
-                "(cert_offset: {:#08X})",
-                ret_vec[data_idx].header.cert_offset
-            );
-            crate::trace!(
-                "(data_offset: {:#08X})",
-                ret_vec[data_idx].header.data_offset
-            );
-            crate::trace!(
-                "(data_size: {:#08X}; decrypted size: {:#08X})",
-                ret_vec[data_idx].header.data_size,
-                to_virtual_addr(ret_vec[data_idx].header.data_size)
-            );
-            return Ok(WiiPartitions {
-                data_idx,
-                part_info: part_info.clone(),
-                partitions: ret_vec,
-            });
-        }
+    if !ret_vec.is_empty() && let Some(data_idx) = data_idx {
+        crate::trace!(
+            "(cert_offset: {:#08X})",
+            ret_vec[data_idx].header.cert_offset
+        );
+        crate::trace!(
+            "(data_offset: {:#08X})",
+            ret_vec[data_idx].header.data_offset
+        );
+        crate::trace!(
+            "(data_size: {:#08X}; decrypted size: {:#08X})",
+            ret_vec[data_idx].header.data_size,
+            to_virtual_addr(ret_vec[data_idx].header.data_size)
+        );
+        return Ok(WiiPartitions {
+            data_idx,
+            part_info: part_info.clone(),
+            partitions: ret_vec,
+        });
     }
     crate::warn!("No Game Partition found!");
     Err(WiiCryptoError::NoGamePartition.into())
@@ -413,7 +409,7 @@ impl WiiDiscReaderVirtualIndices {
     fn new(cursor: u64, read_size: u64) -> Self {
         // The "virtual" start and end, in the sense that they are the positions within the decrypted partition.
         let vstart = cursor;
-        let vend = vstart + read_size as u64;
+        let vend = vstart + read_size;
         let start_blk_idx = vstart / consts::WII_SECTOR_DATA_SIZE;
         let end_blk_idx = (vend - 1) / consts::WII_SECTOR_DATA_SIZE;
         Self {
@@ -450,7 +446,10 @@ where
         let read_size = std::cmp::min(buf.len() as u64, decrypted_size - state.cursor);
         let WiiDiscReaderVirtualIndices {
             vstart,
+            #[cfg(feature = "log")]
             vend,
+            #[cfg(not(feature = "log"))]
+            vend: _,
             start_blk_idx,
             end_blk_idx,
         } = WiiDiscReaderVirtualIndices::new(state.cursor, read_size);
