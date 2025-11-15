@@ -432,36 +432,48 @@ where
                 let is_japanese = true;
                 let mut buf = Vec::new();
                 banner_file.read_to_end(&mut buf).await?;
-                let mut banner =
-                    Banner::parse(is_japanese, &buf).context("Couldn't parse the banner")?;
-
-                if let Some(game_name) = self.config.info.game_name.take() {
-                    banner.game_name = game_name;
+                match Banner::parse(is_japanese, &buf) {
+                    Ok(mut banner) => {
+                        if let Some(game_name) = self.config.info.game_name.take() {
+                            banner.game_name = game_name;
+                        }
+                        if let Some(developer_name) = self.config.info.developer_name.take() {
+                            banner.developer_name = developer_name;
+                        }
+                        if let Some(full_game_name) = self.config.info.full_game_name.take() {
+                            banner.full_game_name = full_game_name;
+                        }
+                        if let Some(full_developer_name) =
+                            self.config.info.full_developer_name.take()
+                        {
+                            banner.full_developer_name = full_developer_name;
+                        }
+                        if let Some(game_description) = self.config.info.description.take() {
+                            banner.game_description = game_description;
+                        }
+                        if let Some(image_path) = self.config.info.image.take() {
+                            let image = {
+                                let mut img_file = self.fs.get_file(image_path)?;
+                                let mut buf = Vec::new();
+                                img_file.read_to_end(&mut buf)?;
+                                image::load_from_memory(&buf)
+                                    .context("Couldn't open the banner replacement image")?
+                                    .to_rgba8()
+                            };
+                            banner.image.copy_from_slice(&image);
+                        }
+                        banner_file.set_data(banner.to_bytes(is_japanese).to_vec().into())?;
+                    }
+                    Err(err) =>
+                    {
+                        #[cfg(feature = "progress")]
+                        if let Ok(mut updater) = UPDATER.lock() {
+                            updater.set_message("")?;
+                            updater
+                                .set_title(format!("[Warning] Couldn't parse the banner file ({}). Ignoring", err.to_string()))?;
+                        }
+                    }
                 }
-                if let Some(developer_name) = self.config.info.developer_name.take() {
-                    banner.developer_name = developer_name;
-                }
-                if let Some(full_game_name) = self.config.info.full_game_name.take() {
-                    banner.full_game_name = full_game_name;
-                }
-                if let Some(full_developer_name) = self.config.info.full_developer_name.take() {
-                    banner.full_developer_name = full_developer_name;
-                }
-                if let Some(game_description) = self.config.info.description.take() {
-                    banner.game_description = game_description;
-                }
-                if let Some(image_path) = self.config.info.image.take() {
-                    let image = {
-                        let mut img_file = self.fs.get_file(image_path)?;
-                        let mut buf = Vec::new();
-                        img_file.read_to_end(&mut buf)?;
-                        image::load_from_memory(&buf)
-                            .context("Couldn't open the banner replacement image")?
-                            .to_rgba8()
-                    };
-                    banner.image.copy_from_slice(&image);
-                }
-                banner_file.set_data(banner.to_bytes(is_japanese).to_vec().into())?;
             } else {
                 warn!("No banner to patch");
                 #[cfg(feature = "progress")]

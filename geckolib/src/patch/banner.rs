@@ -80,6 +80,9 @@ fn write_string(is_japanese: bool, text: &str, bytes: &mut [u8]) {
 
 impl Banner {
     pub fn parse(is_japanese: bool, data: &[u8]) -> eyre::Result<Self> {
+        if data.len() < OFFSET_GAME_DESCRIPTION + DESCRIPTION_LEN {
+            return Err(eyre::eyre!("Invalid banner size"));
+        }
         let mut magic = [0; MAGIC_LEN];
         magic.copy_from_slice(&data[..MAGIC_LEN]);
         if &magic != b"BNR1" && &magic != b"BNR2" {
