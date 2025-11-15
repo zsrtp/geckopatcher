@@ -26,6 +26,9 @@ extern "C" {
     pub async fn get_save() -> Result<JsValue, JsValue>;
     #[wasm_bindgen(js_name = "downloadIso", catch)]
     pub async fn download_iso(is_wii: String) -> Result<(), JsValue>;
+    #[wasm_bindgen(js_name = "fetchMappings", catch)]
+    pub async fn fetch_mappings() -> Result<(), JsValue>;
+    #[cfg(not(feature = "generic_patch"))]
     #[wasm_bindgen(js_name = "getMapping")]
     pub fn get_mapping(buf: &[u8]) -> String;
 }
@@ -55,6 +58,10 @@ impl Component for App {
         web_sys::console::info_1(&"Initializing application...".into());
         let progress_callback: Callback<Message> = ctx.link().callback(|msg| msg);
         progress_callback.emit(Message::PatchProgress(Some("Starting Application...".into()), None));
+        #[cfg(not(feature = "generic_patch"))]
+        wasm_bindgen_futures::spawn_local(async {
+            let _ = fetch_mappings().await;
+        });
 
         let worker_options = WorkerOptions::new();
         worker_options.set_type(web_sys::WorkerType::Module);
@@ -250,6 +257,7 @@ pub struct Patch {
 pub struct PatchInputProps {
     pub callback: Callback<Option<Patch>>,
     pub disabled: Option<bool>,
+    #[cfg(not(feature = "generic_patch"))]
     pub version: Option<String>,
 }
 
@@ -478,12 +486,20 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     let tpgz_link = html! {
         <></>
     };
+    #[cfg(not(feature = "generic_patch"))]
+    let patch_input = html! {
+        <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().map(|(_,version)| get_mapping(version))} />
+    };
+    #[cfg(feature = "generic_patch")]
+    let patch_input = html! {
+        <PatchInput callback={patch_input_callback} disabled={disabled}/>
+    };
     html! {
         <>
             <fieldset id="main_form">
                 <legend>{"ISO Patcher"}</legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
-                <PatchInput callback={patch_input_callback} disabled={disabled} version={selected_iso.as_ref().map(|(_,version)| get_mapping(version))} />
+                {patch_input}
                 <span data-tooltip="Nothing is uploaded, processing is done on your device">{"🛈"}</span>
                 <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>

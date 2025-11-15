@@ -80,9 +80,12 @@
             }
             return ret;
         };
-        fetchMappings().then((m) => {
-            mappings = m;
-        });
+
+        window["fetchMappings"] = () => {
+            fetchMappings().then((m) => {
+                mappings = m;
+            });
+        };
 
         function equalArray (buf1, buf2) {
             if (buf1.byteLength != buf2.byteLength) return false;
