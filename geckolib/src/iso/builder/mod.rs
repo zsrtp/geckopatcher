@@ -431,6 +431,7 @@ where
                 // TODO Not always true
                 let is_japanese = true;
                 let mut buf = Vec::new();
+                banner_file.seek(std::io::SeekFrom::Start(0)).await?;
                 banner_file.read_to_end(&mut buf).await?;
                 match Banner::parse(is_japanese, &buf) {
                     Ok(mut banner) => {
