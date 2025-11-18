@@ -137,7 +137,7 @@ where
     R: AsyncRead + AsyncSeek + Unpin,
     R2: AsyncRead + AsyncSeek + Unpin,
 {
-    let orig_files: Vec<_> = original
+    let mut orig_files: Vec<_> = original
         .iter_path_dfs(original_root)
         .filter(|p| {
             original
@@ -146,7 +146,7 @@ where
                 .is_some_and(|node| node.is_file())
         })
         .collect();
-    let patch_files: Vec<_> = patched
+    let mut patch_files: Vec<_> = patched
         .iter_path_dfs(patched_root)
         .filter(|p| {
             patched
@@ -155,6 +155,8 @@ where
                 .is_some_and(|node| node.is_file())
         })
         .collect();
+    orig_files.sort();
+    patch_files.sort();
 
     let mut deletions: Vec<PathBuf> = Vec::new();
     let mut changes: HashMap<PathBuf, Vec<u8>> = HashMap::new();
@@ -207,7 +209,7 @@ where
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.try_lock() {
             updater.set_message(format!(
-                "Removing {}",
+                "Adding {}",
                 patch_path
                     .iter()
                     .next_back()
@@ -304,7 +306,14 @@ where
             file_reader.read_to_end(&mut buf).await?;
             out_zip.start_file(&name, zip::write::FileOptions::<()>::default())?;
             out_zip.write_all(&buf)?;
-            additions.insert(file.to_string_lossy().into(), PathBuf::from_str(&name)?);
+            additions.insert(
+                itertools::Itertools::intersperse(
+                    file.iter().map(|c| c.to_string_lossy().to_string()),
+                    "/".into(),
+                )
+                .collect(),
+                PathBuf::from_str(&name)?,
+            );
         }
     }
 
