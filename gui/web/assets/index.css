@@ -1,5 +1,7 @@
 :root {
     color-scheme: light dark;
+    --forground-color: #000;
+    --background-color: #fff;
 }
 
 html {
@@ -11,7 +13,8 @@ html {
 body {
     /* Light mode background color for what is not covered by the egui canvas,
     or where the egui canvas is translucent. */
-    background: #fff;
+    background: var(--background-color);
+    color: var(--forground-color);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -80,17 +83,18 @@ body {
 }
 
 @media (prefers-color-scheme: dark) {
-    body {
-        /* Dark mode background color for what is not covered by the egui canvas,
-        or where the egui canvas is translucent. */
-        background: #000;
-        color: #fff;
+    :root {
+        --forground-color: #fff;
+        --background-color: #111;
     }
 
     [data-tooltip]:hover::after {
         background: oklch(20.19% 0 0);
     }
 
+    #main_form {
+        background-color: oklch(from var(--background-color) 0.3 c h);
+    }
 }
 
 @media (prefers-color-scheme: light) {
@@ -116,6 +120,11 @@ body {
     text-align: end;
     gap: 5px 5px;
     align-items: center;
+    border: none;
+    border-radius: 5px;
+    box-shadow: oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 1px 2px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 2px 4px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 4px 8px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 8px 16px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 16px 32px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 32px 64px, inset oklch(from var(--background-color) calc(l * 0.3) c h / 0.4) -0px -4px 0px;
+    padding-bottom: 14px;
+    /*box-shadow: 0px 15px 30px oklch(from var(--background-color) calc(l * 0.2) c h);*/
 }
 
 .spinner {
@@ -123,7 +132,6 @@ body {
     justify-content: center;
     overflow-y: hidden;
     align-content: center;
-
 }
 
 progress {
