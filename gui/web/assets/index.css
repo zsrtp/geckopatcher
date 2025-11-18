@@ -1,7 +1,16 @@
+@property --box-height {
+  syntax: '<number>'; /* <- defined as type number for the transition to work */
+  initial-value: 0.0;
+  inherits: true;
+}
+
 :root {
     color-scheme: light dark;
     --forground-color: #000;
     --background-color: #fff;
+    --box-height: 1.0;
+    animation: 2s cubic-bezier(.7,0,.2,1) 0s 1 popup-box;
+    transition: --box-height 1s;
 }
 
 html {
@@ -93,13 +102,22 @@ body {
     }
 
     #main_form {
-        background-color: oklch(from var(--background-color) 0.3 c h);
+        background-color: oklch(from var(--background-color) clamp(0.0, calc((1 - var(--box-height)) * l + var(--box-height) * 0.3), 0.3) c h);
     }
 }
 
 @media (prefers-color-scheme: light) {
     .gh-img {
         filter: invert(1);
+    }
+}
+
+@keyframes popup-box {
+    0% {
+        --box-height: 0.0;
+    }
+    100% {
+        --box-height: 1.0;
     }
 }
 
@@ -114,6 +132,8 @@ body {
 }
 
 #main_form {
+    --shadow-opacity: clamp(0.0, calc(0.2 * var(--box-height)), 0.2);
+    --box-pixel-height: 4px;
     display: grid;
     grid-template-columns: auto 1fr;
     grid-template-rows: 0fr 0fr 0fr;
@@ -122,8 +142,8 @@ body {
     align-items: center;
     border: none;
     border-radius: 5px;
-    box-shadow: oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 1px 2px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 2px 4px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 4px 8px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 8px 16px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 16px 32px, oklch(from var(--background-color) calc(l * 0.2) c h / 0.2) 0px 32px 64px, inset oklch(from var(--background-color) calc(l * 0.3) c h / 0.4) -0px -4px 0px;
-    padding-bottom: 14px;
+    box-shadow: oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 1px max(0px, calc(2px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 2px max(0px, calc(4px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 4px max(0px, calc(8px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 8px max(0px, calc(16px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 16px max(0px, calc(32px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 32px max(0px, calc(64px * var(--box-height))), inset oklch(from var(--background-color) calc(l * 0.3) c h / 0.4) 0px calc(-1 * var(--box-pixel-height) * var(--box-height)) 0px;
+    padding-bottom: calc(10px + var(--box-pixel-height) * var(--box-height));
     /*box-shadow: 0px 15px 30px oklch(from var(--background-color) calc(l * 0.2) c h);*/
 }
 
