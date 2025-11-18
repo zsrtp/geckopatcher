@@ -1,0 +1,164 @@
+:root {
+    color-scheme: light dark;
+}
+
+html {
+    /* Remove touch delay: */
+    touch-action: manipulation;
+    font-family: "Fira Mono", monospace, sans-serif;
+}
+
+body {
+    /* Light mode background color for what is not covered by the egui canvas,
+    or where the egui canvas is translucent. */
+    background: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+[data-tooltip] {
+    height: 100%;
+    text-box-trim: trim-end;
+    padding-left: .25em;
+    padding-right: .25em;
+    width: fit-content;
+    justify-self: flex-end;
+}
+
+[data-tooltip]:hover::after {
+    display: block;
+    position: absolute;
+    content: attr(data-tooltip);
+    border: 1px solid currentColor;
+    background: oklch(94.81% 0 0);
+    padding: .25em;
+    text-align: initial;
+    font-family: initial;
+}
+
+/* ---------------------------------------------- */
+/* Loading animation from https://loading.io/css/ */
+.lds-ring,
+.lds-ring div {
+    box-sizing: border-box;
+}
+.lds-ring {
+    display: inline-block;
+    position: relative;
+    width: 40px;
+    height: 40px;
+}
+.lds-ring div {
+    box-sizing: border-box;
+    display: block;
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    margin: 4px;
+    border: 4px solid currentColor;
+    border-radius: 50%;
+    animation: lds-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+    border-color: currentColor transparent transparent transparent;
+}
+.lds-ring div:nth-child(1) {
+    animation-delay: -0.45s;
+}
+.lds-ring div:nth-child(2) {
+    animation-delay: -0.3s;
+}
+.lds-ring div:nth-child(3) {
+    animation-delay: -0.15s;
+}
+@keyframes lds-ring {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    body {
+        /* Dark mode background color for what is not covered by the egui canvas,
+        or where the egui canvas is translucent. */
+        background: #000;
+        color: #fff;
+    }
+
+    [data-tooltip]:hover::after {
+        background: oklch(20.19% 0 0);
+    }
+
+}
+
+@media (prefers-color-scheme: light) {
+    .gh-img {
+        filter: invert(1);
+    }
+}
+
+/* Allow canvas to fill entire web page: */
+html,
+body {
+    overflow: hidden;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: 100%;
+    width: 100%;
+}
+
+#main_form {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    grid-template-rows: 0fr 0fr 0fr;
+    text-align: end;
+    gap: 5px 5px;
+    align-items: center;
+}
+
+.spinner {
+    display: flex;
+    justify-content: center;
+    overflow-y: hidden;
+    align-content: center;
+
+}
+
+progress {
+    height: 1.5em;
+    width: 100%;
+}
+
+.progress-container {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#links {
+    display: flex;
+    justify-content: left;
+    align-items: center;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    margin: 1em;
+}
+
+#links img {
+    width: 2em;
+    height: 2em;
+    margin-right: 1em;
+}
+
+#links a:not(:last-child) {
+    margin-right: 2em;
+}
+
+#links a {
+    display: inline-flex;
+    justify-content: center;
+    align-items: center;
+}

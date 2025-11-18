@@ -9,106 +9,8 @@
     <!-- change this to your project name -->
     <title>Web Romhack Patcher</title>
 
-    <script type="module">
-        window["hasShowSaveFilePicker"] = () => {return "showSaveFilePicker" in window;};
-        window["getPatch"] = async () => {
-            let file = null;
-            try {
-                file = (await window.showOpenFilePicker({types: [{description: "Patch file", accept:{"application/x-patch":[".patch"]}}]}))[0];
-            }
-            catch (e) {
-                console.error(e);
-            }
-            return file;
-        };
-        window["getIso"] = async () => {
-            let file = null;
-            try {
-                file = (await window.showOpenFilePicker({types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}))[0];
-            }
-            catch (e) {
-                console.error(e);
-            }
-            return file;
-        };
-        window["getSave"] = async (name) => {
-            let file = null;
-            try {
-                let suggestedName = "tpgz.iso";
-                if (name !== undefined) {
-                    suggestedName = name;
-                }
-                file = (await window.showSaveFilePicker({suggestedName, types: [{description: "CD Image", accept:{"application/x-cd-image":[".iso"]}}]}));
-            }
-            catch (e) {
-                console.error(e);
-            }
-            return file;
-        };
-        function setupDownload(file, filename) {
-            let a = document.createElement("a");
-            a.style.display = "none";
-            a.download = filename;
-            let url = window.URL.createObjectURL(file);
-            a.href = url;
-            document.body.appendChild(a);
-            a.click();
-            console.debug("Download done. Cleaning...");
-            document.body.removeChild(a);
-            window.URL.revokeObjectURL(url);
-        }
-
-        window["downloadIso"] = async (filename) => {
-            let root = await navigator.storage.getDirectory();
-            let fileHandle = await root.getFileHandle("out.iso");
-            setupDownload(await fileHandle.getFile(), filename);
-        };
-
-        let mappings = {};
-
-        async function fetchMappings() {
-            let response = await fetch("patches/mapping.json");
-            let mapping = await response.json();
-            let ret = {};
-            let maxLength = Object.entries(mapping).reduce((acc, curr) => (acc > curr[0].length ? acc : curr[0].length), 0)
-            for (let key in mapping) {
-                let val = new Uint8Array(maxLength);
-                for (let i = 0; i < Math.min(maxLength, key.length); i++) {
-                    val[i] = key.charCodeAt(i);
-                }
-                ret[mapping[key]] = val;
-            }
-            return ret;
-        };
-
-        window["fetchMappings"] = () => {
-            fetchMappings().then((m) => {
-                mappings = m;
-            });
-        };
-
-        function equalArray (buf1, buf2) {
-            if (buf1.byteLength != buf2.byteLength) return false;
-            var dv1 = new Int8Array(buf1);
-            var dv2 = new Int8Array(buf2);
-            for (var i = 0 ; i != buf1.byteLength ; i++)
-            {
-                if (dv1[i] != dv2[i]) return false;
-            }
-            return true;
-        }
-
-        window["getMapping"] = (buf) => {
-            let val = Object.entries(mappings).find(([key, val]) => {
-                if (equalArray(buf, val)) {
-                    return key;
-                }
-            });
-            let ret = (val) ? val[0] : "unkown";
-            return ret;
-        };
-    </script>
-    <script src="tracing_hooks.js" type="module"></script>
+    <script data-trunk type="module" src="assets/index.js"></script>
+    <!-- <script data-trunk src="assets/tracing_hooks.js" type="module"></script> -->
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
@@ -116,9 +18,11 @@
     <link rel="icon" href="favicon.ico">
 
     <link data-trunk rel="copy-file" href="assets/app_worker.js" />
-    <link data-trunk rel="copy-file" href="assets/tracing_hooks.js" />
+    <!-- <link data-trunk rel="copy-file" href="assets/tracing_hooks.js" /> -->
     <link data-trunk rel="copy-file" href="assets/github-mark-white.png" />
     <link data-trunk rel="copy-dir" href="assets/patches/" />
+    <link data-trunk rel="copy-dir" href="assets/fontawesome/css/" />
+    <link data-trunk rel="copy-dir" href="assets/fontawesome/webfonts/" />
 
     <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="icon_ios_touch_192.png">
@@ -127,172 +31,9 @@
 
     <link rel="preload" href="github-mark-white.png" as="image">
 
-    <style>
-        :root {
-            color-scheme: light dark;
-        }
-
-        html {
-            /* Remove touch delay: */
-            touch-action: manipulation;
-            font-family: "Fira Mono", monospace, sans-serif;
-        }
-
-        body {
-            /* Light mode background color for what is not covered by the egui canvas,
-            or where the egui canvas is translucent. */
-            background: #fff;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        [data-tooltip] {
-            height: 100%;
-            text-box-trim: trim-end;
-            padding-left: .25em;
-            padding-right: .25em;
-            width: fit-content;
-            justify-self: flex-end;
-        }
-
-        [data-tooltip]:hover::after {
-            display: block;
-            position: absolute;
-            content: attr(data-tooltip);
-            border: 1px solid currentColor;
-            background: oklch(94.81% 0 0);
-            padding: .25em;
-            text-align: initial;
-            font-family: initial;
-        }
-
-        /* ---------------------------------------------- */
-        /* Loading animation from https://loading.io/css/ */
-        .lds-ring,
-        .lds-ring div {
-            box-sizing: border-box;
-        }
-        .lds-ring {
-            display: inline-block;
-            position: relative;
-            width: 40px;
-            height: 40px;
-        }
-        .lds-ring div {
-            box-sizing: border-box;
-            display: block;
-            position: absolute;
-            width: 32px;
-            height: 32px;
-            margin: 4px;
-            border: 4px solid currentColor;
-            border-radius: 50%;
-            animation: lds-ring 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;
-            border-color: currentColor transparent transparent transparent;
-        }
-        .lds-ring div:nth-child(1) {
-            animation-delay: -0.45s;
-        }
-        .lds-ring div:nth-child(2) {
-            animation-delay: -0.3s;
-        }
-        .lds-ring div:nth-child(3) {
-            animation-delay: -0.15s;
-        }
-        @keyframes lds-ring {
-            0% {
-                transform: rotate(0deg);
-            }
-            100% {
-                transform: rotate(360deg);
-            }
-        }
-
-        @media (prefers-color-scheme: dark) {
-            body {
-                /* Dark mode background color for what is not covered by the egui canvas,
-                or where the egui canvas is translucent. */
-                background: #000;
-                color: #fff;
-            }
-
-            [data-tooltip]:hover::after {
-                background: oklch(20.19% 0 0);
-            }
-
-        }
-
-        @media (prefers-color-scheme: light) {
-            .gh-img {
-                filter: invert(1);
-            }
-        }
-
-        /* Allow canvas to fill entire web page: */
-        html,
-        body {
-            overflow: hidden;
-            margin: 0 !important;
-            padding: 0 !important;
-            height: 100%;
-            width: 100%;
-        }
-
-        #main_form {
-            display: grid;
-            grid-template-columns: auto 1fr;
-            grid-template-rows: 0fr 0fr 0fr;
-            text-align: end;
-            gap: 5px 5px;
-            align-items: center;
-        }
-
-        .spinner {
-            display: flex;
-            justify-content: center;
-            overflow-y: hidden;
-            align-content: center;
-
-        }
-
-        progress {
-            height: 1.5em;
-            width: 100%;
-        }
-
-        .progress-container {
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #links {
-            display: flex;
-            justify-content: left;
-            align-items: center;
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            margin: 1em;
-        }
-
-        #links img {
-            width: 2em;
-            height: 2em;
-            margin-right: 1em;
-        }
-
-        #links a:not(:last-child) {
-            margin-right: 2em;
-        }
-        
-        #links a {
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-        }
-    </style>
+    <link rel="stylesheet" href="css/solid.min.css" />
+    <link rel="stylesheet" href="css/fontawesome.min.css"/>
+    <link data-trunk rel="css" href="assets/index.css" />
 </head>
 
 <body>

@@ -682,6 +682,7 @@ dependencies = [
  "human_bytes",
  "image",
  "indextree",
+ "itertools",
  "lazy_static",
  "log",
  "num",

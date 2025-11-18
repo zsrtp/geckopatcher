@@ -9,6 +9,9 @@ stage = "pre_build"
 command = "cargo"
 command_arguments = ["xtask"]
 
+[watch]
+ignore = ["xtask/target", "dist"]
+
 [serve]
 tls_key_path = "key.pem"
 tls_cert_path = "cert.pem"

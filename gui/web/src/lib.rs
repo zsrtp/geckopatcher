@@ -500,7 +500,7 @@ pub fn MainForm(props: &MainFormProps) -> Html {
                 <legend>{"ISO Patcher"}</legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
                 {patch_input}
-                <span data-tooltip="Nothing is uploaded, processing is done on your device">{"🛈"}</span>
+                <li class="fa-solid fa-circle-info" data-tooltip="Nothing is uploaded, processing is done on your device"></li>
                 <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
             </fieldset>
