@@ -428,7 +428,7 @@ pub fn IsoInput(props: &IsoInputProps) -> Html {
     };
     html! {
         <>
-            <label for="iso_in">{"ISO to patch: "}</label>
+            <label for="iso_in">{"Game File: "}</label>
             <input id="iso_in" accept=".iso" type="file" disabled={props.disabled.unwrap_or(false)} onchange={onchange}/>
         </>
     }
@@ -497,11 +497,10 @@ pub fn MainForm(props: &MainFormProps) -> Html {
     html! {
         <>
             <fieldset id="main_form">
-                <legend>{"ISO Patcher"}</legend>
+                <legend>{"Gecko Patcher"}<li class="fa-solid fa-circle-info" data-tooltip="Nothing is uploaded, processing is done on your device"></li></legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
                 {patch_input}
-                <li class="fa-solid fa-circle-info" data-tooltip="Nothing is uploaded, processing is done on your device"></li>
-                <button disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
+                <button id="patch-btn" disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
             </fieldset>
             <div id="links">

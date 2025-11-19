@@ -121,6 +121,10 @@ pub async extern "C" fn run_patch(
         save_access
     );
 
+    if let Ok(mut updater) = UPDATER.try_lock() {
+        let _ = updater.reset();
+    }
+
     let filename = match apply(
         WebFile::new(patch_access.clone()),
         WebReadable::new(file_access.clone()),

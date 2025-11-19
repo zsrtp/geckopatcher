@@ -30,23 +30,24 @@ body {
 }
 
 [data-tooltip] {
-    height: 100%;
+    color: oklch(0.6765 0.148 237.18);
+    height: min-content;
     text-box-trim: trim-end;
     padding-left: .25em;
     padding-right: .25em;
-    width: fit-content;
-    justify-self: flex-end;
 }
 
 [data-tooltip]:hover::after {
+    color: var(--forground-color);
     display: block;
     position: absolute;
     content: attr(data-tooltip);
-    border: 1px solid currentColor;
-    background: oklch(94.81% 0 0);
+    box-shadow: 0 1px 4px -1px oklch(from var(--background-color) calc(l * 0.2) c h);
+    background: var(--background-color);
     padding: .25em;
     text-align: initial;
-    font-family: initial;
+    font-family: Helvetica;
+    font-weight: normal;
 }
 
 /* ---------------------------------------------- */
@@ -101,6 +102,10 @@ body {
         background: oklch(20.19% 0 0);
     }
 
+    [data-tooltip] {
+        color: oklch(from color l c h);
+    }
+
     #main_form {
         background-color: oklch(from var(--background-color) clamp(0.0, calc((1 - var(--box-height)) * l + var(--box-height) * 0.3), 0.3) c h);
     }
@@ -136,14 +141,14 @@ body {
     --box-pixel-height: 4px;
     display: grid;
     grid-template-columns: auto 1fr;
-    grid-template-rows: 0fr 0fr 0fr;
+    grid-template-rows: 0fr 0fr 0fr 0fr;
     text-align: end;
-    gap: 5px 5px;
+    gap: 0.5em 0.5em;
     align-items: center;
     border: none;
-    border-radius: 5px;
+    border-radius: 0.5em;
     box-shadow: oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 1px max(0px, calc(2px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 2px max(0px, calc(4px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 4px max(0px, calc(8px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 8px max(0px, calc(16px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 16px max(0px, calc(32px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 32px max(0px, calc(64px * var(--box-height))), inset oklch(from var(--background-color) calc(l * 0.3) c h / 0.4) 0px calc(-1 * var(--box-pixel-height) * var(--box-height)) 0px;
-    padding-bottom: calc(10px + var(--box-pixel-height) * var(--box-height));
+    padding-bottom: calc(var(--box-pixel-height) * var(--box-height));
     /*box-shadow: 0px 15px 30px oklch(from var(--background-color) calc(l * 0.2) c h);*/
 }
 
@@ -163,6 +168,10 @@ progress {
     display: inline-flex;
     justify-content: center;
     align-items: center;
+}
+
+fieldset > button {
+    grid-area: 3 / 1 / span 1 / span 2;
 }
 
 #links {
