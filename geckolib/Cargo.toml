@@ -43,6 +43,10 @@ indextree = { version = "^4.7" }
 bsdiff = { version = "^0.2" }
 deko = { version = "^0.5", default-features=false, features = ["bzip2"] }
 itertools = "^0.14"
+relative-path = { version = "^2.0", features = ["serde"] }
+sha3 = "^0.10"
+setsum = "^0.7"
+hex = "^0.4"
 
 [dependencies.bzip2]
 version = "^0.5"

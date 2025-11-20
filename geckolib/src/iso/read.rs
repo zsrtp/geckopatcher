@@ -15,43 +15,18 @@ use std::task::Poll;
 
 // Error structures for the disc readers
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum WiiDiscReaderError {
+    #[error("Invalid Wii disc: magic is {magic:#010X}")]
     InvalidWiiDisc { magic: u32 },
+    #[error("There is no game parition in this disc")]
     NoGamePartition,
+    #[error(transparent)]
     EncryptionError(WiiCryptoError),
+    #[error("The provided slice is too small to be converted into a {name}.")]
     ConvertError { name: String },
-    Io(std::io::Error),
-}
-
-impl Error for WiiDiscReaderError {}
-
-impl Display for WiiDiscReaderError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WiiDiscReaderError::InvalidWiiDisc { magic } => {
-                write!(f, "Invalid Wii disc: magic is {:#010X}", magic)
-            }
-            WiiDiscReaderError::NoGamePartition => {
-                write!(f, "There is no game parition in this disc")
-            }
-            WiiDiscReaderError::EncryptionError(e) => write!(f, "Encryption error: {}", e),
-            WiiDiscReaderError::ConvertError { name } => {
-                write!(
-                    f,
-                    "The provided slice is too small to be converted into a {}.",
-                    name
-                )
-            }
-            WiiDiscReaderError::Io(e) => write!(f, "I/O error: {}", e),
-        }
-    }
-}
-
-impl From<std::io::Error> for WiiDiscReaderError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 impl From<WiiCryptoError> for WiiDiscReaderError {

@@ -46,6 +46,8 @@ use indextree::NodeId;
 use iso::builder::IsoBuilder;
 use iso::read::DiscReader;
 #[cfg(not(target_arch = "wasm32"))]
+use relative_path::RelativePathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use vfs::tree::GeckoFS;
 use zip::ZipArchive;
@@ -121,9 +123,9 @@ pub async fn open_config_from_fs_iso<
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct Changes {
-    additions: Vec<PathBuf>,
-    deletions: Vec<PathBuf>,
-    changes: HashMap<PathBuf, Vec<u8>>,
+    additions: Vec<RelativePathBuf>,
+    deletions: Vec<RelativePathBuf>,
+    changes: HashMap<RelativePathBuf, Vec<u8>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -158,8 +160,8 @@ where
     orig_files.sort();
     patch_files.sort();
 
-    let mut deletions: Vec<PathBuf> = Vec::new();
-    let mut changes: HashMap<PathBuf, Vec<u8>> = HashMap::new();
+    let mut deletions: Vec<RelativePathBuf> = Vec::new();
+    let mut changes: HashMap<RelativePathBuf, Vec<u8>> = HashMap::new();
 
     for orig_path in orig_files.iter() {
         if patch_files.contains(orig_path) {
@@ -191,15 +193,21 @@ where
             let diff = diff::diff(orig_buf, patch_buf)?;
             if let Some(diff) = diff {
                 // There is a difference between the files, save it in the changes.
-                changes.insert(orig_path.clone(), diff);
+                changes.insert(
+                    RelativePathBuf::from_path(orig_path)
+                        .expect("Path contains invalid characters"),
+                    diff,
+                );
             }
         } else {
             // File from original not found in patched, add to delete list
-            deletions.push(orig_path.clone());
+            deletions.push(
+                RelativePathBuf::from_path(orig_path).expect("Path contains invalid characters"),
+            );
         }
     }
 
-    let mut additions: Vec<PathBuf> = Vec::new();
+    let mut additions: Vec<RelativePathBuf> = Vec::new();
 
     for patch_path in patch_files
         .iter()
@@ -218,7 +226,9 @@ where
             ))?;
         }
         // The file isn't in original, include it in the the additions
-        additions.push(patch_path);
+        additions.push(
+            RelativePathBuf::from_path(patch_path).expect("Path contains invalid characters"),
+        );
     }
 
     Ok(Changes {
@@ -239,14 +249,22 @@ where
     R2: AsyncRead + AsyncSeek + Unpin,
     RConfig: Write + Seek,
 {
-    use std::str::FromStr;
-
     use zip::ZipWriter;
+
+    use crate::diff::calculate_checksum;
+
+    #[cfg(feature = "progress")]
+    if let Ok(mut updater) = UPDATER.try_lock() {
+        updater.set_message("Calculating checksum...")?;
+    }
+
+    let checksum_digest = calculate_checksum(&mut original).await?;
 
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
         updater.set_message("")?;
-        updater.set_title("Extracting FileSystem changes...")?;
+        updater.set_title("Calculating checksum... ok")?;
+        updater.set_message("Extracting FileSystem changes...")?;
     }
 
     let (original_root, patched_root) = (original.root, patched.root);
@@ -256,7 +274,8 @@ where
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
         updater.set_message("")?;
-        updater.set_title("Extracting SystemData changes...")?;
+        updater.set_title("Extracting FileSystem changes... ok")?;
+        updater.set_message("Extracting SystemData changes...")?;
     }
 
     let (original_sys, patched_sys) = (original.sys, patched.sys);
@@ -266,25 +285,26 @@ where
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
         updater.set_message("")?;
-        updater.set_title("Generating Patch File...")?;
+        updater.set_title("Extracting SystemData changes... ok")?;
+        updater.set_message("Generating Patch File...")?;
     }
 
     let mut out_zip = ZipWriter::new(output);
     let mut start_dol_change = None;
-    if let Some(dol_change) = sys_changes.changes.get(&PathBuf::from_str("Start.dol")?) {
+    if let Some(dol_change) = sys_changes.changes.get(&RelativePathBuf::from("Start.dol")) {
         out_zip.start_file("start_dol.bs.gz2", zip::write::FileOptions::<()>::default())?;
         out_zip.write_all(dol_change)?;
-        start_dol_change = Some(PathBuf::from_str("start_dol.bs.gz2")?);
+        start_dol_change = Some(RelativePathBuf::from("start_dol.bs.gz2"));
     }
 
     let mut apploader_change = None;
     if let Some(ldr_change) = sys_changes
         .changes
-        .get(&PathBuf::from_str("AppLoader.ldr")?)
+        .get(&RelativePathBuf::from("AppLoader.ldr"))
     {
         out_zip.start_file("apploader.bs.gz2", zip::write::FileOptions::<()>::default())?;
         out_zip.write_all(ldr_change)?;
-        apploader_change = Some(PathBuf::from_str("apploader.bs.gz2")?);
+        apploader_change = Some(RelativePathBuf::from("apploader.bs.gz2"));
     }
 
     let mut changes = HashMap::new();
@@ -292,13 +312,13 @@ where
         let name = format!("change{}.bs.gz2", i);
         out_zip.start_file(&name, zip::write::FileOptions::<()>::default())?;
         out_zip.write_all(diff)?;
-        changes.insert(path.to_owned(), PathBuf::from_str(&name)?);
+        changes.insert(path.to_owned(), RelativePathBuf::from(&name));
     }
 
     let mut additions = HashMap::new();
     for (i, file) in root_changes.additions.iter().enumerate() {
         let name = format!("replace{}.dat", i);
-        if let Some(file_reader) = patched.get_file_mut(patched.root, file) {
+        if let Some(file_reader) = patched.get_file_mut(patched.root, file.to_path("")) {
             use futures::{AsyncReadExt, AsyncSeekExt};
 
             let mut buf = Vec::new();
@@ -306,14 +326,7 @@ where
             file_reader.read_to_end(&mut buf).await?;
             out_zip.start_file(&name, zip::write::FileOptions::<()>::default())?;
             out_zip.write_all(&buf)?;
-            additions.insert(
-                itertools::Itertools::intersperse(
-                    file.iter().map(|c| c.to_string_lossy().to_string()),
-                    "/".into(),
-                )
-                .collect(),
-                PathBuf::from_str(&name)?,
-            );
+            additions.insert(file.clone(), RelativePathBuf::from(&name));
         }
     }
 
@@ -335,6 +348,7 @@ where
             changes,
             dol: start_dol_change,
             loader: apploader_change,
+            checksum: Some(hex::encode(checksum_digest)),
         }),
         ..Default::default()
     };
@@ -345,6 +359,7 @@ where
 
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.lock() {
+        updater.set_message("")?;
         updater.set_title("Finished")?;
         updater.finish()?;
     }

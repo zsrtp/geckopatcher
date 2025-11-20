@@ -39,13 +39,14 @@ pub struct App {
     is_patching: Rc<bool>,
     msg: Rc<Option<String>>,
     progress: Rc<Option<f64>>,
+    errored: Rc<Option<String>>,
 }
 
 #[derive(Debug)]
 pub enum Message {
     WorkerReady,
     PatchIso(Patch, Iso),
-    PatchError,
+    PatchError(String),
     PatchedIso,
     PatchProgress(Option<String>, Option<f64>),
 }
@@ -95,7 +96,14 @@ impl Component for App {
                 callback.emit(Message::WorkerReady);
             }
             if type_.as_string().is_some_and(|s| &s == "cancelled") {
-                callback.emit(Message::PatchError);
+                let error = match js_sys::Reflect::get(&data, &"msg".into()) {
+                    Ok(err) => err.as_string().unwrap_or("<not an str>".into()),
+                    Err(err) => {
+                        web_sys::console::warn_1(&err);
+                        return;
+                    },
+                };
+                callback.emit(Message::PatchError(error));
             }
             if type_.as_string().is_some_and(|s| &s == "done") {
                 web_sys::console::info_1(&event);
@@ -145,6 +153,7 @@ impl Component for App {
             is_patching: Rc::new(false),
             msg: Rc::new(None),
             progress: Rc::new(None),
+            errored: Rc::new(None),
         }
     }
 
@@ -200,8 +209,11 @@ impl Component for App {
                 });
                 true
             }
-            Message::PatchError => {
+            Message::PatchError(error) => {
                 log::warn!("PatchError");
+                if let Some(errored) = Rc::get_mut(&mut self.errored) {
+                    *errored = Some(error);
+                }
                 if let Some(is_patching) = Rc::get_mut(&mut self.is_patching) {
                     *is_patching = false;
                 }
@@ -234,7 +246,7 @@ impl Component for App {
             .as_ref()
             .map(|msg| msg.to_owned());
         html! {
-            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching || !self.is_worker_ready} status={msg} progress={*self.progress}></MainForm>
+            <MainForm patch_callback={ctx.link().callback(move |(patch, save)| Message::PatchIso(patch, save))} is_patching={*self.is_patching || !self.is_worker_ready} status={msg} progress={*self.progress} errored={(*self.errored).clone()}></MainForm>
         }
     }
 }
@@ -440,12 +452,14 @@ pub struct MainFormProps {
     is_patching: bool,
     status: Option<String>,
     progress: Option<f64>,
+    errored: Option<String>,
 }
 
 #[function_component]
 pub fn MainForm(props: &MainFormProps) -> Html {
     let is_patching = props.is_patching;
     let status = props.status.clone();
+    let errored = &props.errored;
     let selected_patch = use_state(|| <Option<Patch>>::None);
     let selected_iso = use_state(|| <Option<(Iso, [u8; 8])>>::None);
     let callback = {
@@ -500,8 +514,11 @@ pub fn MainForm(props: &MainFormProps) -> Html {
                 <legend>{"Gecko Patcher"}<li class="fa-solid fa-circle-info" data-tooltip="Nothing is uploaded, processing is done on your device"></li></legend>
                 <IsoInput callback={iso_change_callback} disabled={is_patching} />
                 {patch_input}
-                <button id="patch-btn" disabled={is_patching || selected_patch.is_none() || selected_iso.is_none()} onclick={callback}>{"Patch"}</button>
+                <button id="patch-btn" class={if errored.is_some() {"errored"} else {""}} disabled={is_patching || selected_patch.is_none() || selected_iso.is_none() || errored.is_some()} onclick={callback}>{"Patch"}</button>
                 <StatusBar is_patching={is_patching} msg={if is_patching {status} else {None}} progress={if is_patching {props.progress} else {None}}/>
+                if errored.is_some() {
+                    <span id="error_msg">{errored}</span>
+                }
             </fieldset>
             <div id="links">
                 <a href="https://github.com/zsrtp/geckopatcher"><img class="gh-img" src="github-mark-white.png" alt="GitHub Logo"/>{"GeckoPatcher"}</a>

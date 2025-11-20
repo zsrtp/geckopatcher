@@ -1,11 +1,17 @@
 use eyre::{Context, ContextCompat as _};
 use futures::AsyncWrite;
 use futures::{AsyncRead, AsyncSeek, prelude::*};
+#[cfg(not(target_os = "unknown"))]
+use relative_path::{RelativePath, RelativePathBuf};
 use std::collections::HashMap;
+#[cfg(not(target_os = "unknown"))]
+use std::fmt::Debug;
 #[cfg(not(target_os = "unknown"))]
 use std::fs::read;
 use std::io::{Read, Seek};
-use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "unknown"))]
+use std::path::Path;
+use std::path::{PathBuf};
 #[cfg(not(target_os = "unknown"))]
 use std::{
     fs::File as StdFile,
@@ -17,7 +23,7 @@ use zip::ZipWriter;
 
 use self::fs_source::FSSource;
 use crate::config::Config;
-use crate::diff;
+use crate::diff::{self, calculate_checksum};
 use crate::patch::assembler::{Assembler, Instruction};
 use crate::patch::banner::Banner;
 
@@ -108,28 +114,29 @@ impl<RConfig, RDisc, W> IsoBuilder<RConfig, RDisc, W> {
 fn add_file_to_iso<
     R: AsyncRead + AsyncSeek + 'static,
     R2: std::io::Read + std::io::Seek,
-    P: AsRef<Path>,
+    P: AsRef<relative_path::RelativePath>,
+    S: AsRef<str>,
 >(
-    iso_path: &String,
-    actual_path: &P,
+    iso_path: S,
+    actual_path: P,
     iso: &mut GeckoFS<R>,
     // iso: &mut Directory<R>,
     files: &mut FSSource<R2>,
 ) -> eyre::Result<()> {
-    if files.is_file(actual_path) {
+    if files.is_file(actual_path.as_ref().to_path("")) {
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message(&**iso_path)?;
+            updater.set_message(iso_path.as_ref())?;
         }
 
-        let mut file = files.get_file(actual_path)?;
-        if let Ok(FsNode::File { file: f }) = iso.get_node_mut(iso.root, iso_path) {
+        let mut file = files.get_file(actual_path.as_ref().to_path(""))?;
+        if let Ok(FsNode::File { file: f }) = iso.get_node_mut(iso.root, iso_path.as_ref()) {
             // if let Some(f) = iso.resolve_node_mut(iso_path).and_then(|n| n.as_file_mut()) {
             let mut buffer = Vec::new();
             file.read_to_end(&mut buffer)?;
             f.set_data(buffer.into_boxed_slice())?;
         } else {
-            let mut p = PathBuf::from(iso_path);
+            let mut p = PathBuf::from(iso_path.as_ref());
             let file_name = p
                 .file_name()
                 .expect("File name is invalid")
@@ -157,18 +164,22 @@ fn add_file_to_iso<
 }
 
 #[cfg(not(target_os = "unknown"))]
-fn add_node_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek>(
-    iso_path: &String,
-    actual_path: &PathBuf,
+fn add_node_to_iso<R: AsyncRead + AsyncSeek + 'static, R2: Read + Seek, S, P>(
+    iso_path: S,
+    actual_path: P,
     iso: &mut GeckoFS<R>,
     // iso: &mut Directory<R>,
     files: &mut FSSource<R2>,
-) -> eyre::Result<()> {
-    if files.is_dir(actual_path) {
-        let names = files.get_names(actual_path)?;
+) -> eyre::Result<()>
+where
+    S: AsRef<str>,
+    P: AsRef<RelativePath>,
+{
+    if files.is_dir(actual_path.as_ref().to_path("")) {
+        let names = files.get_names(actual_path.as_ref().to_path(""))?;
         for name in names {
-            let iso_path = String::from(iso_path) + &String::from('/') + &name;
-            let mut actual_path = actual_path.clone();
+            let iso_path = String::from(iso_path.as_ref()) + &String::from('/') + &name;
+            let mut actual_path = actual_path.as_ref().to_owned();
             actual_path.push(name);
             add_node_to_iso(&iso_path, &actual_path, iso, files)?;
         }
@@ -204,43 +215,49 @@ where
     async fn build(&mut self) -> eyre::Result<()> {
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("Loading game...")?;
+            updater.set_message("")?;
+            updater.set_title("Loading game...")?;
         }
 
         let disc = &mut self.gfs;
 
-        #[cfg(feature = "progress")]
-        if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message("")?;
-            updater.set_title("Replacing files...")?;
-        }
-
-        for (iso_path, actual_path) in &self.config.files {
-            #[cfg(target_os = "unknown")]
-            add_file_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
-            #[cfg(not(target_os = "unknown"))]
-            add_node_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
-        }
-
         if let Some(diffs) = &self.config.diffs {
+            if let Some(checksum) = diffs.checksum.iter().find_map(|c| hex::decode(c).ok()) {
+                #[cfg(feature = "progress")]
+                if let Ok(mut updater) = UPDATER.lock() {
+                    updater.set_message("Computing checksum...")?;
+                }
+                let digest = calculate_checksum(disc).await?;
+                if digest != checksum.as_slice() {
+                    // Warn that the checksum is not matching
+                    #[cfg(feature = "progress")]
+                    if let Ok(mut updater) = UPDATER.lock() {
+                        updater.set_message("")?;
+                        updater.set_title("[Warning] Checksum doesn't match. The game's data differs from what the patch file expects. Check if the dump is valid")?;
+                    }
+                    #[cfg(feature = "log")]
+                    crate::warn!("[Warning] Checksum doesn't match. The game's data differs from what the patch file expects. Check if the dump is valid");
+                    return Err(eyre::eyre!("[Warning] Checksum doesn't match. The game's data differs from what the patch file expects. Check if the dump is valid"));
+                }
+            }
             for path in &diffs.deletions {
                 #[cfg(feature = "progress")]
                 if let Ok(mut updater) = UPDATER.lock() {
                     updater
-                        .set_message(format!("Removing {}", path.to_str().unwrap_or("<unk>")))?;
+                        .set_message(format!("Removing {}", path.as_str()))?;
                 }
-                disc.rm(disc.root, path)?;
+                disc.rm(disc.root, path.to_path(""))?;
             }
             for (game_path, patch_path) in &diffs.changes {
                 #[cfg(feature = "progress")]
                 if let Ok(mut updater) = UPDATER.lock() {
                     updater.set_message(format!(
                         "Patching {}",
-                        game_path.to_str().unwrap_or("<unk>")
+                        game_path.as_str()
                     ))?;
                 }
                 let mut file_buf = None;
-                if let Some(file) = disc.get_file_mut(disc.root, game_path) {
+                if let Some(file) = disc.get_file_mut(disc.root, game_path.to_path("")) {
                     let mut buf = Vec::new();
                     file.seek(std::io::SeekFrom::Start(0)).await?;
                     file.read_to_end(&mut buf).await?;
@@ -248,11 +265,11 @@ where
                 }
                 if let Some((file_data, patch_data)) = file_buf
                     .iter_mut()
-                    .zip(self.fs.get_file(patch_path).ok())
+                    .zip(self.fs.get_file(patch_path.to_path("")).ok())
                     .next()
                 {
                     let new_data = diff::patch(file_data, std::io::BufReader::new(patch_data))?;
-                    if let Some(f) = disc.get_file_mut(disc.root, game_path) {
+                    if let Some(f) = disc.get_file_mut(disc.root, game_path.to_path("")) {
                         f.set_data(new_data.into_boxed_slice())?;
                     }
                 }
@@ -264,7 +281,7 @@ where
                 }
                 if let Some((patch_data, dol_file)) = self
                     .fs
-                    .get_file(start_dol)
+                    .get_file(start_dol.to_path(""))
                     .ok()
                     .zip(disc.get_file_mut(disc.sys, "Start.dol"))
                 {
@@ -282,7 +299,7 @@ where
                 }
                 if let Some((patch_data, ldr_file)) = self
                     .fs
-                    .get_file(app_loader)
+                    .get_file(app_loader.to_path(""))
                     .ok()
                     .zip(disc.get_file_mut(disc.sys, "AppLoader.ldr"))
                 {
@@ -293,6 +310,19 @@ where
                     ldr_file.set_data(new_data.into_boxed_slice())?;
                 }
             }
+        }
+
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.lock() {
+            updater.set_message("")?;
+            updater.set_title("Replacing files...")?;
+        }
+
+        for (iso_path, actual_path) in &self.config.files {
+            #[cfg(target_os = "unknown")]
+            add_file_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
+            #[cfg(not(target_os = "unknown"))]
+            add_node_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
         }
 
         let original_symbols = if let Some(framework_map) = self
@@ -471,7 +501,7 @@ where
                         if let Ok(mut updater) = UPDATER.lock() {
                             updater.set_message("")?;
                             updater
-                                .set_title(format!("[Warning] Couldn't parse the banner file ({}). Ignoring", err.to_string()))?;
+                                .set_title(format!("[Warning] Couldn't parse the banner file ({}). Ignoring", err))?;
                         }
                     }
                 }
@@ -545,44 +575,48 @@ fn write_file_to_zip<
 }
 
 #[cfg(not(target_os = "unknown"))]
-fn add_file_to_zip(
+fn add_file_to_zip<P>(
     index: usize,
-    iso_path: &str,
-    actual_path: &PathBuf,
+    iso_path: P,
+    actual_path: P,
     zip: &mut ZipWriter<BufWriter<StdFile>>,
-    new_map: &mut HashMap<String, PathBuf>,
-) -> eyre::Result<()> {
+    new_map: &mut HashMap<RelativePathBuf, RelativePathBuf>,
+) -> eyre::Result<()>
+where
+    P: AsRef<RelativePath>,
+{
     let zip_path = format!("replace{}.dat", index);
-    new_map.insert(iso_path.to_owned(), PathBuf::from(&zip_path));
-    write_file_to_zip(zip, zip_path, &std::fs::read(actual_path)?)?;
+    new_map.insert(iso_path.as_ref().to_owned(), RelativePathBuf::from(&zip_path));
+    write_file_to_zip(zip, zip_path, &std::fs::read(actual_path.as_ref().to_path(""))?)?;
     Ok(())
 }
 
 #[cfg(not(target_os = "unknown"))]
-fn add_entry_to_zip(
+fn add_entry_to_zip<P>(
     index: &mut usize,
-    iso_path: &String,
-    actual_path: &PathBuf,
+    iso_path: P,
+    actual_path: P,
     zip: &mut ZipWriter<BufWriter<StdFile>>,
-    new_map: &mut HashMap<String, PathBuf>,
-) -> eyre::Result<()> {
-    if actual_path.is_file() {
+    new_map: &mut HashMap<RelativePathBuf, RelativePathBuf>,
+) -> eyre::Result<()>
+where
+    P: AsRef<RelativePath> + Debug
+{
+    if actual_path.as_ref().to_path("").is_file() {
         *index += 1;
-        add_file_to_zip(*index, iso_path, actual_path, zip, new_map)?;
+        add_file_to_zip(*index, iso_path.as_ref(), actual_path.as_ref(), zip, new_map)?;
 
         #[cfg(feature = "progress")]
         if let Ok(mut updater) = UPDATER.lock() {
-            updater.set_message(format!("Storing {:?} as {}...", actual_path, iso_path))?;
+            updater.set_message(format!("Storing {:?} as {:?}...", actual_path, iso_path))?;
         }
-    } else if actual_path.is_dir() {
-        for entry in std::fs::read_dir(actual_path)? {
+    } else if actual_path.as_ref().to_path("").is_dir() {
+        for entry in std::fs::read_dir(actual_path.as_ref().to_path(""))? {
             let entry = entry?;
             let entry_path = entry.path();
             let file_name = entry_path.file_name().expect("Entry has no name");
-            let iso_path = String::from(iso_path)
-                + &String::from('/')
-                + &String::from(file_name.to_str().unwrap());
-            add_entry_to_zip(index, &iso_path, &entry_path, zip, new_map)?;
+            let iso_path = iso_path.as_ref().join(file_name.to_str().unwrap_or_else(|| panic!("Invalid file name {:?}", file_name)));
+            add_entry_to_zip(index, &iso_path, &RelativePathBuf::from_path(entry_path.as_os_str()).expect("Path contains invalid characters."), zip, new_map)?;
         }
     }
     Ok(())

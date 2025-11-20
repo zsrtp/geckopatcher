@@ -30,7 +30,7 @@ body {
 }
 
 [data-tooltip] {
-    color: oklch(0.6765 0.148 237.18);
+    color: oklch(0.7234 0.13 230);
     height: min-content;
     text-box-trim: trim-end;
     padding-left: .25em;
@@ -139,6 +139,7 @@ body {
 #main_form {
     --shadow-opacity: clamp(0.0, calc(0.2 * var(--box-height)), 0.2);
     --box-pixel-height: 4px;
+    max-width: calc(min(100vh, 100vw));
     display: grid;
     grid-template-columns: auto 1fr;
     grid-template-rows: 0fr 0fr 0fr 0fr;
@@ -150,6 +151,33 @@ body {
     box-shadow: oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 1px max(0px, calc(2px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 2px max(0px, calc(4px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 4px max(0px, calc(8px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 8px max(0px, calc(16px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 16px max(0px, calc(32px * var(--box-height))), oklch(from var(--background-color) calc(l * 0.2) c h / var(--shadow-opacity)) 0px 32px max(0px, calc(64px * var(--box-height))), inset oklch(from var(--background-color) calc(l * 0.3) c h / 0.4) 0px calc(-1 * var(--box-pixel-height) * var(--box-height)) 0px;
     padding-bottom: calc(var(--box-pixel-height) * var(--box-height));
     /*box-shadow: 0px 15px 30px oklch(from var(--background-color) calc(l * 0.2) c h);*/
+}
+
+#patch-btn.errored {
+    border: inherit;
+    border-radius: inherit;
+    color: oklch(from var(--forground-color) l 0.8 20);
+    background-color: oklch(from var(--background-color) calc((1 - l) * 0.15 + l * 0.85) 0.25 20);
+}
+
+#patch-btn.errored:disabled {
+    border: inherit;
+    border-radius: inherit;
+    color: oklch(from var(--forground-color) calc((1 - l) * 0.1 + l * 0.9) calc(c * 0.8) 20);
+    background-color: oklch(from var(--background-color) calc((1 - l) * 0.1 + l * 0.9) 0.05 20);
+}
+
+#patch-btn.errored:hover::after {
+    color: var(--forground-color);
+    display: block;
+    position: absolute;
+    content: "An error occured, check the web console for further details.";
+    box-shadow: 0 1px 4px -1px oklch(from var(--background-color) calc(l * 0.2) c h);
+    background: var(--background-color);
+    padding: .25em;
+    text-align: initial;
+    font-family: Helvetica;
+    font-weight: normal;
 }
 
 .spinner {
@@ -172,6 +200,11 @@ progress {
 
 fieldset > button {
     grid-area: 3 / 1 / span 1 / span 2;
+}
+
+fieldset > #error_msg {
+    grid-area: 4 / 1 / span 1 / span 2;
+    color: oklch(from var(--forground-color) calc(min(l + 0.2, 1)) 0.8 20);
 }
 
 #links {

@@ -135,7 +135,7 @@ pub async extern "C" fn run_patch(
         Ok(iso) => iso,
         Err(err) => {
             web_sys::console::error_1(&format!("{err:?}").into());
-            return Err(format!("{err:?}").into());
+            return Err(format!("{err}").into());
         }
     };
 

@@ -85,7 +85,7 @@ impl<R> FsFile<R> {
         }
     }
 
-    fn name(&self) -> String {
+    pub fn name(&self) -> String {
         self.data.lock().map(|data| data.name()).unwrap_or_default()
     }
 

@@ -10,7 +10,7 @@ command = "cargo"
 command_arguments = ["xtask"]
 
 [watch]
-ignore = ["xtask/target", "dist"]
+ignore = ["xtask/target", "dist", "README.md"]
 
 [serve]
 tls_key_path = "key.pem"
