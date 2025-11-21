@@ -5,7 +5,7 @@ use egui::Vec2;
 use flume::{Receiver, Sender, TryRecvError, TrySendError};
 use futures_lite::AsyncWriteExt;
 use geckolib::iso::builder::Builder;
-use geckolib::open_config_from_patch;
+use geckolib::{UPDATER, open_config_from_patch};
 use regex::Regex;
 use rfd::FileHandle;
 use std::path::PathBuf;
@@ -240,6 +240,10 @@ fn patcher_thread(snd: Sender<FromAppMsg>, rcv: Receiver<ToAppMsg>) {
                                 log::error!("Could not send Progress (update gui)");
                                 return;
                             }
+                            // reset updater
+                            if let Ok(mut updater) = UPDATER.lock() {
+                                let _ = updater.reset();
+                            }
                             if let Err(err) = apply(patch, iso, save).await {
                                 log::error!("{:?}", err);
                                 if sender
@@ -344,7 +348,7 @@ impl eframe::App for PatcherApp {
 
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // The top panel is often a good place for a menu bar:
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);

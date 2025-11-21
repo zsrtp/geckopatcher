@@ -6,7 +6,6 @@ pub mod progress;
 use std::sync::Arc;
 
 pub use app::PatcherApp;
-use eframe::Theme;
 use egui::Vec2;
 
 const ICON: &[u8; 94245] = include_bytes!("../assets/icon.png");
@@ -44,8 +43,6 @@ fn main() -> eframe::Result<()> {
             ..Default::default()
         },
         centered: true,
-        follow_system_theme: true,
-        default_theme: Theme::Dark,
         run_and_return: false,
         ..Default::default()
     };

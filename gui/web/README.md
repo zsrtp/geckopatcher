@@ -23,5 +23,5 @@ feature flag (`--features generic_patch`) to have a version of the application w
 
 Once built, the application can be provided to users by any server which supports secure connection through SSL/TLS (HTTPS).
 
-For testing, you can run `trunk serve` to launch a dev server and go to https://localho.st:8080/ to see the patcher run and
+For testing, you can run `trunk serve` to launch a dev server and go to https://localho.st:8081/ to see the patcher run and
 update on changes in real time. The server configuration can be changed in `Trunk.toml`.

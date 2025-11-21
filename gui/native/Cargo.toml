@@ -3,13 +3,21 @@ name = "gui-patcher"
 version = "0.1.2"
 edition = "2021"
 rust-version = "1.76"
+description = "Patch Wii/Gamecube games"
+
+[package.metadata.bundle]
+name = "GeckoPatcher"
+identifier = "com.zsrtp.geckopatcher"
+linux_mime_types = ["application/x-iso9660-image", "application/zip"]
+icon = ["assets/icon.png"]
+long_description = "A tool which can be used to patch romhacks of Wii and Gamecube games."
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-egui = "^0.28"
-egui_extras = { version = "^0.28", features = ["image"] }
-eframe = { version = "^0.28", default-features = false, features = [
+egui = "^0.33"
+egui_extras = { version = "^0.33", features = ["image"] }
+eframe = { version = "^0.33", default-features = false, features = [
     "accesskit",     # Make egui comptaible with screen readers. NOTE: adds a lot of dependencies.
     "default_fonts", # Embed the default egui fonts.
     "glow",          # Use the glow rendering backend. Alternative: "wgpu".
@@ -17,7 +25,7 @@ eframe = { version = "^0.28", default-features = false, features = [
     "x11",
     "wayland",
 ] }
-rfd = {version = "^0.14", default-features = false, features = ["xdg-portal", "async-std"]}
+rfd = {version = "^0.15", default-features = false, features = ["xdg-portal", "async-std"]}
 log = "^0.4"
 flume = "^0.11"
 eyre = "^0.6"

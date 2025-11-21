@@ -15,6 +15,20 @@ The patcher is the only application which is meant to create new patches. The GU
 
 ## Usage
 
+There are two ways to to make a patch file: a **diff** between an unmodified game and a romhacked version, or through the **legacy** method.
+
+### Diff
+
+The simplest way to make a patch file is to compare a Hacked version of a game you make through any mean you want with the original, unmodifed dump of the game. The command is simple:
+
+```sh
+$ romhack diff ORIGINAL.iso HACKED.iso OUTPUT.patch
+```
+
+This command will compare the unmodified dump of the game (`ORIGINAL.iso`) with the romhack you wish to share (`HACKED.iso`) and produce a patch file `OUTPUT.patch` which can be distributed for others to apply to their own dump of their game.
+
+### Legacy
+
 This goal of this tool is to allow modification of GameCube and Wii games. This is accomplished through the mean of a patch file. Due to the complexity of the format of both GameCube and Wii games (compared to older platforms like snes or N64), it would be less efficient to share mods as diffs of the original and modded version of the game. Instead GeckoPatcher uses a custom patch format which is a simple zip file containing metadata files about the mod, as well as the data to be injected into the game.
 
 A minimal Patch file (zip archive) would contain a single `RomHack.toml` file with the following content:
@@ -107,6 +121,20 @@ The requirements to compile the native gui and cli are as follow:
 That's all. You then just need to run `cargo build` at the root of the repository. You can optionally add the `--release` flag to build the release version.
 
 This will result in the binary for the system you built it on to be put in `target/debug/` (for a release build, `target/release/`), under the names `romhack` and `gui-patcher` for the CLI and GUI verisons of the application respectively (`romhack.exe` and `gui-patcher.exe` for Windows).
+
+#### Bundling
+
+It is possible to produce OS-specific bundles (MacOS apps, Linux AppImage, Windows msi) using `cargo-bundle`. Install it through `cargo install cargo-bundle`, then use the following commands to produce a bundle for the `gui-patcher`:
+
+```sh
+$ cargo bundle -p gui-patcher --release --target x86_64-apple-darwin -f osx
+```
+```sh
+$ cargo bundle -p gui-patcher --release --target x86_64-unknown-linux-gnu -f appimage
+```
+```sh
+$ cargo bundle -p gui-patcher --release --target x86_64-pc-windows-gnu -f msi
+```
 
 ### Web
 
