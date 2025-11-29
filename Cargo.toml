@@ -1,7 +1,12 @@
 [workspace]
-members = ["geckolib", "romhack", "gui/native"]
+members = ["geckolib", "romhack", "gui/native", "gecko-reader"]
 exclude = ["gui/web"]
 resolver = "2"
+
+[profile.dev-opt]
+inherits = "dev"
+opt-level = 3
+lto = "thin"
 
 [profile.release]
 panic = "abort"

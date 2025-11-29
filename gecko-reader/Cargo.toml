@@ -1,0 +1,24 @@
+[package]
+name = "gecko-reader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde = { version = "^1.0", optional = true }
+serde-binary = "^0.5"
+aes = "^0.8"
+sha1_smol = "^1.0"
+cbc = "^0.1"
+encoding_rs = "^0.8"
+byteorder = "^1.4"
+lazy_static = "1.5"
+rand = { version = "^0.9" }
+rand_chacha = "^0.9"
+log = { version = "^0.4", optional = true }
+mbedtls = "0.13.4"
+
+[features]
+default = ["serde", "fs", "log"]
+serde = ["dep:serde"]
+fs = []
+log = ["dep:log"]
