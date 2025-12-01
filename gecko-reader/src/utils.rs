@@ -58,7 +58,7 @@ macro_rules! static_assert_eq_size {
 
 #[macro_export(local_inner_macros)]
 macro_rules! static_assert_eq_offset {
-    ($type:ty, $field:ident, $offset:expr) => {
+    ($type:ty, $field:expr, $offset:expr) => {
         const _: () = ::core::assert!(
             ::core::mem::offset_of!($type, $field) == $offset,
             ::core::concat!(
@@ -82,7 +82,7 @@ macro_rules! static_debug_size {
 
 #[macro_export(local_inner_macros)]
 macro_rules! static_debug_offset {
-    ($type:ty, $field:ident, $offset:expr) => {
+    ($type:ty, $field:expr, $offset:expr) => {
         const _: [u8; $offset] = [0; ::core::mem::offset_of!($type, $field)];
     };
 }

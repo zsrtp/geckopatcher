@@ -171,6 +171,16 @@ impl Default for SignatureECC {
     }
 }
 
+impl serde_binary::Encode for SignatureECC {
+    fn encode(&self, ser: &mut serde_binary::Serializer) -> serde_binary::Result<()> {
+        ser.writer.write_u32(self.sig_type as u32)?;
+        ser.writer.write_bytes(&self.sig)?;
+        ser.writer.write_bytes(&self.fill)?;
+        ser.writer.write_bytes(&self.issuer)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct CertHeader {
     pub public_key_type: PublicKeyType,
@@ -311,13 +321,18 @@ impl Default for CertECC {
 }
 
 pub mod hle {
+    use std::ffi::CString;
+
     use byteorder::ByteOrder;
+    use sha1::Digest;
 
     #[cfg(test)]
     use crate::iosc::PublicKey;
-    #[cfg(feature = "fs")]
     use crate::iosc::Signature;
-    use crate::{iosc::{AES128_KEY_SIZE, CertECC}, wii::crypto::{self, aes_decrypt_inplace, aes_encrypt_inplace}};
+    use crate::{
+        iosc::{AES128_KEY_SIZE, CertECC, ECCPublicKey, SignatureType},
+        wii::crypto::{self, CertReader, SignedReader, aes_decrypt_inplace, aes_encrypt_inplace},
+    };
 
     const ROOT_PUBLIC_KEY: [u8; 512] = [
         0xF8, 0x24, 0x6C, 0x58, 0xBA, 0xE7, 0x50, 0x03, 0x01, 0xFB, 0xB7, 0xC2, 0xEB, 0xE0, 0x01,
@@ -678,6 +693,7 @@ pub mod hle {
     #[cfg(feature = "fs")]
     crate::static_assert_eq_offset!(BootMiiKeyDump, crack_pad, 0x300);
 
+    #[cfg(feature = "fs")]
     impl Default for BootMiiKeyDump {
         fn default() -> Self {
             Self {
@@ -706,21 +722,31 @@ pub mod hle {
         }
     }
 
+    #[cfg(feature = "fs")]
     impl serde_binary::Decode for BootMiiKeyDump {
         fn decode(&mut self, de: &mut serde_binary::Deserializer) -> serde_binary::Result<()> {
             self.creator.copy_from_slice(&de.reader.read_bytes(0x100)?);
             self.boot1_hash.copy_from_slice(&de.reader.read_bytes(20)?);
-            self.common_key.copy_from_slice(&de.reader.read_bytes(0x10)?);
+            self.common_key
+                .copy_from_slice(&de.reader.read_bytes(0x10)?);
             self.ng_id = de.reader.read_u32()?;
             unsafe {
-                self.union.ng_priv.data.copy_from_slice(&de.reader.read_bytes(0x1e)?);
-                self.union.ng_priv.pad1.copy_from_slice(&de.reader.read_bytes(0x12)?);
+                self.union
+                    .ng_priv
+                    .data
+                    .copy_from_slice(&de.reader.read_bytes(0x1e)?);
+                self.union
+                    .ng_priv
+                    .pad1
+                    .copy_from_slice(&de.reader.read_bytes(0x12)?);
             }
             self.nand_key.copy_from_slice(&de.reader.read_bytes(0x10)?);
-            self.backup_key.copy_from_slice(&de.reader.read_bytes(0x10)?);
+            self.backup_key
+                .copy_from_slice(&de.reader.read_bytes(0x10)?);
             self.unk1 = de.reader.read_u32()?;
             self.unk2 = de.reader.read_u32()?;
-            self.eeprom_pad.copy_from_slice(&de.reader.read_bytes(0x80)?);
+            self.eeprom_pad
+                .copy_from_slice(&de.reader.read_bytes(0x80)?);
             self.ms_id = de.reader.read_u32()?;
             self.ca_id = de.reader.read_u32()?;
             self.ng_key_id = de.reader.read_u32()?;
@@ -738,12 +764,14 @@ pub mod hle {
             self.counters[1].update_tag = de.reader.read_u32()?;
             self.counters[1].checksum = de.reader.read_u16()?;
             self.fill.copy_from_slice(&de.reader.read_bytes(24)?);
-            self.korean_key.copy_from_slice(&de.reader.read_bytes(0x10)?);
+            self.korean_key
+                .copy_from_slice(&de.reader.read_bytes(0x10)?);
             self.pad3.copy_from_slice(&de.reader.read_bytes(0x74)?);
             self.prng_seed[0] = de.reader.read_u16()?;
             self.prng_seed[1] = de.reader.read_u16()?;
             self.pad4.copy_from_slice(&de.reader.read_bytes(4)?);
-            self.crack_pad.copy_from_slice(&de.reader.read_bytes(0x100)?);
+            self.crack_pad
+                .copy_from_slice(&de.reader.read_bytes(0x100)?);
             Ok(())
         }
     }
@@ -806,7 +834,7 @@ pub mod hle {
             self.key_entries[DefaultHandle::HandleFsKey as usize] = KeyEntry::new(
                 ObjectType::TypeSecretKey,
                 ObjectSubType::AES128,
-                vec![0; 0x10],
+                vec![0; AES128_KEY_SIZE],
                 5,
                 None,
             );
@@ -924,7 +952,9 @@ pub mod hle {
                 .map(|s| ::std::path::PathBuf::from(s))
                 .unwrap_or_default();
             path.push("keys.bin");
-            let data = if let Ok(data) = std::fs::read(path) {data} else {
+            let data = if let Ok(data) = std::fs::read(path) {
+                data
+            } else {
                 #[cfg(feature = "log")]
                 log::warn!(
                     "[Gecko Reader] keys.bin could not be found. Default values will be used."
@@ -932,61 +962,109 @@ pub mod hle {
                 return;
             };
 
-            let dump: BootMiiKeyDump = if let Ok(dump) = serde_binary::decode(&data, serde_binary::binary_stream::Endian::Big) {dump} else {
+            let dump: BootMiiKeyDump = if let Ok(dump) =
+                serde_binary::decode(&data, serde_binary::binary_stream::Endian::Big)
+            {
+                dump
+            } else {
                 #[cfg(feature = "log")]
                 log::warn!("[Gecko Reader] Failed to read from keys.bin.");
                 return;
             };
-            
-            self.key_entries[DefaultHandle::HandleConsoleKey as usize].data = unsafe {dump.union.ng_priv}.data.to_vec();
+
+            self.key_entries[DefaultHandle::HandleConsoleKey as usize].data =
+                unsafe { dump.union.ng_priv }.data.to_vec();
             self.console_signature.copy_from_slice(&dump.ng_sig);
             self.ms_id = dump.ms_id;
             self.ca_id = dump.ca_id;
             self.console_key_id = dump.ng_key_id;
             self.key_entries[DefaultHandle::HandleConsoleId as usize].misc_data = dump.ng_id;
             self.key_entries[DefaultHandle::HandleFsKey as usize].data = dump.nand_key.to_vec();
-            self.key_entries[DefaultHandle::HandleFsMac as usize].data = unsafe {dump.union.nand_hmac}.data.to_vec();
+            self.key_entries[DefaultHandle::HandleFsMac as usize].data =
+                unsafe { dump.union.nand_hmac }.data.to_vec();
             self.key_entries[DefaultHandle::HandlePrngKey as usize].data = dump.backup_key.to_vec();
-            self.key_entries[DefaultHandle::HandleBoot2Version as usize].misc_data = dump.counters[0].boot2version as u32;
+            self.key_entries[DefaultHandle::HandleBoot2Version as usize].misc_data =
+                dump.counters[0].boot2version as u32;
         }
 
         #[allow(unused)]
         fn find_free_entry(&self) -> Option<(Handle, &KeyEntry)> {
-            self.key_entries.iter().enumerate().find_map(|(handle, entry)| if !entry.in_use {Some((Handle(handle as u32), entry))} else {None})
+            self.key_entries
+                .iter()
+                .enumerate()
+                .find_map(|(handle, entry)| {
+                    if !entry.in_use {
+                        Some((Handle(handle as u32), entry))
+                    } else {
+                        None
+                    }
+                })
         }
 
         fn find_free_entry_mut(&mut self) -> Option<(Handle, &mut KeyEntry)> {
-            self.key_entries.iter_mut().enumerate().find_map(|(handle, entry)| if !entry.in_use {Some((Handle(handle as u32), entry))} else {None})
+            self.key_entries
+                .iter_mut()
+                .enumerate()
+                .find_map(|(handle, entry)| {
+                    if !entry.in_use {
+                        Some((Handle(handle as u32), entry))
+                    } else {
+                        None
+                    }
+                })
         }
 
         fn find_entry(&self, handle: Handle, search_include_root: bool) -> Option<&KeyEntry> {
             if search_include_root && handle.0 == DefaultHandle::HandleRootKey as u32 {
                 return Some(&self.root_key_entry);
             }
-            if (handle.0 as usize) < self.key_entries.len() { Some(&self.key_entries[handle.0 as usize]) } else { None }
+            if (handle.0 as usize) < self.key_entries.len() {
+                Some(&self.key_entries[handle.0 as usize])
+            } else {
+                None
+            }
         }
 
         // Root is not mutable, so excluded by default
         fn find_entry_mut(&mut self, handle: Handle) -> Option<&mut KeyEntry> {
-            if (handle.0 as usize) < self.key_entries.len() { Some(&mut self.key_entries[handle.0 as usize]) } else { None }
+            if (handle.0 as usize) < self.key_entries.len() {
+                Some(&mut self.key_entries[handle.0 as usize])
+            } else {
+                None
+            }
         }
 
         fn has_ownership(&self, handle: Handle, pid: u32) -> bool {
-            handle.0 == DefaultHandle::HandleRootKey as u32 || (self.get_ownership(handle).is_ok_and(|owner_mask| (1u32.unbounded_shl(pid) & owner_mask) != 0))
+            handle.0 == DefaultHandle::HandleRootKey as u32
+                || (self
+                    .get_ownership(handle)
+                    .is_ok_and(|owner_mask| (1u32.unbounded_shl(pid) & owner_mask) != 0))
         }
 
         fn is_default_handle(&self, handle: Handle) -> bool {
             const LAST_DEFAULT_HANDLE: DefaultHandle = DefaultHandle::HandleNewCommonKey;
-            handle.0 <= LAST_DEFAULT_HANDLE as u32 || handle.0 == DefaultHandle::HandleRootKey as u32
+            handle.0 <= LAST_DEFAULT_HANDLE as u32
+                || handle.0 == DefaultHandle::HandleRootKey as u32
         }
 
-        fn decrypt_encrypt(&self, is_encrypt: bool, key_handle: Handle, iv: &[u8], input: &[u8], pid: u32) -> Result<Vec<u8>, IoscError> {
+        fn decrypt_encrypt(
+            &self,
+            is_encrypt: bool,
+            key_handle: Handle,
+            iv: &[u8],
+            input: &[u8],
+            pid: u32,
+        ) -> Result<Vec<u8>, IoscError> {
             if !self.has_ownership(key_handle, pid) {
                 return Err(IoscError::IoscEAccess);
             }
 
-            let entry = self.find_entry(key_handle, false).ok_or(IoscError::IoscEInval)?;
-            if entry.key_type != ObjectType::TypeSecretKey || entry.sub_type != ObjectSubType::AES128 {
+            let entry = self
+                .find_entry(key_handle, false)
+                .ok_or(IoscError::IoscEInval)?;
+            if entry.key_type != ObjectType::TypeSecretKey
+                || entry.sub_type != ObjectSubType::AES128
+            {
                 return Err(IoscError::IoscInvalidObjtype);
             }
             if entry.data.len() != AES128_KEY_SIZE {
@@ -1013,6 +1091,7 @@ pub mod hle {
         IoscEAccess = -2000,
         IoscEInval = -2002,
         IoscInvalidObjtype = -2005,
+        IoscFailCheckvalue = -2011,
         IoscFailInteral = -2012,
         IoscFailAlloc = -2013,
     }
@@ -1027,12 +1106,39 @@ pub mod hle {
                 }
                 IoscError::IoscEInval => write!(f, "IOSC_EINVAL ; Invalid value"),
                 IoscError::IoscFailAlloc => write!(f, "IOSC_FAIL_ALLOC ; Couldn't allocate object"),
-                IoscError::IoscFailInteral => write!(f, "IOSC_FAIL_INTERNAL ; IV has the wrong size"),
+                IoscError::IoscFailCheckvalue => {
+                    write!(f, "IOSC_FAIL_CHECKVALUE ; Couldn't validate signature key")
+                }
+                IoscError::IoscFailInteral => {
+                    write!(f, "IOSC_FAIL_INTERNAL ; IV has the wrong size")
+                }
                 IoscError::IoscInvalidObjtype => {
                     write!(f, "IOSC_INVALID_OBJTYPE ; Object type is not valid")
                 }
             }
         }
+    }
+
+    fn make_blank_ecc_cert<S: AsRef<::core::ffi::CStr>>(
+        issuer: &S,
+        name: &S,
+        private_key: &[u8],
+        key_id: u32,
+    ) -> CertECC {
+        let mut cert = CertECC::default();
+        cert.signature.sig_type = SignatureType::ECC;
+        let issuer_len =
+            ::core::cmp::min(cert.signature.issuer.len(), issuer.as_ref().count_bytes());
+        cert.signature.issuer[..issuer_len]
+            .copy_from_slice(&issuer.as_ref().to_bytes()[..issuer_len]);
+        cert.header.public_key_type = super::PublicKeyType::ECC;
+        let name_len = ::core::cmp::min(cert.header.name.len(), name.as_ref().count_bytes());
+        cert.header.name[..name_len].copy_from_slice(&name.as_ref().to_bytes()[..name_len]);
+        cert.header.id = u32::swap_bytes(key_id);
+        let mut private_key_buf = [0; _];
+        private_key_buf.copy_from_slice(&private_key);
+        cert.public_key = ECCPublicKey(crypto::ec::priv_to_pub(private_key_buf));
+        cert
     }
 
     impl Iosc {
@@ -1141,6 +1247,7 @@ pub mod hle {
             public_handle: Handle,
             pid: u32,
         ) -> Result<(), IoscError> {
+            use sha1::digest::Digest;
             if !self.has_ownership(dest_handle, pid)
                 || !self.has_ownership(private_handle, pid)
                 || !self.has_ownership(public_handle, pid)
@@ -1169,9 +1276,7 @@ pub mod hle {
             public_key.copy_from_slice(&public_entry.data);
             let shared_secret = crypto::ec::compute_shared_secret(private_key, public_key);
 
-            let mut hasher = sha1_smol::Sha1::new();
-            hasher.update(&shared_secret[..30]);
-            let sha1 = hasher.digest().bytes();
+            let sha1: [u8; _] = sha1::Sha1::digest(&shared_secret[..30]).into();
 
             let dest_entry = self
                 .find_entry_mut(dest_handle)
@@ -1218,55 +1323,188 @@ pub mod hle {
             if !self.has_ownership(signer_handle, pid) {
                 return Err(IoscError::IoscEAccess);
             }
-            
-            let entry = self.find_entry(signer_handle, true).ok_or(IoscError::IoscEInval)?;
+
+            let entry = self
+                .find_entry(signer_handle, true)
+                .ok_or(IoscError::IoscEInval)?;
             if entry.key_type != ObjectType::TypePublicKey {
                 return Err(IoscError::IoscInvalidObjtype);
             }
 
             match entry.sub_type {
                 ObjectSubType::RSA4096 | ObjectSubType::RSA2048 => {
-                    let expected_key_size: usize = if entry.sub_type == ObjectSubType::RSA2048 {0x100} else {0x200};
+                    use rsa::signature::Verifier;
+                    let expected_key_size: usize = if entry.sub_type == ObjectSubType::RSA2048 {
+                        0x100
+                    } else {
+                        0x200
+                    };
                     assert_eq!(entry.data.len(), expected_key_size);
                     assert_eq!(signature.len(), expected_key_size);
 
-                    // let mut rsa = mbedtls::pk::
-                },
+                    let rsa_public_key = rsa::RsaPublicKey::new(
+                        rsa::BigUint::from_bytes_le(&entry.data),
+                        rsa::BigUint::from_slice(&[entry.misc_data]),
+                    )
+                    .or(Err(IoscError::IoscFailCheckvalue))?;
+                    let verifying_key =
+                        rsa::pkcs1v15::VerifyingKey::<sha1::Sha1>::new(rsa_public_key);
+
+                    // TODO Instead of directly returning an IOSC_FAIL_CHECKVALUE, apply a powmod and check that it ends with digest.
+                    rsa::pkcs1v15::Signature::try_from(signature)
+                        .and_then(|signature| verifying_key.verify(&sha1, &signature))
+                        .or(Err(IoscError::IoscFailCheckvalue))?;
+
+                    Ok(())
+                }
+                ObjectSubType::ECC233 => {
+                    assert_eq!(entry.data.len(), ::core::mem::size_of::<ECCPublicKey>());
+                    assert_eq!(signature.len(), ::core::mem::size_of::<Signature>());
+                    let mut key = [0; _];
+                    let mut sign = [0; _];
+                    let mut hash = [0; _];
+                    key.copy_from_slice(&entry.data);
+                    sign.copy_from_slice(&signature);
+                    hash.copy_from_slice(&sha1);
+                    match crypto::ec::verify_signature(key, sign, hash) {
+                        true => Ok(()),
+                        false => Err(IoscError::IoscFailCheckvalue),
+                    }
+                }
                 _ => Err(IoscError::IoscInvalidObjtype),
             }
         }
 
-        pub fn import_certificate(&self) {
-            todo!()
+        pub fn import_certificate(
+            &mut self,
+            cert: &CertReader,
+            signer_handle: Handle,
+            dest_handle: Handle,
+            pid: u32,
+        ) -> Result<(), IoscError> {
+            if !self.has_ownership(signer_handle, pid) || !self.has_ownership(dest_handle, pid) {
+                return Err(IoscError::IoscEAccess);
+            }
+
+            let signer_entry = self
+                .find_entry(signer_handle, true)
+                .ok_or(IoscError::IoscEInval)?;
+            let dest_entry = self
+                .find_entry(dest_handle, true)
+                .ok_or(IoscError::IoscEInval)?;
+            if signer_entry.key_type != ObjectType::TypePublicKey
+                || dest_entry.key_type != ObjectType::TypePublicKey
+            {
+                return Err(IoscError::IoscInvalidObjtype);
+            }
+
+            if let Some(public_key) = cert.get_public_key() {
+                let exponent = if let Some(SignatureType::ECC) = cert.get_signature_type() {
+                    Some(&public_key[public_key.len() - 4..])
+                } else {
+                    None
+                };
+                self.import_public_key(dest_handle, &public_key, exponent, pid)
+            } else {
+                return Err(IoscError::IoscEInval);
+            }
         }
 
         pub fn get_ownership(&self, handle: Handle) -> Result<u32, IoscError> {
-            todo!()
+            let entry = self
+                .find_entry(handle, false)
+                .and_then(|entry| if entry.in_use { Some(entry) } else { None })
+                .ok_or(IoscError::IoscEInval)?;
+            Ok(entry.owner_mask)
         }
 
-        pub fn set_ownership(&mut self, handle: Handle, owner: u32, pid: u32) -> Result<(), IoscError> {
-            todo!()
+        pub fn set_ownership(
+            &mut self,
+            handle: Handle,
+            owner: u32,
+            pid: u32,
+        ) -> Result<(), IoscError> {
+            if !self.has_ownership(handle, pid) {
+                return Err(IoscError::IoscEAccess);
+            }
+
+            let entry = self.find_entry_mut(handle).ok_or(IoscError::IoscEInval)?;
+            let mask_with_current_pid = 1u32.unbounded_shl(pid);
+            let mask = entry.owner_mask | mask_with_current_pid;
+            if mask != mask_with_current_pid {
+                return Err(IoscError::IoscEAccess);
+            }
+            entry.owner_mask = (owner & !7) | mask;
+            Ok(())
         }
 
         pub fn is_using_default_id(&self) -> bool {
-            todo!()
+            self.get_device_id() == DEFAULT_DEVICE_ID
         }
 
         pub fn get_device_id(&self) -> u32 {
-            todo!()
+            self.key_entries[DefaultHandle::HandleConsoleId as usize].misc_data
         }
 
         pub fn get_device_certificate(&self) -> CertECC {
-            todo!()
+            let name: CString = CString::new(format!("NG{:08x}", self.get_device_id()))
+                .unwrap_or(c"NG00000000".into());
+            let (ca_id, ms_id) = (self.ca_id, self.ms_id);
+            let mut cert = make_blank_ecc_cert(
+                &CString::new(format!("Root-CA{ca_id:08x}-MS{ms_id:08x}"))
+                    .unwrap_or(c"Root-CA00000000-MS00000000".into()),
+                &name,
+                &self.key_entries[DefaultHandle::HandleConsoleKey as usize].data,
+                self.console_key_id,
+            );
+            cert.signature.sig = self.console_signature;
+            cert
         }
 
-        pub fn sign(&self, title_id: u64, data: &[u8], data_size: u32) -> (Vec<u8>, Vec<u8>) {
-            todo!()
+        pub fn sign(&self, title_id: u64, data: &[u8]) -> ([u8; ::core::mem::size_of::<CertECC>()], Signature) {
+            let mut ap_priv = [0u8; 30];
+            ap_priv[0x1d] = 1;
+            // setup random ap_priv here if desired
+            // rand::fill(&mut ap_priv);
+            // ap_priv[0x1d] = 1;
+
+            let signer = CString::new(format!(
+                "Root-CA{:08x}-MS{:08x}-NG{:08x}",
+                self.ca_id,
+                self.ms_id,
+                self.get_device_id()
+            ))
+            .expect(&format!("Signer should be formattable in all cases. [CA = {:?}; MS = {:?}; NG = {:?}]", self.ca_id, self.ms_id, self.get_device_id()));
+            let name = CString::new(format!("AP{:016x}", title_id))
+                .expect(&format!("Certification header's name should be formattable in all cases. [title_id = {:?}]", title_id));
+            let mut cert = make_blank_ecc_cert(&signer, &name, &ap_priv, 0);
+            // Sign AP cert.
+            const SKIP: usize = ::core::mem::offset_of!(CertECC, signature.issuer);
+            const CERT_LEN: usize = ::core::mem::size_of::<CertECC>() - SKIP;
+            let ap_cert_digest: [u8; _] = unsafe {
+                sha1::Sha1::digest(&::core::mem::transmute_copy::<CertECC, 
+                    [u8; ::core::mem::size_of::<CertECC>()]>(&cert)[SKIP..][..CERT_LEN])
+                .into()
+            };
+            let mut console_key = [0; 30];
+            console_key.copy_from_slice(
+                &self.key_entries[DefaultHandle::HandleConsoleKey as usize].data[..30],
+            );
+            cert.signature.sig = crypto::ec::sign(console_key, ap_cert_digest);
+            let ap_cert_out = unsafe {
+                ::core::mem::transmute_copy::<CertECC, [u8; ::core::mem::size_of::<CertECC>()]>(&cert)
+            };
+            // Sign the data.
+            let data_digest: [u8; _] = sha1::Sha1::digest(data).into();
+            let signature = crypto::ec::sign(ap_priv, data_digest);
+            (ap_cert_out, signature)
         }
     }
 
     #[cfg(test)]
     mod test {
+        use crate::wii::crypto::titles;
+
         use super::*;
 
         #[test]
@@ -1275,6 +1513,14 @@ pub mod hle {
             private_key.copy_from_slice(&DEFAULT_PRIVATE_KEY);
             let public_key = crypto::ec::priv_to_pub(private_key);
             assert_eq!(public_key, DEFAULT_PUBLIC_KEY);
+        }
+
+        #[test]
+        fn check_iosc_sign() {
+            const DATA: [u8; 20] = [89, 88, 252, 243, 48, 242, 210, 85, 215, 137, 104, 205, 76, 41, 234, 35, 95, 121, 87, 77];
+            let iosc = Iosc::new(ConsoleType::Retail);
+            let (cert, signature) = iosc.sign(titles::SYSTEM_MENU, &DATA);
+            println!("Cert: {:?}; Signature: {:?}", unsafe {::core::mem::transmute::<[u8; _], CertECC>(cert)}, signature);
         }
     }
 }
