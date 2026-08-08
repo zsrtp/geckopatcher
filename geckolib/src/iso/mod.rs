@@ -95,6 +95,8 @@ impl TryFrom<&[u8]> for FstEntry {
 pub enum FstEntryError {
     #[error("File offset is too large [offset = 0x{:X}; max = 0x{:X}]", .0, u32::MAX)]
     FileOffsetTooLarge(u64),
+    #[error("Directory index is too large [index = 0x{:X}; max = 0x{:X}]", .0, u32::MAX)]
+    DirectoryIndexTooLarge(u64),
 }
 
 impl FstEntry {
@@ -166,12 +168,13 @@ impl FstEntry {
         file_name_offset: u32,
         parent_dir: u64,
         next_dir_index: u32,
-        is_wii: bool,
     ) -> Result<Self, FstEntryError> {
         let mut node = Self::default();
         node.set_node_type(FstNodeType::Directory);
         node.set_file_name_offset(file_name_offset);
-        node.set_file_offset_parent_dir(parent_dir, is_wii)?;
+        node.file_offset_parent_dir = parent_dir
+            .try_into()
+            .map_err(|_| FstEntryError::DirectoryIndexTooLarge(parent_dir))?;
         node.set_file_size_next_dir_index(next_dir_index);
         Ok(node)
     }
@@ -328,5 +331,24 @@ impl FstNode {
             Self::Directory { next_dir_index, .. } => Some(next_dir_index),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wii_file_offsets_use_word_addresses() {
+        let entry = FstEntry::new_file(0, 0x100, 1, true).unwrap();
+
+        assert_eq!(entry.file_offset_parent_dir, 0x40);
+    }
+
+    #[test]
+    fn directory_parent_indices_are_not_word_addresses() {
+        let entry = FstEntry::new_directory(0, 5, 6).unwrap();
+
+        assert_eq!(entry.file_offset_parent_dir, 5);
     }
 }

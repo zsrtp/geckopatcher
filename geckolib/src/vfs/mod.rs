@@ -25,6 +25,14 @@ pub mod tree;
 pub mod data_source;
 pub use data_source::FileDataSource;
 
+fn encode_fst_size(size: u64, is_wii: bool) -> u32 {
+    if is_wii {
+        size.div_ceil(4) as u32
+    } else {
+        size as u32
+    }
+}
+
 pub trait Node<R> {
     fn name(&self) -> String;
     fn get_type(&self) -> NodeType;
@@ -208,15 +216,8 @@ where
                 let entry = FstEntry::try_from(entry_buf).unwrap();
                 let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
 
-                if is_wii {
-                    match &mut node {
-                        FstNode::File { file_offset, .. } => {
-                            *file_offset <<= 2;
-                        }
-                        FstNode::Directory { parent_dir, .. } => {
-                            *parent_dir <<= 2;
-                        }
-                    }
+                if is_wii && let FstNode::File { file_offset, .. } = &mut node {
+                    *file_offset <<= 2;
                 }
 
                 node
@@ -311,7 +312,6 @@ where
                     fst_name_bank.len() as u32,
                     cur_parent_dir_index as u64,
                     0,
-                    is_wii,
                 )?;
 
                 fst_name_bank.extend_from_slice(dir.name().as_bytes());
@@ -385,8 +385,8 @@ where
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
             (fst_list_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
-            fst_len as u32,
-            fst_len as u32,
+            encode_fst_size(fst_len, is_wii),
+            encode_fst_size(fst_len, is_wii),
         ];
         let mut b = vec![0u8; 0x10];
         BE::write_u32_into(&d, &mut b);
@@ -425,7 +425,7 @@ where
             .await?;
         pos += fst_list_padding_size;
 
-        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
+        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0)?];
         let mut fst_name_bank = Vec::new();
         let mut files = Vec::new();
 
@@ -1267,5 +1267,21 @@ impl<R> Node<R> for File<R> {
 
     fn as_file_mut(&mut self) -> Option<&mut File<R>> {
         Some(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wii_fst_size_uses_word_units() {
+        assert_eq!(encode_fst_size(0x100, true), 0x40);
+        assert_eq!(encode_fst_size(0x101, true), 0x41);
+    }
+
+    #[test]
+    fn gamecube_fst_size_uses_byte_units() {
+        assert_eq!(encode_fst_size(0x101, false), 0x101);
     }
 }

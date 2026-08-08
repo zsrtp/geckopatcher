@@ -928,15 +928,8 @@ where
                 let entry = FstEntry::try_from(entry_buf).unwrap();
                 let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
 
-                if is_wii {
-                    match &mut node {
-                        FstNode::File { file_offset, .. } => {
-                            *file_offset <<= 2;
-                        }
-                        FstNode::Directory { parent_dir, .. } => {
-                            *parent_dir <<= 2;
-                        }
-                    }
+                if is_wii && let FstNode::File { file_offset, .. } = &mut node {
+                    *file_offset <<= 2;
                 }
 
                 node
@@ -1046,8 +1039,8 @@ where
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
             (fst_list_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
-            fst_len as u32,
-            fst_len as u32,
+            super::encode_fst_size(fst_len, is_wii),
+            super::encode_fst_size(fst_len, is_wii),
         ];
         let mut b = vec![0u8; 0x10];
         BE::write_u32_into(&d, &mut b);
@@ -1079,7 +1072,7 @@ where
             .await?;
         pos += fst_list_padding_size;
 
-        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0, is_wii)?];
+        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0)?];
         let mut fst_name_bank = Vec::new();
         let mut files = Vec::new();
 
@@ -1136,7 +1129,6 @@ where
                                     .ok_or(GeckoFSError::DirStackUnderflow)?
                                     as u64,
                                 0,
-                                is_wii,
                             )?;
 
                             fst_name_bank.extend_from_slice(name.as_bytes());
@@ -1337,15 +1329,8 @@ where
                 let entry = FstEntry::try_from(entry_buf).unwrap();
                 let mut node = FstNode::from_fstnode(&entry, &str_tbl_buf).unwrap();
 
-                if is_wii {
-                    match &mut node {
-                        FstNode::File { file_offset, .. } => {
-                            *file_offset <<= 2;
-                        }
-                        FstNode::Directory { parent_dir, .. } => {
-                            *parent_dir <<= 2;
-                        }
-                    }
+                if is_wii && let FstNode::File { file_offset, .. } = &mut node {
+                    *file_offset <<= 2;
                 }
 
                 node
