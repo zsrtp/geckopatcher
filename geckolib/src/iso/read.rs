@@ -78,17 +78,26 @@ async fn get_partitions<R: AsyncRead + AsyncSeek>(
     let mut ret_vec: Vec<WiiPartition> = Vec::new();
     let mut data_idx: Option<usize> = None;
     for entry in part_info.entries.iter() {
-        let mut tmd_count_buf = [0u8; 2];
+        let mut header_buf = [0u8; PartHeader::BLOCK_SIZE];
         reader.seek(SeekFrom::Start(entry.offset)).await?;
-        reader.read_exact(&mut tmd_count_buf).await?;
-        let tmd_count = BE::read_u16(&tmd_count_buf);
-        let mut buf = vec![0u8; 0x2C0 + TitleMetaData::get_size_n(tmd_count)];
-        reader.seek(SeekFrom::Start(entry.offset)).await?;
-        reader.read_exact(&mut buf).await?;
-        let header = PartHeader::try_from(&buf[..0x2C0])?;
-        let tmd = TitleMetaData::from_partition(&buf[0x2C0..], 0);
+        reader.read_exact(&mut header_buf).await?;
+        let header = PartHeader::from(&header_buf);
+        let mut tmd_header = [0u8; 0x1E4];
+        reader
+            .seek(SeekFrom::Start(entry.offset + header.tmd_offset))
+            .await?;
+        reader.read_exact(&mut tmd_header).await?;
+        let tmd_count = BE::read_u16(&tmd_header[0x1DE..]);
+        let mut tmd_buf = vec![0u8; TitleMetaData::get_size_n(tmd_count)];
+        reader
+            .seek(SeekFrom::Start(entry.offset + header.tmd_offset))
+            .await?;
+        reader.read_exact(&mut tmd_buf).await?;
+        let tmd = TitleMetaData::from_partition(&tmd_buf, 0);
         let mut buf = vec![0u8; header.cert_size];
-        reader.seek(SeekFrom::Start(header.cert_offset)).await?;
+        reader
+            .seek(SeekFrom::Start(entry.offset + header.cert_offset))
+            .await?;
         reader.read_exact(&mut buf).await?;
         let cert = buf.into_boxed_slice();
         let part = WiiPartition {
@@ -141,17 +150,20 @@ fn get_partitions_sync<R: std::io::Read + std::io::Seek>(
     let mut ret_vec: Vec<WiiPartition> = Vec::new();
     let mut data_idx: Option<usize> = None;
     for entry in part_info.entries.iter() {
-        let mut tmd_count_buf = [0u8; 2];
+        let mut header_buf = [0u8; PartHeader::BLOCK_SIZE];
         reader.seek(SeekFrom::Start(entry.offset))?;
-        reader.read_exact(&mut tmd_count_buf)?;
-        let tmd_count = BE::read_u16(&tmd_count_buf);
-        let mut buf = vec![0u8; 0x2C0 + TitleMetaData::get_size_n(tmd_count)];
-        reader.seek(SeekFrom::Start(entry.offset))?;
-        reader.read_exact(&mut buf)?;
-        let header = PartHeader::try_from(&buf[..0x2C0])?;
-        let tmd = TitleMetaData::from_partition(&buf[0x2C0..], 0);
+        reader.read_exact(&mut header_buf)?;
+        let header = PartHeader::from(&header_buf);
+        let mut tmd_header = [0u8; 0x1E4];
+        reader.seek(SeekFrom::Start(entry.offset + header.tmd_offset))?;
+        reader.read_exact(&mut tmd_header)?;
+        let tmd_count = BE::read_u16(&tmd_header[0x1DE..]);
+        let mut tmd_buf = vec![0u8; TitleMetaData::get_size_n(tmd_count)];
+        reader.seek(SeekFrom::Start(entry.offset + header.tmd_offset))?;
+        reader.read_exact(&mut tmd_buf)?;
+        let tmd = TitleMetaData::from_partition(&tmd_buf, 0);
         let mut buf = vec![0u8; header.cert_size];
-        reader.seek(SeekFrom::Start(header.cert_offset))?;
+        reader.seek(SeekFrom::Start(entry.offset + header.cert_offset))?;
         reader.read_exact(&mut buf)?;
         let cert = buf.into_boxed_slice();
         let part = WiiPartition {
@@ -793,5 +805,50 @@ where
                 BE::read_u32(&buf[..][..4]),
             ))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn reads_partition_metadata_relative_to_partition_offset() {
+        let part_offset = 0x2000;
+        let cert = [0x5a; 0x80];
+        let mut tmd = TitleMetaData::default();
+        tmd.contents.push(TMDContent {
+            content_id: 1,
+            index: 0,
+            content_type: 1,
+            size: 0x600000,
+            hash: [0; consts::WII_HASH_SIZE],
+        });
+        let header = PartHeader {
+            tmd_size: tmd.get_size(),
+            tmd_offset: 0x800,
+            cert_size: cert.len(),
+            cert_offset: 0x1400,
+            ..Default::default()
+        };
+        let mut image = vec![0u8; part_offset + header.cert_offset as usize + cert.len()];
+        image[part_offset..part_offset + PartHeader::BLOCK_SIZE]
+            .copy_from_slice(&<[u8; PartHeader::BLOCK_SIZE]>::from(&header));
+        TitleMetaData::set_partition(&mut image[part_offset..], header.tmd_offset as usize, &tmd);
+        let cert_offset = part_offset + header.cert_offset as usize;
+        image[cert_offset..cert_offset + cert.len()].copy_from_slice(&cert);
+        let part_info = PartInfo {
+            offset: 0,
+            entries: vec![PartInfoEntry {
+                part_type: PartitionType::Data.into(),
+                offset: part_offset as u64,
+            }],
+        };
+
+        let partitions = get_partitions_sync(&mut Cursor::new(image), &part_info).unwrap();
+
+        assert_eq!(partitions.partitions[0].cert.as_ref(), cert);
+        assert_eq!(partitions.partitions[0].tmd.contents[0].size, 0x600000);
     }
 }

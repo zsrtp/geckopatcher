@@ -13,8 +13,7 @@ use std::{sync::Arc, task::Poll};
 use crate::{
     crypto::{aes_encrypt_inplace, consts, AesKey, Unpackable},
     iso::disc::{
-        align_addr, disc_set_header, to_raw_addr, PartHeader, TMDContent, TitleMetaData,
-        WiiDiscHeader,
+        align_addr, disc_set_header, PartHeader, TMDContent, TitleMetaData, WiiDiscHeader,
     },
 };
 
@@ -158,6 +157,7 @@ fn hash_group(group: &mut WiiGroup) -> [u8; consts::WII_HASH_SIZE] {
 /// Implementation of the Segher's fake signing algorithm
 fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
     let content = &mut part.tmd.contents[0];
+    content.size = part.header.data_size;
     let mut hashes_ = Vec::with_capacity(consts::WII_H3_SIZE as usize);
     hashes_.extend(hashes.iter().flatten());
     hashes_.resize(consts::WII_H3_SIZE as usize, 0);
@@ -171,12 +171,8 @@ fn fake_sign(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) {
         .hash
         .copy_from_slice(&Sha1::from(&hashes_).digest().bytes());
 
-    // Fake sign tmd
     if let Err(_err) = part.tmd.fake_sign() {
         crate::warn!("Error while signing TMD: {}", _err);
-    }
-    if let Err(_err) = part.header.ticket.fake_sign() {
-        crate::warn!("Error while signing Ticket: {}", _err);
     }
 }
 
@@ -300,13 +296,19 @@ where
             part.header.data_size = 0;
             part.header.tmd_size = part.tmd.get_size();
             part.header.tmd_offset = PartHeader::BLOCK_SIZE as u64;
+            part.header.cert_size = part.cert.len();
             part.header.cert_offset = part.header.tmd_offset + part.header.tmd_size as u64;
             part.header.h3_offset = std::cmp::max(
                 consts::WII_H3_OFFSET,
                 part.header.cert_offset + part.header.cert_size as u64,
             );
-            part.header.data_offset =
-                align_addr(part.header.cert_offset + part.header.cert_size as u64, 17);
+            part.header.data_offset = align_addr(
+                part.header
+                    .h3_offset
+                    .checked_add(consts::WII_H3_SIZE)
+                    .expect("partition metadata size overflow"),
+                17,
+            );
         }
         let buf =
             <[u8; PartHeader::BLOCK_SIZE]>::from(&disc.partitions.partitions[part_idx].header);
@@ -339,24 +341,30 @@ where
     }
 }
 
+fn raw_partition_size(virtual_size: u64) -> u64 {
+    let virtual_group_size = consts::WII_SECTOR_DATA_SIZE * 64;
+    let raw_group_size = consts::WII_SECTOR_SIZE as u64 * 64;
+    virtual_size.div_ceil(virtual_group_size) * raw_group_size
+}
+
 fn prepare_header(part: &mut WiiPartition, hashes: &[[u8; consts::WII_HASH_SIZE]]) -> Vec<u8> {
-    // Hash the whole table and return the partition header
     fake_sign(part, hashes);
     #[cfg(feature = "log")]
     let part_offset = part.part_offset;
     crate::debug!("Partition offset: 0x{part_offset:08X?}");
     crate::trace!("Partition Header: {:?}", part.header);
-    let mut buf = Vec::with_capacity((part.header.h3_offset + consts::WII_H3_SIZE) as usize);
-    let h3_padding =
-        part.header.h3_offset as usize - (PartHeader::BLOCK_SIZE + part.tmd.get_size());
-    //let mut buf = vec![0u8; PartHeader::BLOCK_SIZE + part.tmd.get_size()];
-    buf.extend_from_slice(&<[u8; PartHeader::BLOCK_SIZE]>::from(&part.header));
-    buf.extend(std::iter::repeat_n(0, part.tmd.get_size() + h3_padding));
-    buf.extend(hashes.iter().flatten());
-    buf.extend(
-        std::iter::repeat_n(0, (consts::WII_H3_SIZE - hashes.len() as u64 * consts::WII_HASH_SIZE as u64) as usize),
-    );
-    TitleMetaData::set_partition(&mut buf, PartHeader::BLOCK_SIZE, &part.tmd);
+
+    let h3_end = part.header.h3_offset + consts::WII_H3_SIZE;
+    let mut buf = vec![0; h3_end as usize];
+    buf[..PartHeader::BLOCK_SIZE]
+        .copy_from_slice(&<[u8; PartHeader::BLOCK_SIZE]>::from(&part.header));
+    TitleMetaData::set_partition(&mut buf, part.header.tmd_offset as usize, &part.tmd);
+    let cert_start = part.header.cert_offset as usize;
+    buf[cert_start..cert_start + part.cert.len()].copy_from_slice(&part.cert);
+    let h3_start = part.header.h3_offset as usize;
+    let h3: Vec<_> = hashes.iter().flatten().copied().collect();
+    assert!(h3.len() <= consts::WII_H3_SIZE as usize);
+    buf[h3_start..h3_start + h3.len()].copy_from_slice(&h3);
     buf
 }
 
@@ -582,33 +590,29 @@ where
         match state {
             WiiDiscWriterState::Init => {
                 crate::trace!("WiiDiscWriterFinalizeState::Init");
-                // Align the encrypted data size to 21 bits
-                status.disc.partitions.partitions[part_idx].header.data_size =
-                    align_addr(to_raw_addr(status.cursor), 21);
+                let virtual_group_size = consts::WII_SECTOR_DATA_SIZE * 64;
+                let is_partial_group = !status.cursor.is_multiple_of(virtual_group_size);
+                let data_size = raw_partition_size(status.cursor);
+                status.disc.partitions.partitions[part_idx].header.data_size = data_size;
+                let n_group = data_size / consts::WII_SECTOR_SIZE as u64 / 64;
 
-                // Hash and encrypt the last group
-                let n_group = status.disc.partitions.partitions[part_idx].header.data_size
-                    / consts::WII_SECTOR_SIZE as u64
-                    / 64;
-                let group_idx = (status.disc.partitions.partitions[part_idx].header.data_size - 1)
-                    / consts::WII_SECTOR_SIZE as u64
-                    / 64;
-                crate::trace!("Hashing and encrypting group #{}", group_idx);
-                if status.hashes.len() <= group_idx as usize {
-                    status
-                        .hashes
-                        .resize(group_idx as usize + 1, [0u8; consts::WII_HASH_SIZE]);
-                }
-                let group_hash = hash_group(&mut status.group);
-                status.hashes[group_idx as usize].copy_from_slice(&group_hash);
-                let part_key =
-                    decrypt_title_key(&status.disc.partitions.partitions[part_idx].header.ticket);
-                if !status.disc.disc_header.disable_disc_encrypt {
-                    encrypt_group(&mut status.group, part_key);
-                }
-
-                status.state = if status.cursor % (consts::WII_SECTOR_DATA_SIZE * 64) != 0 {
-                    WiiDiscWriterState::SeekToLastGroup(n_group - 1, status.group.to_vec())
+                status.state = if is_partial_group {
+                    let group_idx = n_group - 1;
+                    crate::trace!("Hashing and encrypting group #{}", group_idx);
+                    if status.hashes.len() <= group_idx as usize {
+                        status
+                            .hashes
+                            .resize(group_idx as usize + 1, [0u8; consts::WII_HASH_SIZE]);
+                    }
+                    let group_hash = hash_group(&mut status.group);
+                    status.hashes[group_idx as usize].copy_from_slice(&group_hash);
+                    let part_key = decrypt_title_key(
+                        &status.disc.partitions.partitions[part_idx].header.ticket,
+                    );
+                    if !status.disc.disc_header.disable_disc_encrypt {
+                        encrypt_group(&mut status.group, part_key);
+                    }
+                    WiiDiscWriterState::SeekToLastGroup(group_idx, status.group.to_vec())
                 } else {
                     let hashes = status.hashes.clone();
                     WiiDiscWriterState::SeekToPartHeader(prepare_header(
@@ -834,5 +838,69 @@ impl<W> DiscWriter<W> {
             DiscWriter::Wii(writer) => Some(writer),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn partition() -> WiiPartition {
+        let mut part = WiiPartition::default();
+        part.header.data_size = 0x600000;
+        part.header.tmd_offset = PartHeader::BLOCK_SIZE as u64;
+        part.tmd.contents.push(TMDContent {
+            content_id: 0,
+            index: 0,
+            content_type: 1,
+            size: 0xff7c0000,
+            hash: [0; consts::WII_HASH_SIZE],
+        });
+        part.header.tmd_size = part.tmd.get_size();
+        part.header.cert_offset = part.header.tmd_offset + part.header.tmd_size as u64;
+        part.cert = vec![0x5a; 0x300].into();
+        part.header.cert_size = part.cert.len();
+        part.header.h3_offset = consts::WII_H3_OFFSET;
+        part
+    }
+
+    #[test]
+    fn fake_sign_updates_tmd_content_size_without_changing_ticket() {
+        let mut part = partition();
+        let ticket = <[u8; PartHeader::BLOCK_SIZE]>::from(&part.header);
+
+        fake_sign(&mut part, &[[0; consts::WII_HASH_SIZE]]);
+
+        assert_eq!(part.tmd.contents[0].size, part.header.data_size);
+        assert_eq!(
+            &<[u8; PartHeader::BLOCK_SIZE]>::from(&part.header)[..0x2a4],
+            &ticket[..0x2a4]
+        );
+    }
+
+    #[test]
+    fn prepare_header_preserves_certificate_chain() {
+        let mut part = partition();
+        let cert_offset = part.header.cert_offset as usize;
+        let cert = part.cert.clone();
+
+        let header = prepare_header(&mut part, &[[0; consts::WII_HASH_SIZE]]);
+
+        assert_eq!(
+            &header[cert_offset..cert_offset + cert.len()],
+            cert.as_ref()
+        );
+    }
+
+    #[test]
+    fn exact_group_size_does_not_add_an_empty_group() {
+        let virtual_group_size = consts::WII_SECTOR_DATA_SIZE * 64;
+        let raw_group_size = consts::WII_SECTOR_SIZE as u64 * 64;
+
+        assert_eq!(raw_partition_size(virtual_group_size), raw_group_size);
+        assert_eq!(
+            raw_partition_size(virtual_group_size + 1),
+            raw_group_size * 2
+        );
     }
 }
