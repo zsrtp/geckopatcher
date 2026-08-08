@@ -382,11 +382,15 @@ where
 
         let fst_len = GeckoFSLegacy::visitor_fst_len(0, &self.root) - 1;
 
+        // Wii FST sizes are stored as words (see encode_fst_size); align the length
+        // so the size field round-trips without Dolphin over/under-reading the FST.
+        let fst_len_aligned = (fst_len + 3) & !3u64;
+
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
             (fst_list_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
-            encode_fst_size(fst_len, is_wii),
-            encode_fst_size(fst_len, is_wii),
+            encode_fst_size(fst_len_aligned, is_wii),
+            encode_fst_size(fst_len_aligned, is_wii),
         ];
         let mut b = vec![0u8; 0x10];
         BE::write_u32_into(&d, &mut b);
@@ -470,6 +474,14 @@ where
             .len()
             .to_u64()
             .ok_or(eyre::eyre!("Buffer too large"))?;
+
+        // Pad the FST table up to the aligned length advertised in the header so the
+        // Wii word-address round-trip is exact and the FST ends on a null byte.
+        if fst_len_aligned > fst_len {
+            let pad = (fst_len_aligned - fst_len) as usize;
+            writer.write_all(&vec![0u8; pad]).await?;
+            pos += pad as u64;
+        }
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]

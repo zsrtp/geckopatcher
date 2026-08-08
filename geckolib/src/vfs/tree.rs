@@ -1036,11 +1036,17 @@ where
 
         let fst_len = self.visitor_fst_len(0, self.root)? - 1;
 
+        // Wii FST sizes are stored as 32-bit words (see encode_fst_size). For the
+        // size field to round-trip without Dolphin over/under-reading the FST, the
+        // FST's length must be a multiple of 4. We align it here and pad the written
+        // table below to match.
+        let fst_len_aligned = (fst_len + 3) & !3u64;
+
         let d = [
             (dol_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
             (fst_list_offset >> if is_wii { 2u8 } else { 0u8 }) as u32,
-            super::encode_fst_size(fst_len, is_wii),
-            super::encode_fst_size(fst_len, is_wii),
+            super::encode_fst_size(fst_len_aligned, is_wii),
+            super::encode_fst_size(fst_len_aligned, is_wii),
         ];
         let mut b = vec![0u8; 0x10];
         BE::write_u32_into(&d, &mut b);
@@ -1185,6 +1191,14 @@ where
             .len()
             .to_u64()
             .ok_or(GeckoFSError::BufferTooLarge)?;
+
+        // Pad the FST table up to the aligned length we advertised in the header so
+        // the Wii word-address round-trip is exact and the FST ends on a null byte.
+        if fst_len_aligned > fst_len {
+            let pad = (fst_len_aligned - fst_len) as usize;
+            writer.write_all(&vec![0u8; pad]).await?;
+            pos += pad as u64;
+        }
 
         // Traverse the root directory tree to write all the files in order
         #[cfg(feature = "progress")]
@@ -1414,3 +1428,201 @@ where
         Ok(Self { root, sys, arena })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_sample_fs() -> GeckoFS<()> {
+        let mut arena: Arena<FsNode<()>> = Arena::new();
+        let root = arena.new_node(FsNode::Directory { name: "".into() });
+        let sys = arena.new_node(FsNode::Directory { name: "&&systemdata".into() });
+
+        let file =
+            |name: &str, data: &[u8]| FileDataSource::Box { data: data.into(), name: name.into() };
+        FsNode::new_file(root, file("top.bin", &[0u8; 4]), &mut arena).unwrap();
+        let dir_a = FsNode::new_directory(root, "dirA", &mut arena).unwrap();
+        FsNode::new_file(dir_a, file("a1.bin", &[0u8; 4]), &mut arena).unwrap();
+        let dir_sub = FsNode::new_directory(dir_a, "sub", &mut arena).unwrap();
+        FsNode::new_file(dir_sub, file("s1.bin", &[0u8; 4]), &mut arena).unwrap();
+        FsNode::new_file(dir_a, file("a2.bin", &[0u8; 4]), &mut arena).unwrap();
+        let dir_b = FsNode::new_directory(root, "dirB", &mut arena).unwrap();
+        FsNode::new_file(dir_b, file("b1.bin", &[0u8; 4]), &mut arena).unwrap();
+        let _ = sys;
+
+        GeckoFS { root, sys, arena }
+    }
+
+    // Mirrors the FST-building loop in GeckoFS::serialize (tree.rs). Returns the
+    // packed entries plus the name table.
+    fn build_fst<R>(fs: &GeckoFS<R>, is_wii: bool) -> (Vec<FstEntry>, Vec<u8>) {
+        let mut output_fst = vec![FstEntry::new_directory(0, 0, 0).unwrap()];
+        let mut fst_name_bank = Vec::new();
+        let mut offset = 0x100u64;
+        let mut cur_parent_dir_index: Vec<u64> = vec![0];
+        for edge in fs.root.traverse(&fs.arena).filter(|e| {
+            fs.root
+                != match e {
+                    indextree::NodeEdge::Start(id) => *id,
+                    indextree::NodeEdge::End(id) => *id,
+                }
+        }) {
+            match edge {
+                indextree::NodeEdge::Start(node_id) => {
+                    match fs.arena.get(node_id).map(|n| n.get()) {
+                        Some(FsNode::File { file }) => {
+                            let pos = align_addr(offset, 5);
+                            offset = pos;
+                            output_fst.push(
+                                FstEntry::new_file(
+                                    fst_name_bank.len() as u32,
+                                    pos as u64,
+                                    file.len().unwrap() as u32,
+                                    is_wii,
+                                )
+                                .unwrap(),
+                            );
+                            fst_name_bank.extend_from_slice(file.name().as_bytes());
+                            fst_name_bank.push(0);
+                            offset += file.len().unwrap() as u64;
+                            offset = align_addr(offset, 2);
+                        }
+                        Some(FsNode::Directory { name }) => {
+                            let this_idx = output_fst.len();
+                            output_fst.push(
+                                FstEntry::new_directory(
+                                    fst_name_bank.len() as u32,
+                                    *cur_parent_dir_index.last().unwrap() as u64,
+                                    0,
+                                )
+                                .unwrap(),
+                            );
+                            fst_name_bank.extend_from_slice(name.as_bytes());
+                            fst_name_bank.push(0);
+                            cur_parent_dir_index.push(this_idx as u64);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                indextree::NodeEdge::End(node_id) => {
+                    match fs.arena.get(node_id).map(|n| n.get()) {
+                        Some(FsNode::File { .. }) => {}
+                        Some(FsNode::Directory { .. }) => {
+                            let this_idx = cur_parent_dir_index.pop().unwrap() as usize;
+                            let next = output_fst.len() as u32;
+                            output_fst[this_idx].set_file_size_next_dir_index(next);
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        }
+        let n = output_fst.len() as u32;
+        output_fst[0].set_file_size_next_dir_index(n);
+        (output_fst, fst_name_bank)
+    }
+
+    // Faithful port of Dolphin's FileSystemGCWii::IsValid / constructor checks.
+    fn dolphin_fst_is_valid(
+        bytes: &[u8],
+        header_word_size: u32,
+        offset_shift: u8,
+        num_entries: usize,
+    ) -> bool {
+        let get = |idx: usize, off: usize| -> u32 {
+            let base = idx * 12 + off;
+            u32::from_be_bytes([bytes[base], bytes[base + 1], bytes[base + 2], bytes[base + 3]])
+        };
+        let name_offset = |idx: usize| (get(idx, 0) & 0x00FFFFFF) as u64 + 12 * num_entries as u64;
+        let is_dir = |idx: usize| (get(idx, 0) & 0xFF000000) != 0;
+
+        // Recover the byte FST size exactly as Dolphin does (stored << offset_shift).
+        let fst_size = (header_word_size as u64) << offset_shift;
+        if fst_size < 12 {
+            return false;
+        }
+        if (12 * num_entries) as u64 > fst_size {
+            return false; // "too many entries for its size"
+        }
+        if bytes[fst_size as usize - 1] != 0 {
+            return false; // "does not end with a null byte"
+        }
+        if !is_dir(0) {
+            return false; // root must be a directory
+        }
+
+        fn recurse(
+            bytes: &[u8],
+            get: &dyn Fn(usize, usize) -> u32,
+            name_offset: &dyn Fn(usize) -> u64,
+            is_dir: &dyn Fn(usize) -> bool,
+            fst_size: u64,
+            total: usize,
+            idx: usize,
+            parent: usize,
+        ) -> bool {
+            if name_offset(idx) >= fst_size {
+                return false;
+            }
+            if is_dir(idx) {
+                if get(idx, 4) as usize != parent {
+                    return false; // "incorrect parent offset"
+                }
+                let size = get(idx, 8) as usize;
+                if size <= idx {
+                    return false; // "impossibly small directory size"
+                }
+                if size > total {
+                    return false;
+                }
+                let mut c = idx + 1;
+                while c < size {
+                    if !recurse(bytes, get, name_offset, is_dir, fst_size, total, c, idx) {
+                        return false;
+                    }
+                    // Match Dolphin's `++` iterator, which skips entire subtrees.
+                    c = if is_dir(c) { get(c, 8) as usize } else { c + 1 };
+                }
+            }
+            true
+        }
+
+        recurse(
+            bytes,
+            &get,
+            &name_offset,
+            &is_dir,
+            fst_size,
+            num_entries,
+            0,
+            0,
+        )
+    }
+
+    #[test]
+    fn serialized_fst_is_valid_under_dolphin_rules() {
+        let fs = build_sample_fs();
+        let (entries, name_bank) = build_fst(&fs, true);
+
+        let num_entries = entries.len();
+        let fst_len = (num_entries * 12) + name_bank.len();
+        let aligned = (fst_len + 3) & !3;
+        let mut bytes: Vec<u8> = Vec::new();
+        for e in &entries {
+            bytes.extend_from_slice(&e.pack());
+        }
+        bytes.extend_from_slice(&name_bank);
+        // Pad exactly like the serializer now does.
+        bytes.resize(aligned, 0);
+
+        // Without the new alignment fix, a non-word-multiple FST would make Dolphin
+        // read `ceil(fst_len/4)*4` bytes and hit a non-null final byte. Check both.
+        let header_word_kind = (aligned / 4) as u32;
+        assert_eq!((header_word_kind as u64) << 2, aligned as u64);
+        assert!(
+            dolphin_fst_is_valid(&bytes, header_word_kind, 2, num_entries),
+            "Wii FST should pass Dolphin validation"
+        );
+    }
+}
+
