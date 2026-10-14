@@ -1,27 +1,61 @@
 # Web Patcher
 
-This is the web version of the GeckoPatcher.
+The web version of GeckoPatcher. It is a self-contained static web application which
+requires no server-side computation — only a static web server (or any HTTPS host) to
+serve it. Users patch their game directly from the browser.
 
-This can be used to deploy your own mods for users to patch their game directly from their browser. It's a self contained web application which doesn't require any fancy server other than a static web server (no server computation required).
+You can deploy it with your own mods by customizing the files in `assets/`:
 
-You can customize the patcher to use for your application by modifying in `assets/` the files `config.toml`, `patches/meta.json`, and `patches/mapping.json`, as well as providing your own SVG file to produce the icons.
+- `config.toml` — the name, short name, and icon used for the Progressive Web
+  Application (PWA) manifest generated when the project is compiled.
+- `patches/mapping.json` — maps the first 8 bytes of a game dump (the game's
+  code + region, e.g. `GZ2E01\0\0`) to a version string such as `gcn_ntscu` or
+  `wii_ntscu_10`. The version strings encode the platform and region (GameCube
+  NTSC-U, Wii NTSC-U 1.0, etc.) and match the per-version/region patch files
+  produced by projects like [TPGZ](https://github.com/zsrtp/tpgz)
+  (e.g. `1.0.0-gcn-ntscu.patch`).
+- `patches/meta.json` — lists all the available patch files. Each entry contains the
+  name of the patch (usually the mod version), the path to the `.patch` file, and the
+  game version (from `patches/mapping.json`) it applies to. The patcher uses this to
+  only show the patches that match the user's dump.
+- An SVG file (e.g. `Gecko2.svg`) used to produce the icons.
 
-- `config.toml` contains only the name and identifier for the Progressive Web Application (PWA) manifest file that will be generated when compiling the project.
-- `patches/mapping.json` contains the mapping from the first 8 bytes of the game's dump to a version string used in `patches/meta.json` to filter the available patches to only show the user the ones corresponding to their dump.
-- `patches/meta.json` contains all the available patch files produced from your mod. Each entry contains the name of the patch (usually the version of the mod), the path to the patch file, and the version of the game it can be applied to (from `patches/mapping.json`).
+## Compiling
 
-## How to compile
+The web patcher is built with [trunk](https://trunkrs.dev). Install it with
+`cargo install trunk`, then build:
 
-The web patcher is built using [trunk](https://trunkrs.dev). It can be installed from cargo with `cargo install trunk`.
-Once that is installed, you can build the project by running `trunk build`. This will compile and package the web application
-to the `dist` folder. The option `--release` is available to build a release version.
+```sh
+$ trunk build
+```
 
-By default, the application will look for patch files provided in the `patches` folder, but it can be built with the `generic_patch`
-feature flag (`--features generic_patch`) to have a version of the application which accepts a patch provided by the user.
+This compiles and packages the web application into the `dist/` folder. Add `--release`
+for a release build. A `pre_build` hook (configured in `Trunk.toml`) runs the `xtask`
+Cargo package to generate the PWA manifest before each build.
 
-## How to run
+By default the application ships with the patch files found in `assets/patches/`.
+It can also be built with the `generic_patch` feature flag to produce a version which
+accepts a user-provided patch file instead:
 
-Once built, the application can be provided to users by any server which supports secure connection through SSL/TLS (HTTPS).
+```sh
+$ trunk build --features generic_patch
+```
 
-For testing, you can run `trunk serve` to launch a dev server and go to https://localho.st:8081/ to see the patcher run and
-update on changes in real time. The server configuration can be changed in `Trunk.toml`.
+## Running
+
+Once built, serve the `dist/` folder with any static server over a secure HTTPS
+connection. The patcher requires a secure context.
+
+For local development, `trunk serve` starts a dev server which rebuilds and reloads on
+changes. The server is configured in `Trunk.toml` to serve on
+`https://localho.st:8081` using the self-signed `key.pem` and `cert.pem` certificates
+shipped in this directory, and to set the cross-origin isolation headers required by the
+application (`Cross-Origin-Resource-Policy: same-site`,
+`Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp`).
+
+```sh
+$ trunk serve
+```
+
+There is also a `run_dev_server.sh` script which serves an existing `dist/` build with
+the same cross-origin headers, which is useful for testing a production build locally.

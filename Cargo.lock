@@ -1875,7 +1875,7 @@ dependencies = [
 
 [[package]]
 name = "geckolib"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "aes",
  "bsdiff",
@@ -2088,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "gui-patcher"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-std",
  "eframe",
@@ -3651,7 +3651,7 @@ checksum = "57397d16646700483b67d2dd6511d79318f9d057fdbd21a4066aeac8b41d310a"
 
 [[package]]
 name = "romhack"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-std",
  "clap",
