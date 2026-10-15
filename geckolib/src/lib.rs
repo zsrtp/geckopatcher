@@ -129,11 +129,20 @@ struct Changes {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+fn insert_checksum(data: &[u8], checksum: &mut setsum::Setsum) {
+    use sha3::Digest;
+    let mut hasher = sha3::Sha3_256::new();
+    hasher.update(data);
+    checksum.insert(&hasher.finalize());
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 async fn extract_changes<R, R2>(
     original: &mut GeckoFS<R>,
     original_root: NodeId,
     patched: &mut GeckoFS<R2>,
     patched_root: NodeId,
+    checksum: &mut setsum::Setsum,
 ) -> Result<Changes, eyre::Report>
 where
     R: AsyncRead + AsyncSeek + Unpin,
@@ -163,48 +172,92 @@ where
     let mut deletions: Vec<RelativePathBuf> = Vec::new();
     let mut changes: HashMap<RelativePathBuf, Vec<u8>> = HashMap::new();
 
-    for orig_path in orig_files.iter() {
-        if patch_files.contains(orig_path) {
-            #[cfg(feature = "progress")]
-            if let Ok(mut updater) = UPDATER.try_lock() {
-                updater.set_message(format!(
-                    "Checking {}",
-                    orig_path
-                        .iter()
-                        .next_back()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("<unk>")
-                ))?;
-            }
-            // File from original found in patched, check if content differs
-            use futures::{AsyncReadExt, AsyncSeekExt};
+    use futures::{AsyncReadExt, AsyncSeekExt};
+
+    // Files present in both trees get a bsdiff. The diff is the CPU-bound part, so it
+    // is computed in parallel with rayon. Files are processed in bounded chunks so only
+    // a few file contents + their bsdiff buffers are resident at once: DIFF_CHUNK caps
+    // both the number of concurrent bsdiff tasks and the extra memory they use.
+    const DIFF_CHUNK: usize = 8;
+    let common: Vec<&PathBuf> = orig_files
+        .iter()
+        .filter(|p| patch_files.contains(p))
+        .collect();
+    for chunk in common.chunks(DIFF_CHUNK) {
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.try_lock() {
+            updater.set_message(format!("Checking {} files...", chunk.len()))?;
+        }
+        // Read each original + patched file content exactly once, hashing the original
+        // as we go (single pass; the same buffer also feeds the diff below).
+        let mut items = Vec::with_capacity(chunk.len());
+        for p in chunk {
             let mut orig_buf = Vec::new();
             let orig_file = original
-                .get_file_mut(original_root, orig_path)
+                .get_file_mut(original_root, p)
                 .expect("path is a file");
             orig_file.seek(std::io::SeekFrom::Start(0)).await?;
             orig_file.read_to_end(&mut orig_buf).await?;
+            insert_checksum(&orig_buf, checksum);
             let mut patch_buf = Vec::new();
             let patch_file = patched
-                .get_file_mut(patched_root, orig_path)
+                .get_file_mut(patched_root, p)
                 .expect("path is a file");
             patch_file.seek(std::io::SeekFrom::Start(0)).await?;
             patch_file.read_to_end(&mut patch_buf).await?;
-            let diff = diff::diff(orig_buf, patch_buf)?;
-            if let Some(diff) = diff {
-                // There is a difference between the files, save it in the changes.
-                changes.insert(
-                    RelativePathBuf::from_path(orig_path)
-                        .expect("Path contains invalid characters"),
-                    diff,
-                );
-            }
-        } else {
-            // File from original not found in patched, add to delete list
-            deletions.push(
-                RelativePathBuf::from_path(orig_path).expect("Path contains invalid characters"),
-            );
+            items.push((
+                RelativePathBuf::from_path(p).expect("Path contains invalid characters"),
+                orig_buf,
+                patch_buf,
+            ));
         }
+        let results: Vec<(RelativePathBuf, std::io::Result<Option<Vec<u8>>>)> = {
+            #[cfg(feature = "parallel")]
+            {
+                use rayon::prelude::*;
+                items
+                    .into_par_iter()
+                    .map(|(path, orig_buf, patch_buf)| (path, diff::diff(orig_buf, patch_buf)))
+                    .collect()
+            }
+            #[cfg(not(feature = "parallel"))]
+            {
+                items
+                    .into_iter()
+                    .map(|(path, orig_buf, patch_buf)| (path, diff::diff(orig_buf, patch_buf)))
+                    .collect()
+            }
+        };
+        for (path, result) in results {
+            if let Some(diff) = result? {
+                changes.insert(path, diff);
+            }
+        }
+    }
+
+    // Files only in the original: deletions (still hashed for the checksum).
+    for orig_path in orig_files.iter().filter(|p| !patch_files.contains(p)) {
+        #[cfg(feature = "progress")]
+        if let Ok(mut updater) = UPDATER.try_lock() {
+            updater.set_message(format!(
+                "Checking {}",
+                orig_path
+                    .iter()
+                    .next_back()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("<unk>")
+            ))?;
+        }
+        let mut orig_buf = Vec::new();
+        let orig_file = original
+            .get_file_mut(original_root, orig_path)
+            .expect("path is a file");
+        orig_file.seek(std::io::SeekFrom::Start(0)).await?;
+        orig_file.read_to_end(&mut orig_buf).await?;
+        insert_checksum(&orig_buf, checksum);
+        deletions.push(
+            RelativePathBuf::from_path(orig_path).expect("Path contains invalid characters"),
+        );
     }
 
     let mut additions: Vec<RelativePathBuf> = Vec::new();
@@ -251,25 +304,21 @@ where
 {
     use zip::ZipWriter;
 
-    use crate::diff::calculate_checksum;
-
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
-        updater.set_message("Calculating checksum...")?;
-    }
-
-    let checksum_digest = calculate_checksum(&mut original).await?;
-
-    #[cfg(feature = "progress")]
-    if let Ok(mut updater) = UPDATER.try_lock() {
-        updater.set_message("")?;
-        updater.set_title("Calculating checksum... ok")?;
         updater.set_message("Extracting FileSystem changes...")?;
     }
 
     let (original_root, patched_root) = (original.root, patched.root);
-    let root_changes =
-        extract_changes(&mut original, original_root, &mut patched, patched_root).await?;
+    let mut checksum = setsum::Setsum::default();
+    let root_changes = extract_changes(
+        &mut original,
+        original_root,
+        &mut patched,
+        patched_root,
+        &mut checksum,
+    )
+    .await?;
 
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
@@ -279,8 +328,16 @@ where
     }
 
     let (original_sys, patched_sys) = (original.sys, patched.sys);
-    let sys_changes =
-        extract_changes(&mut original, original_sys, &mut patched, patched_sys).await?;
+    let sys_changes = extract_changes(
+        &mut original,
+        original_sys,
+        &mut patched,
+        patched_sys,
+        &mut checksum,
+    )
+    .await?;
+
+    let checksum_digest = checksum.digest();
 
     #[cfg(feature = "progress")]
     if let Ok(mut updater) = UPDATER.try_lock() {
