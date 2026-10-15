@@ -318,7 +318,13 @@ where
             updater.set_title("Replacing files...")?;
         }
 
-        for (iso_path, actual_path) in &self.config.files {
+        // `config.files` is a HashMap, whose iteration order is randomized per
+        // process. Adding replacement files in a random order would shift the FST
+        // layout (and thus every file offset / group hash) between runs, making the
+        // output ISO non-reproducible. Sort the keys so the result is deterministic.
+        let mut files: Vec<_> = self.config.files.iter().collect();
+        files.sort_by(|a, b| a.0.cmp(b.0));
+        for (iso_path, actual_path) in files {
             #[cfg(target_os = "unknown")]
             add_file_to_iso(iso_path, actual_path, disc, &mut self.fs)?;
             #[cfg(not(target_os = "unknown"))]
