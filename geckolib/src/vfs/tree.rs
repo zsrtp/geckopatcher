@@ -1624,5 +1624,80 @@ mod tests {
             "Wii FST should pass Dolphin validation"
         );
     }
+
+    // A dummy reader satisfying the `GeckoFS<R>` bounds. Box-backed files never touch
+    // the reader, so this is only here to satisfy the type system.
+    struct DummyReader;
+
+    impl futures::AsyncRead for DummyReader {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &mut [u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Ready(Ok(0))
+        }
+    }
+
+    impl futures::AsyncSeek for DummyReader {
+        fn poll_seek(
+            self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _pos: std::io::SeekFrom,
+        ) -> std::task::Poll<std::io::Result<u64>> {
+            std::task::Poll::Ready(Ok(0))
+        }
+    }
+
+    fn fs_with_files(files: &[(&str, &[u8])]) -> GeckoFS<DummyReader> {
+        let mut arena: Arena<FsNode<DummyReader>> = Arena::new();
+        let root = arena.new_node(FsNode::Directory { name: "".into() });
+        let sys = arena.new_node(FsNode::Directory {
+            name: "&&systemdata".into(),
+        });
+        for (name, data) in files {
+            FsNode::new_file(
+                root,
+                FileDataSource::Box {
+                    data: data.to_vec().into_boxed_slice(),
+                    name: name.to_string(),
+                },
+                &mut arena,
+            )
+            .unwrap();
+        }
+        GeckoFS { root, sys, arena }
+    }
+
+    // The bsdiff `[diffs]` patch format and its cumulative checksum are a hard backward
+    // compatibility contract: patches produced by romhack-compiler and by earlier
+    // geckopatcher versions must stay readable and verifiable. This pins the exact
+    // checksum that `romhack diff` emits for a fixed input pair, so any future change
+    // to the diff computation (hashing pass, parallelization, etc.) that alters the
+    // output format is caught here.
+    #[test]
+    fn diff_checksum_is_backward_compatible() {
+        let original = fs_with_files(&[
+            ("a.bin", b"hello world"),
+            ("b.bin", b"unchanged file"),
+            ("dir/c.bin", b"nested file"),
+        ]);
+        let patched = fs_with_files(&[
+            ("a.bin", b"hello world patched!"),
+            ("b.bin", b"unchanged file"),
+            ("dir/c.bin", b"nested file"),
+        ]);
+        let mut out = std::io::Cursor::new(Vec::new());
+        futures::executor::block_on(crate::generate_from_diff(original, patched, &mut out))
+            .unwrap();
+
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(out.into_inner())).unwrap();
+        let config: crate::Config =
+            crate::parse_config(zip.by_name("RomHack.toml").unwrap()).unwrap();
+        let checksum = config.diffs.unwrap().checksum.unwrap();
+
+        // Computed once with the current implementation; must never change.
+        assert_eq!(checksum, "9dbc93b76edad461fe47b2dfed35e288e5ba080af78a610223addad0ea93b779");
+    }
 }
 
