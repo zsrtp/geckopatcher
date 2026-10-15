@@ -939,11 +939,16 @@ impl WiiGroup {
     }
 
     pub fn to_vec(&self) -> Vec<u8> {
-        self.as_sectors_ref()
-            .iter()
-            .flat_map(|sector| sector.hash.as_array_ref().iter().chain(sector.data.iter()))
-            .copied()
-            .collect()
+        // Preallocate the exact output size and gather the (non-contiguous) sectors
+        // directly, avoiding the intermediate Vec<&WiiSector> from as_sectors_ref().
+        let mut out = Vec::with_capacity(64 * consts::WII_SECTOR_SIZE);
+        for sub_group in self.sub_groups.iter() {
+            for sector in sub_group.sectors.iter() {
+                out.extend_from_slice(sector.hash.as_array_ref());
+                out.extend_from_slice(&sector.data);
+            }
+        }
+        out
     }
 
     pub fn as_sectors(self) -> Vec<WiiSector> {
