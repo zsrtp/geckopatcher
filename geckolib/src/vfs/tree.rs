@@ -1210,6 +1210,9 @@ where
         let mut offset = pos;
         #[cfg(feature = "progress")]
         let mut inc_buffer = 0usize;
+        // Reuse a single transfer buffer across all files instead of allocating a new
+        // 1 MiB buffer on every iteration of every file's write loop.
+        let mut buf = Vec::new();
         for (mut file, file_offset) in files {
             #[cfg(feature = "progress")]
             if let Ok(mut updater) = UPDATER.try_lock() {
@@ -1225,12 +1228,9 @@ where
             // async_std::io::copy(file, writer).await?; // way too slow
             let mut rem = file.len()?;
             file.seek(SeekFrom::Start(0)).await?;
-            loop {
-                if rem == 0 {
-                    break;
-                }
+            while rem > 0 {
                 let transfer_size = std::cmp::min(rem, 1024 * 1024);
-                let mut buf = vec![0u8; transfer_size];
+                buf.resize(transfer_size, 0);
                 file.read_exact(&mut buf).await?;
                 writer.write_all(&buf).await?;
                 rem -= transfer_size;
