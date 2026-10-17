@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use geckolib::{
-    update::{UpdaterBuilder, UpdaterType},
     UPDATER,
+    update::{UpdaterBuilder, UpdaterType},
 };
 use js_sys::Reflect;
 use lazy_static::lazy_static;

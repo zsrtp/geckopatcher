@@ -1,8 +1,10 @@
 use std::io::SeekFrom;
+use std::path::PathBuf;
 
-use async_std::path::PathBuf;
-use async_std::{io::prelude::*, task};
 use clap::{Parser, ValueHint};
+use futures::io::{AsyncReadExt, AsyncSeekExt};
+use futures_lite::future::block_on;
+use geckolib::async_file::AsyncFile;
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::vfs::GeckoFSLegacy;
@@ -30,14 +32,14 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     let args = Args::parse();
 
-    task::block_on(async {
-        let f = async_std::fs::File::open(args.file).await?;
+    block_on(async {
+        let f = AsyncFile::new(std::fs::File::open(args.file)?);
         let mut f = DiscReader::new(f).await?;
         let is_wii = f.get_type() == DiscType::Wii;
 
         f.seek(std::io::SeekFrom::Start(0)).await?;
         let mut buf = vec![0u8; 0x60];
-        f.read(&mut buf).await?;
+        let _ = f.read(&mut buf).await?;
         #[cfg(feature = "log")]
         log::info!(
             "[{}] Game Title: {:02X?}",
@@ -72,12 +74,14 @@ fn main() -> color_eyre::eyre::Result<()> {
             }
             if let Some(banner_out_path) = args.banner_out {
                 if let Ok(banner) = fs.root_mut().get_file_mut("opening.bnr") {
-                    let mut out_file = async_std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(banner_out_path)
-                        .await?;
-                    async_std::io::copy(banner, &mut out_file).await?;
+                    let mut out_file = AsyncFile::new(
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .open(banner_out_path)?,
+                    );
+                    futures::io::copy(banner, &mut out_file).await?;
                 }
             }
             buf.resize(32, 0);
@@ -88,7 +92,7 @@ fn main() -> color_eyre::eyre::Result<()> {
                 "map/Final/Release/frameworkF.map"
             })?;
             map_file.seek(SeekFrom::Start(0)).await?;
-            map_file.read(&mut buf).await?;
+            let _ = map_file.read(&mut buf).await?;
             #[cfg(feature = "log")]
             log::info!("str: {:?}", String::from_utf8_lossy(&buf));
         }

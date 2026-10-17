@@ -1,6 +1,7 @@
 {
     "name": "{{name}}",
     "short_name": "{{short_name}}",
+    "version": "{{version}}",
     "icons": [
         {
             "src": "./icon-256.png",

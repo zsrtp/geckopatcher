@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-#[cfg(feature = "log")]
-use async_std::io::{prelude::SeekExt, ReadExt};
-use clap::{arg, command, Parser, ValueHint};
+use clap::{Parser, ValueHint};
 use futures::AsyncWriteExt;
+#[cfg(feature = "log")]
+use futures::io::{AsyncReadExt, AsyncSeekExt};
 #[cfg(feature = "progress")]
 use geckolib::UPDATER;
+use geckolib::async_file::AsyncFile;
 use geckolib::{
     iso::{read::DiscReader, write::DiscWriter},
     vfs::tree::GeckoFS,
@@ -40,7 +41,7 @@ fn main() -> color_eyre::eyre::Result<()> {
     let args = Args::parse();
 
     futures::executor::block_on(async {
-        let file = async_std::fs::File::open(args.source).await?;
+        let file = AsyncFile::new(std::fs::File::open(args.source)?);
         #[cfg(feature = "log")]
         let mut f;
         #[cfg(not(feature = "log"))]
@@ -51,7 +52,7 @@ fn main() -> color_eyre::eyre::Result<()> {
         {
             f.seek(std::io::SeekFrom::Start(0)).await?;
             let mut buf = vec![0u8; 0x60];
-            f.read(&mut buf).await?;
+            let _ = f.read(&mut buf).await?;
             log::info!(
                 "[{}] Game Title: {:02X?}",
                 String::from_utf8_lossy(&buf[..6]),
@@ -61,13 +62,14 @@ fn main() -> color_eyre::eyre::Result<()> {
                     .expect("This game has no title")
             );
         }
-        let mut out: DiscWriter<async_std::fs::File> = DiscWriter::new(
-            async_std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(args.dest)
-                .await?,
+        let mut out: DiscWriter<AsyncFile> = DiscWriter::new(
+            AsyncFile::new(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(args.dest)?,
+            ),
             disc_info,
         );
         if let DiscWriter::Wii(wii_out) = out.clone() {

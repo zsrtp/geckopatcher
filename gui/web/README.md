@@ -4,6 +4,10 @@ The web version of GeckoPatcher. It is a self-contained static web application w
 requires no server-side computation — only a static web server (or any HTTPS host) to
 serve it. Users patch their game directly from the browser.
 
+The user interface is written in plain HTML, CSS and JavaScript; the only Rust is a
+single WebAssembly module (a Web Worker) which does the patching. This keeps the build
+simple: one `trunk build` produces everything.
+
 You can deploy it with your own mods by customizing the files in `assets/`:
 
 - `config.toml` — the name, short name, and icon used for the Progressive Web
@@ -26,25 +30,28 @@ The web patcher is built with [trunk](https://trunkrs.dev). Install it with
 `cargo install trunk`, then build:
 
 ```sh
-$ trunk build
+$ trunk build --release
 ```
 
-This compiles and packages the web application into the `dist/` folder. Add `--release`
-for a release build. A `pre_build` hook (configured in `Trunk.toml`) runs the `xtask`
-Cargo package to generate the PWA manifest before each build.
+This compiles and packages the web application into the `dist/` folder. A `pre_build`
+hook (configured in `Trunk.toml`) runs the `xtask` Cargo package to generate the PWA
+manifest and icons before each build.
 
-By default the application ships with the patch files found in `assets/patches/`.
-It can also be built with the `generic_patch` feature flag to produce a version which
-accepts a user-provided patch file instead:
+The build is single-threaded and requires no special flags or configuration.
 
-```sh
-$ trunk build --features generic_patch
-```
+## Generic mode
+
+If the `patches/` directory is omitted from a deployment, the application detects that
+`patches/meta.json` is missing and switches to *generic* mode automatically: instead of
+a drop-down of bundled patches, the user picks a `.patch` file from their computer. No
+separate build is needed for this — the same `dist/` output serves both modes.
 
 ## Running
 
 Once built, serve the `dist/` folder with any static server over a secure HTTPS
-connection. The patcher requires a secure context.
+connection. The patcher requires a secure context, cross-origin isolation, and the
+[File System Access API](https://developer.mozilla.org/en-US/docs/Web/API/File_System_Access_API)
+(used to stream the multi-gigabyte game dump without loading it into memory).
 
 For local development, `trunk serve` starts a dev server which rebuilds and reloads on
 changes. The server is configured in `Trunk.toml` to serve on

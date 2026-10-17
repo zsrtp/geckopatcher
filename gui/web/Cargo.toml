@@ -4,15 +4,10 @@ version = "0.1.3"
 edition = "2024"
 rust-version = "1.85"
 
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[build-dependencies]
-cc = "^1.2"
 
 [dependencies]
 log = "0.4.28"
-flume = "0.11.0"
 
 # web dependencies:
 geckolib = { path = "../../geckolib", default-features = false, features = [
@@ -21,55 +16,26 @@ geckolib = { path = "../../geckolib", default-features = false, features = [
     "progress",
 ] }
 eyre = "^0.6"
-yew = { version = "0.21.0", default-features = false, features = ["csr"] }
-console_log = "1.0.0"
-js-sys = "0.3.82"
-wasm-bindgen = "0.2.105"
-wasm-bindgen-futures = "0.4.54"
-serde = { version = "^1.0" }
-serde-wasm-bindgen = "0.6.5"
-console_error_panic_hook = { version = "0.1.7", optional = true }
-async-std = "1.13.2"
+console_log = "=1.0.0"
+js-sys = "=0.3.82"
+wasm-bindgen = "=0.2.105"
+wasm-bindgen-futures = "=0.4.43"
 wasm-tracing-allocator = { version = "0.1.1", optional = true }
 lazy_static = { version = "1.5.0" }
 futures = { version = "0.3.30" }
-rayon = { version = "^1.11", optional = true }
-wasm-bindgen-rayon = { version = "^1.3", optional = true, features = ["no-bundler"]}
 
 [dependencies.web-sys]
-version = "0.3.77"
+version = "=0.3.82"
 features = [
-    "Headers",
-    "Request",
-    "RequestInit",
-    "RequestMode",
-    "Response",
-    "HtmlSelectElement",
-    "HtmlOptionElement",
-    "HtmlOptionsCollection",
-    "HtmlInputElement",
-    "MessageChannel",
-    "MessagePort",
-    "Worker",
-    "WorkerOptions",
-    "WorkerType",
-    "WorkerGlobalScope",
-    "FileSystem",
+    "File",
     "FileSystemFileHandle",
-    "FileSystemDirectoryHandle",
-    "FileSystemGetFileOptions",
-    "FileSystemWritableFileStream",
-    "FileSystemSyncAccessHandle",
     "FileSystemReadWriteOptions",
-    "ReadableStreamDefaultReader",
-    "Navigator",
-    "StorageManager",
+    "FileSystemSyncAccessHandle",
+    "FileSystemWritableFileStream",
+    "DedicatedWorkerGlobalScope",
     "console",
-    "Window",
 ]
 
 [features]
-default = ["console_error_panic_hook"]
+default = []
 debug_alloc = ["wasm-tracing-allocator"]
-generic_patch = []
-parallel = ["dep:rayon", "dep:wasm-bindgen-rayon"]

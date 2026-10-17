@@ -6,9 +6,10 @@ use std::{
     task::{Context, Poll},
 };
 
-use async_std::{io, sync::Mutex};
+use futures::lock::Mutex;
 use futures::{AsyncRead, AsyncSeek, AsyncWrite, TryFutureExt};
 use js_sys::Uint8Array;
+use std::io;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::FileSystemWritableFileStream;
 
@@ -35,12 +36,7 @@ impl Read for WebFile {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let mut state = match self.state.try_lock() {
             Some(guard) => guard,
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock file state",
-                ))
-            }
+            None => return Err(std::io::Error::other("Failed to lock file state")),
         };
         let options = web_sys::FileSystemReadWriteOptions::new();
         options.set_at(state.cursor as f64);
@@ -49,10 +45,7 @@ impl Read for WebFile {
                 state.cursor += n as u64;
                 Ok(n as usize)
             }
-            Err(err) => Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )),
+            Err(err) => Err(std::io::Error::other(format!("{err:?}"))),
         }
     }
 }
@@ -61,49 +54,30 @@ impl Seek for WebFile {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
         let mut state = match self.state.try_lock() {
             Some(guard) => guard,
-            None => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    "Failed to lock file state",
-                ))
-            }
+            None => return Err(std::io::Error::other("Failed to lock file state")),
         };
         let len = match state.handle.get_size() {
             Ok(size) => size as u64,
-            Err(err) => {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{err:?}"),
-                ))
-            }
+            Err(err) => return Err(std::io::Error::other(format!("{err:?}"))),
         };
         match pos {
             std::io::SeekFrom::Start(pos) => {
                 if pos > len {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor past end of stream",
-                    ));
+                    return Err(std::io::Error::other("Cursor past end of stream"));
                 }
                 state.cursor = pos;
             }
             std::io::SeekFrom::End(pos) => {
                 let new_pos = len as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor outside of stream range",
-                    ));
+                    return Err(std::io::Error::other("Cursor outside of stream range"));
                 }
                 state.cursor = new_pos as u64;
             }
             std::io::SeekFrom::Current(pos) => {
                 let new_pos = state.cursor as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor outside of stream range",
-                    ));
+                    return Err(std::io::Error::other("Cursor outside of stream range"));
                 }
                 state.cursor = new_pos as u64;
             }
@@ -127,10 +101,7 @@ impl AsyncRead for WebFile {
             }
         };
         if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
+            return std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}"))));
         };
         let options = web_sys::FileSystemReadWriteOptions::new();
         options.set_at(state.cursor as f64);
@@ -139,10 +110,7 @@ impl AsyncRead for WebFile {
                 state.cursor += n as u64;
                 std::task::Poll::Ready(Ok(n as usize))
             }
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
+            Err(err) => std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}")))),
         }
     }
 }
@@ -162,25 +130,18 @@ impl AsyncSeek for WebFile {
             }
         };
         if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
+            return std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}"))));
         };
         let len = match state.handle.get_size() {
             Ok(size) => size as u64,
             Err(err) => {
-                return std::task::Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{err:?}"),
-                )))
+                return std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}"))));
             }
         };
         match pos {
             std::io::SeekFrom::Start(pos) => {
                 if pos > len {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return std::task::Poll::Ready(Err(std::io::Error::other(
                         "Cursor past end of stream",
                     )));
                 }
@@ -189,8 +150,7 @@ impl AsyncSeek for WebFile {
             std::io::SeekFrom::End(pos) => {
                 let new_pos = len as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return std::task::Poll::Ready(Err(std::io::Error::other(
                         "Cursor outside of stream range",
                     )));
                 }
@@ -199,8 +159,7 @@ impl AsyncSeek for WebFile {
             std::io::SeekFrom::Current(pos) => {
                 let new_pos = state.cursor as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return std::task::Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return std::task::Poll::Ready(Err(std::io::Error::other(
                         "Cursor outside of stream range",
                     )));
                 }
@@ -226,10 +185,7 @@ impl AsyncWrite for WebFile {
             }
         };
         if let Err(err) = state.handle.flush() {
-            return std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            )));
+            return std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}"))));
         };
         let options = web_sys::FileSystemReadWriteOptions::new();
         options.set_at(state.cursor as f64);
@@ -238,10 +194,7 @@ impl AsyncWrite for WebFile {
                 state.cursor += n as u64;
                 std::task::Poll::Ready(Ok(n as usize))
             }
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
+            Err(err) => std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}")))),
         }
     }
 
@@ -259,10 +212,7 @@ impl AsyncWrite for WebFile {
         };
         match state.handle.flush() {
             Ok(_) => std::task::Poll::Ready(Ok(())),
-            Err(err) => std::task::Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("{err:?}"),
-            ))),
+            Err(err) => std::task::Poll::Ready(Err(std::io::Error::other(format!("{err:?}")))),
         }
     }
 
@@ -340,14 +290,14 @@ impl AsyncSeek for WebWritable {
                 let new_cursor = match pos {
                     io::SeekFrom::Start(pos) => pos,
                     io::SeekFrom::End(_) => {
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::Other,
+                        return Poll::Ready(Err(io::Error::other(
                             "Seek from end is not supported for WebWritable",
-                        )))
+                        )));
                     }
-                    io::SeekFrom::Current(pos) => state.cursor.checked_add_signed(pos).ok_or(
-                        io::Error::new(io::ErrorKind::Other, "Seek position out of bound"),
-                    )?,
+                    io::SeekFrom::Current(pos) => state
+                        .cursor
+                        .checked_add_signed(pos)
+                        .ok_or(io::Error::other("Seek position out of bound"))?,
                 };
                 state.state = WebWritableStates::StartSeek(new_cursor);
                 cx.waker().wake_by_ref();
@@ -357,7 +307,7 @@ impl AsyncSeek for WebWritable {
                 let promise = state
                     .handle
                     .seek_with_f64(cursor as f64)
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
+                    .map_err(|err| io::Error::other(format!("{:?}", err)))?;
                 // TODO Transform the promise to a future and pass it onto the next state to check on.
                 state.state = WebWritableStates::WaitForSeek(cursor, JsFuture::from(promise));
                 cx.waker().wake_by_ref();
@@ -368,19 +318,13 @@ impl AsyncSeek for WebWritable {
                     state.cursor = cursor;
                     Poll::Ready(Ok(cursor))
                 }
-                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("{:?}", err),
-                ))),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::other(format!("{:?}", err)))),
                 Poll::Pending => {
                     state.state = WebWritableStates::WaitForSeek(cursor, future);
                     Poll::Pending
                 }
             },
-            _ => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Invalid writer state",
-            ))),
+            _ => Poll::Ready(Err(io::Error::other("Invalid writer state"))),
         }
     }
 }
@@ -410,37 +354,27 @@ impl AsyncWrite for WebWritable {
                 let promise = state
                     .handle
                     .write_with_buffer_source(&array)
-                    .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("{:?}", err)))?;
+                    .map_err(|err| io::Error::other(format!("{:?}", err)))?;
                 state.state = WebWritableStates::WaitForWrite(JsFuture::from(promise));
                 cx.waker().wake_by_ref();
                 Poll::Pending
             }
             WebWritableStates::WaitForWrite(mut future) => match future.try_poll_unpin(cx) {
                 Poll::Ready(Ok(_)) => {
-                    state.cursor =
-                        state
-                            .cursor
-                            .checked_add(buf.len() as u64)
-                            .ok_or(io::Error::new(
-                                io::ErrorKind::Other,
-                                "Write position out of bound",
-                            ))?;
+                    state.cursor = state
+                        .cursor
+                        .checked_add(buf.len() as u64)
+                        .ok_or(io::Error::other("Write position out of bound"))?;
                     state.state = WebWritableStates::Init;
                     Poll::Ready(Ok(buf.len()))
                 }
-                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("{:?}", err),
-                ))),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::other(format!("{:?}", err)))),
                 Poll::Pending => {
                     state.state = WebWritableStates::WaitForWrite(future);
                     Poll::Pending
                 }
             },
-            _ => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Invalid writer state",
-            ))),
+            _ => Poll::Ready(Err(io::Error::other("Invalid writer state"))),
         }
     }
 
@@ -473,19 +407,13 @@ impl AsyncWrite for WebWritable {
                     state.state = WebWritableStates::Init;
                     Poll::Ready(Ok(()))
                 }
-                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    format!("{:?}", err),
-                ))),
+                Poll::Ready(Err(err)) => Poll::Ready(Err(io::Error::other(format!("{:?}", err)))),
                 Poll::Pending => {
                     state.state = WebWritableStates::WaitForClose(future);
                     Poll::Pending
                 }
             },
-            _ => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Invalid writer state",
-            ))),
+            _ => Poll::Ready(Err(io::Error::other("Invalid writer state"))),
         }
     }
 }
@@ -540,18 +468,14 @@ impl AsyncSeek for WebReadable {
         match pos {
             std::io::SeekFrom::Start(pos) => {
                 if pos > len {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Cursor past end of stream",
-                    )));
+                    return Poll::Ready(Err(std::io::Error::other("Cursor past end of stream")));
                 }
                 state.cursor = pos;
             }
             std::io::SeekFrom::End(pos) => {
                 let new_pos = len as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Poll::Ready(Err(std::io::Error::other(
                         "Cursor outside of stream range",
                     )));
                 }
@@ -560,8 +484,7 @@ impl AsyncSeek for WebReadable {
             std::io::SeekFrom::Current(pos) => {
                 let new_pos = state.cursor as i64 + pos;
                 if !(0..=len as i64).contains(&new_pos) {
-                    return Poll::Ready(Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    return Poll::Ready(Err(std::io::Error::other(
                         "Cursor outside of stream range",
                     )));
                 }
@@ -588,10 +511,7 @@ impl AsyncRead for WebReadable {
         };
         let len = state.handle.size() as u64;
         if state.cursor + buf.len() as u64 > len {
-            return Poll::Ready(Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Cursor past end of stream",
-            )));
+            return Poll::Ready(Err(std::io::Error::other("Cursor past end of stream")));
         }
         match std::mem::take(&mut state.state) {
             WebReadableStates::Init => {
@@ -606,9 +526,7 @@ impl AsyncRead for WebReadable {
                         state.cursor as f64,
                         state.cursor as f64 + buf.len() as f64,
                     )
-                    .map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::Other, format!("{:?}", err))
-                    })?;
+                    .map_err(|err| std::io::Error::other(format!("{:?}", err)))?;
                 let fut = JsFuture::from(blob.array_buffer());
                 state.state = WebReadableStates::WaitForRead(fut);
                 cx.waker().wake_by_ref();
@@ -622,10 +540,9 @@ impl AsyncRead for WebReadable {
                     state.state = WebReadableStates::Init;
                     Poll::Ready(Ok(arr.length() as usize))
                 }
-                Poll::Ready(Err(err)) => Poll::Ready(Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("{:?}", err),
-                ))),
+                Poll::Ready(Err(err)) => {
+                    Poll::Ready(Err(std::io::Error::other(format!("{:?}", err))))
+                }
                 Poll::Pending => {
                     state.state = WebReadableStates::WaitForRead(fut);
                     Poll::Pending

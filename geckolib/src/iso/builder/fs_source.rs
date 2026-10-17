@@ -3,7 +3,7 @@ use std::io::{Read, Seek};
 use std::path::Path;
 #[cfg(not(target_os = "unknown"))]
 use std::path::PathBuf;
-use zip::{read::ZipFile, ZipArchive};
+use zip::{ZipArchive, read::ZipFile};
 
 /// A file from an arbitrary source
 pub enum File<'a, R: Read> {
@@ -24,11 +24,11 @@ impl<'a, R: Debug + Read> Debug for File<'a, R> {
 
 impl<R: Read> File<'_, R> {
     #[allow(dead_code)]
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> String {
         match self {
-            File::Zip(zip) => zip.name(),
+            File::Zip(zip) => zip.name().map(|n| n.into_owned()).unwrap_or_default(),
             #[cfg(not(target_os = "unknown"))]
-            File::FS(string, _) => string,
+            File::FS(string, _) => string.clone(),
         }
     }
 }
@@ -81,7 +81,8 @@ impl<R: Read + Seek> FSSource<R> {
         match self {
             FSSource::Zip(zip) => zip
                 .index_for_path(path)
-                .and_then(|idx| zip.by_index(idx).ok()).is_some_and(|entry| entry.is_dir()),
+                .and_then(|idx| zip.by_index(idx).ok())
+                .is_some_and(|entry| entry.is_dir()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
@@ -94,7 +95,8 @@ impl<R: Read + Seek> FSSource<R> {
         match self {
             FSSource::Zip(zip) => zip
                 .index_for_path(path)
-                .and_then(|idx| zip.by_index(idx).ok()).is_some_and(|entry| entry.is_file()),
+                .and_then(|idx| zip.by_index(idx).ok())
+                .is_some_and(|entry| entry.is_file()),
             #[cfg(not(target_os = "unknown"))]
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);
@@ -136,7 +138,7 @@ impl<R> FSSource<R> {
             FSSource::Zip(_) => {
                 return Err(eyre::eyre!(
                     "Unsupported operation on ZipArchive: get_names"
-                ))
+                ));
             }
             FSSource::FS(inner_path) => {
                 let p = inner_path.join(path);

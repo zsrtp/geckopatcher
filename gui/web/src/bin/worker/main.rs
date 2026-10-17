@@ -1,23 +1,22 @@
 use std::io::{Read, Seek};
 use std::sync::Arc;
 
-use async_std::io::prelude::{ReadExt, SeekExt};
-use async_std::io::{Read as AsyncRead, Seek as AsyncSeek, Write as AsyncWrite};
-use async_std::sync::Mutex;
-use futures::AsyncWriteExt;
+mod io;
+mod progress;
+
+use crate::io::{WebFile, WebReadable, WebWritable};
+use futures::lock::Mutex;
+use futures::io::{AsyncReadExt, AsyncSeekExt};
+use futures::{AsyncRead, AsyncSeek, AsyncWrite, AsyncWriteExt};
 use geckolib::iso::builder::Builder;
 use geckolib::iso::disc::DiscType;
 use geckolib::iso::read::DiscReader;
 use geckolib::iso::write::DiscWriter;
 use geckolib::update::UpdaterType;
 use geckolib::vfs::GeckoFS;
-use geckolib::{open_config_from_patch, UPDATER};
-use wasm_bindgen::prelude::*;
+use geckolib::{UPDATER, open_config_from_patch};
 use wasm_bindgen::JsValue;
-use web_gui_patcher::io::{WebFile, WebReadable, WebWritable};
-
-#[cfg(all(feature = "parallel", target_feature = "atomics", target_feature = "bulk-memory"))]
-pub use wasm_bindgen_rayon::init_thread_pool;
+use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "debug_alloc")]
 #[global_allocator]
@@ -55,7 +54,7 @@ async fn _reproc<
     {
         f.seek(std::io::SeekFrom::Start(0)).await?;
         let mut buf = vec![0u8; 0x60];
-        f.read(&mut buf).await?;
+        let _ = f.read(&mut buf).await?;
         log::info!(
             "[{}] Game Title: {:02X?}",
             String::from_utf8_lossy(&buf[..6]),
@@ -77,10 +76,10 @@ async fn _reproc<
     if let DiscWriter::Wii(wii_out) = out.clone() {
         std::pin::pin!(wii_out).init().await?;
     }
-    let fs = Arc::new(Mutex::new(GeckoFS::parse(f).await?));
+        let fs = Arc::new(Mutex::new(GeckoFS::parse(f).await?));
     {
         let is_wii = out.get_type() == DiscType::Wii;
-        let mut fs_guard = fs.lock_arc().await;
+        let mut fs_guard = fs.lock().await;
         log::info!("Writing VFS to output file...");
         fs_guard.serialize(&mut out).await?;
         if is_wii {
@@ -153,6 +152,6 @@ fn main() {
     #[cfg(not(debug_assertions))]
     console_log::init_with_level(log::Level::Info)
         .expect("could not initialize worker's console_log");
-    web_gui_patcher::progress::init_web_progress();
+    crate::progress::init_web_progress();
     log::debug!("Starting Worker Thread");
 }

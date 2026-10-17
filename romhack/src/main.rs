@@ -1,13 +1,14 @@
 // use std::sync::atomic::AtomicU64;
 
-use async_std::fs::{File, OpenOptions};
-// use async_std::io::ReadExt as _;
-use async_std::path::PathBuf;
 use clap::Parser;
+use futures_lite::future::block_on;
+use geckolib::async_file::AsyncFile;
 use geckolib::iso::builder::PatchBuilder;
 use geckolib::iso::read::DiscReader;
 use geckolib::{generate_from_diff, parse_config};
 use geckolib::{iso::builder::Builder, new, open_config_from_fs_iso, open_config_from_patch};
+use std::fs::OpenOptions;
+use std::path::PathBuf;
 
 #[cfg(feature = "progress")]
 use geckolib::{UPDATER, update::UpdaterType};
@@ -16,7 +17,6 @@ use geckolib::{UPDATER, update::UpdaterType};
 mod progress;
 
 use romhack::cli::{Cli, Commands};
-use smol::block_on;
 
 fn main() -> color_eyre::eyre::Result<()> {
     block_on(async_main())
@@ -49,13 +49,14 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
                 builder.build().await
             } else {
                 let config = parse_config(&std::fs::File::open("RomHack.toml")?)?;
-                let writer = OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(&config.build.iso)
-                    .await?;
-                let disc_reader = File::open(&config.src.iso).await?;
+                let writer = AsyncFile::new(
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(&config.build.iso)?,
+                );
+                let disc_reader = AsyncFile::new(std::fs::File::open(&config.src.iso)?);
                 let mut builder = open_config_from_fs_iso(config, disc_reader, writer).await?;
                 builder.build().await
             }
@@ -67,13 +68,14 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
         } => {
             let mut builder = open_config_from_patch(
                 std::fs::OpenOptions::new().read(true).open(patch)?,
-                OpenOptions::new().read(true).open(original_game).await?,
-                OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .truncate(true)
-                    .open(output)
-                    .await?,
+                AsyncFile::new(OpenOptions::new().read(true).open(original_game)?),
+                AsyncFile::new(
+                    OpenOptions::new()
+                        .write(true)
+                        .create(true)
+                        .truncate(true)
+                        .open(output)?,
+                ),
             )
             .await?;
             builder.build().await
@@ -88,16 +90,21 @@ async fn async_main() -> color_eyre::eyre::Result<()> {
             output,
         } => {
             extract(
-                OpenOptions::new().read(true).open(original_game).await?,
-                OpenOptions::new().read(true).open(patched_game).await?,
+                AsyncFile::new(OpenOptions::new().read(true).open(original_game)?),
+                AsyncFile::new(OpenOptions::new().read(true).open(patched_game)?),
                 PathBuf::from_iter(output.iter()),
-            ).await?;
+            )
+            .await?;
             Ok(())
         }
     }
 }
 
-async fn extract(original: File, patched: File, output: PathBuf) -> color_eyre::eyre::Result<()> {
+async fn extract(
+    original: AsyncFile,
+    patched: AsyncFile,
+    output: PathBuf,
+) -> color_eyre::eyre::Result<()> {
     use geckolib::vfs::tree::GeckoFS;
     let (original_dr, patched_dr) =
         block_on(async { futures::join!(DiscReader::new(original), DiscReader::new(patched)) });
@@ -126,9 +133,9 @@ mod tests {
         task::{Context, Poll},
     };
 
-    use async_std::io;
     use futures::{AsyncReadExt, AsyncSeek, AsyncWrite, executor::block_on};
     use geckolib::{
+        async_file::AsyncFile,
         iso::{builder::Builder, read::DiscReader},
         open_config_from_patch,
     };
@@ -150,17 +157,17 @@ mod tests {
             self: Pin<&mut Self>,
             _: &mut Context<'_>,
             buf: &[u8],
-        ) -> Poll<io::Result<usize>> {
+        ) -> Poll<std::io::Result<usize>> {
             Poll::Ready(Ok(buf.len()))
         }
 
         #[inline]
-        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
 
         #[inline]
-        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<std::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
@@ -182,10 +189,11 @@ mod tests {
     #[test]
     fn empty_iso_can_be_read() {
         block_on(async {
-            let mut reader =
-                DiscReader::new(async_std::fs::File::open("assets/empty.iso").await.unwrap())
-                    .await
-                    .unwrap();
+            let mut reader = DiscReader::new(AsyncFile::new(
+                std::fs::File::open("assets/empty.iso").unwrap(),
+            ))
+            .await
+            .unwrap();
             let mut buf = Vec::new();
             let ret = reader.read_to_end(&mut buf).await;
             println!("{:?}", ret);
@@ -201,7 +209,7 @@ mod tests {
         block_on(async {
             let mut builder = open_config_from_patch(
                 std::fs::File::open("assets/empty.patch").unwrap(),
-                async_std::fs::File::open("assets/empty.iso").await.unwrap(),
+                AsyncFile::new(std::fs::File::open("assets/empty.iso").unwrap()),
                 Sink::default(),
             )
             .await

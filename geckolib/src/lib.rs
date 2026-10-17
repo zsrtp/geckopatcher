@@ -16,6 +16,8 @@ extern crate indextree;
 extern crate regex;
 extern crate syn;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub mod async_file;
 pub mod config;
 pub mod crypto;
 pub mod diff;
@@ -255,9 +257,8 @@ where
         orig_file.seek(std::io::SeekFrom::Start(0)).await?;
         orig_file.read_to_end(&mut orig_buf).await?;
         insert_checksum(&orig_buf, checksum);
-        deletions.push(
-            RelativePathBuf::from_path(orig_path).expect("Path contains invalid characters"),
-        );
+        deletions
+            .push(RelativePathBuf::from_path(orig_path).expect("Path contains invalid characters"));
     }
 
     let mut additions: Vec<RelativePathBuf> = Vec::new();

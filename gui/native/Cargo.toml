@@ -25,7 +25,7 @@ eframe = { version = "^0.33", default-features = false, features = [
     "x11",
     "wayland",
 ] }
-rfd = {version = "^0.15", default-features = false, features = ["xdg-portal", "async-std"]}
+rfd = {version = "^0.15", default-features = false, features = ["xdg-portal", "tokio"]}
 log = "^0.4"
 flume = "^0.11"
 eyre = "^0.6"
@@ -38,7 +38,6 @@ serde = { version = "^1.0", features = ["derive"] }
 geckolib = { path = "../../geckolib", features = ["progress"] }
 env_logger = "^0.11"
 futures-lite = "^2.3"
-async-std = "^1.12"
 image = { version = "^0.25", features = ["png"]}
 regex = "^1.10"
 pin-project = "^1.1"

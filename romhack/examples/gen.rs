@@ -1,11 +1,15 @@
 use std::{path::PathBuf, pin::pin};
 
-use async_std::io::ReadExt;
-use clap::{command, Parser, ValueHint};
+use clap::{Parser, ValueHint};
 use color_eyre::eyre::eyre;
+use futures::io::AsyncReadExt;
+use futures_lite::future::block_on;
+use geckolib::async_file::AsyncFile;
 use geckolib::{
     iso::{
-        disc::{WiiDisc, WiiDiscHeader}, read::DiscReader, write::DiscWriter
+        disc::{WiiDisc, WiiDiscHeader},
+        read::DiscReader,
+        write::DiscWriter,
     },
     vfs::{self, GeckoFSLegacy},
 };
@@ -13,7 +17,7 @@ use geckolib::{
 use romhack::progress;
 
 #[cfg(feature = "progress")]
-use geckolib::{update::UpdaterType, UPDATER};
+use geckolib::{UPDATER, update::UpdaterType};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, long_about = None)]
@@ -41,7 +45,7 @@ fn main() -> color_eyre::eyre::Result<()> {
 
     if let Some(new_title) = args.title.as_ref() {
         if new_title.len() > 64 {
-            return Err(eyre!("New title \"{}\" is too long.", new_title))
+            return Err(eyre!("New title \"{}\" is too long.", new_title));
         }
     }
 
@@ -52,15 +56,13 @@ fn main() -> color_eyre::eyre::Result<()> {
         updater.set_title("Initializing...")?;
     }
 
-    async_std::task::block_on(async {
+    block_on(async {
         let mut new_title: String = args.title.unwrap_or("Empty Wii Disk".into());
         if new_title.len() < 64 {
             new_title.push('\0');
         }
         let new_title = new_title.as_bytes();
-        let reader =
-            DiscReader::new(async_std::fs::File::open(args.input).await?)
-                .await?;
+        let reader = DiscReader::new(AsyncFile::new(std::fs::File::open(args.input)?)).await?;
         let disc = reader.get_disc_info();
         let new_disc = disc.map(|disc| {
             let mut game_title = disc.disc_header.game_title;
@@ -89,18 +91,19 @@ fn main() -> color_eyre::eyre::Result<()> {
             return Err(eyre!("No \"iso.hdr\" in the system section of the disc."));
         };
         let mut header = vec![0u8; iso_hdr.len()?];
-        iso_hdr.read_to_end(&mut header);
+        iso_hdr.read_to_end(&mut header).await?;
         header[1..=2].copy_from_slice(b"00");
-        header[0x20..0x20+new_title.len()].copy_from_slice(new_title);
+        header[0x20..0x20 + new_title.len()].copy_from_slice(new_title);
         iso_hdr.set_data(header.into_boxed_slice())?;
         let writer = DiscWriter::new(
-            async_std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(args.output)
-                .await?,
-                new_disc,
+            AsyncFile::new(
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .open(args.output)?,
+            ),
+            new_disc,
         );
         pin!(writer.clone()).init().await?;
         let mut writer = pin!(writer);

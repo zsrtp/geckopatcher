@@ -11,6 +11,17 @@ pub struct Config {
     pub icon_path: PathBuf,
 }
 
+fn crate_version() -> String {
+    let path = format!("{}/../Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(path).unwrap();
+    let toml: toml::Value = toml::from_str(&manifest).unwrap();
+    toml.get("package")
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string()
+}
+
 fn main() {
     // Replace the {{}} in the manifest.json file with the actual values
     let manifest = include_str!("../../assets/manifest.json.in");
@@ -21,6 +32,7 @@ fn main() {
 
     let dist = PathBuf::from(std::env::var_os("TRUNK_STAGING_DIR").expect("unable eval dist dir"));
 
+    let manifest = manifest.replace("{{version}}", &crate_version());
     std::fs::write(dist.join("manifest.json"), manifest).unwrap();
 
     // Generate the icons

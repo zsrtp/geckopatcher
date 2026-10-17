@@ -1,4 +1,4 @@
-import init from "./worker.js";
+import init from "./web-gui-patcher.js";
 
 async function registerLocalStorage(patch, iso) {
     const root = await navigator.storage.getDirectory();
@@ -43,16 +43,7 @@ let is_running = false;
 console.info("Initializing worker");
 globalThis.postMessage({ type: "progress", title: "Loading Application..." });
 
-init({ module_or_path: "worker_bg.wasm" }).then((wasm_bindgen) => {
-    console.info("Initialized worker wasm binary");
-    if ("initThreadPool" in wasm_bindgen) {
-        console.info("Running multi threaded");
-        return wasm_bindgen.initThreadPool(navigator.hardwareConcurrency).then(() => wasm_bindgen);
-    } else {
-        console.info("Running single threaded");
-        return wasm_bindgen;
-    }
-}).then((wasm_bindgen) => {
+init({ module_or_path: "web-gui-patcher_bg.wasm" }).then((wasm_bindgen) => {
     globalThis.addEventListener("message", (event) => {
         switch (event.data.type) {
             case "run": {

@@ -10,7 +10,6 @@
     <title>Web Romhack Patcher</title>
 
     <script data-trunk type="module" src="assets/index.js"></script>
-    <!-- <script data-trunk src="assets/tracing_hooks.js" type="module"></script> -->
 
     <!-- this is the base url relative to which other urls will be constructed. trunk will insert this from the public-url option -->
     <base data-trunk-public-url />
@@ -18,7 +17,6 @@
     <link rel="icon" href="favicon.ico">
 
     <link data-trunk rel="copy-file" href="assets/app_worker.js" />
-    <!-- <link data-trunk rel="copy-file" href="assets/tracing_hooks.js" /> -->
     <link data-trunk rel="copy-file" href="assets/github-mark-white.png" />
     <link data-trunk rel="copy-dir" href="assets/patches/" />
     <link data-trunk rel="copy-dir" href="assets/fontawesome/css/" />
@@ -39,9 +37,22 @@
 <body>
     <div class="lds-ring"><div></div><div></div><div></div><div></div></div>
 
+    <fieldset id="main_form" style="display: none;">
+        <legend>Gecko Patcher <span id="version"></span><li class="fa-solid fa-circle-info" data-tooltip="Nothing is uploaded, processing is done on your device"></li></legend>
+        <label for="iso_in">Game File: </label>
+        <input id="iso_in" accept=".iso" type="file"/>
+        <label for="patch">Patch to Apply: </label>
+        <select id="patch" disabled>
+            <option disabled>Select Patch</option>
+        </select>
+        <button id="patch-btn" disabled>Patch</button>
+    </fieldset>
+    <div id="links" style="display: none;">
+        <a href="https://github.com/zsrtp/geckopatcher"><img class="gh-img" src="github-mark-white.png" alt="GitHub Logo"/>GeckoPatcher</a>
+    </div>
+
     <!-- config for our rust wasm binary. go to https://trunkrs.dev/assets/#rust for more customization -->
-    <link data-trunk rel="rust" data-bin="app"    data-type="main"   data-wasm-opt="z" data-reference-types data-reference-types data-bindgen-target="web" />
-    <link data-trunk rel="rust" data-bin="worker" data-type="worker" data-wasm-opt="3" data-reference-types data-reference-types data-bindgen-target="web" />
+    <link data-trunk rel="rust" data-type="worker" data-wasm-opt="z" data-reference-types data-bindgen-target="web" />
 </body>
 
 </html>
